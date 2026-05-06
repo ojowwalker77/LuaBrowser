@@ -12,6 +12,7 @@
 @interface ChromiumLauncher ()
 @property (nonatomic, assign) void *chromiumHandle;
 @property (nonatomic, assign) BOOL isChromiumInitialized;
+- (void)appendLaunchCommandLineArgc:(int)launchArgc argv:(const char **)launchArgv toArguments:(NSMutableArray<NSString *> *)arguments;
 @end
 
 @implementation ChromiumLauncher
@@ -34,7 +35,29 @@
     return self;
 }
 
-- (BOOL)initializeChromium {
+- (void)appendLaunchCommandLineArgc:(int)launchArgc argv:(const char **)launchArgv toArguments:(NSMutableArray<NSString *> *)arguments {
+    if (launchArgc <= 1) {
+        return;
+    }
+    if (launchArgv == NULL) {
+        AppLogWarn(@"Missing argv while launchArgc is %d", launchArgc);
+        return;
+    }
+    for (int i = 1; i < launchArgc; i++) {
+        const char *bytes = launchArgv[i];
+        if (bytes == NULL) {
+            continue;
+        }
+        NSString *arg = [NSString stringWithUTF8String:bytes];
+        if (arg == nil) {
+            AppLogWarn(@"Skipping argv[%d]: not valid UTF-8", i);
+            continue;
+        }
+        [arguments addObject:arg];
+    }
+}
+
+- (BOOL)initializeChromiumWithLaunchArgc:(int)launchArgc launchArgv:(const char **)launchArgv {
     if (self.isChromiumInitialized) {
         AppLogWarn(@"Chromium is already initialized");
         return YES;
@@ -105,6 +128,8 @@
                 [arguments addObject:@"--no-sandbox"];
 #endif
 
+                [self appendLaunchCommandLineArgc:launchArgc argv:launchArgv toArguments:arguments];
+
                 int argc = (int)arguments.count;
                 const char **argv = (const char **)malloc(sizeof(char *) * argc);
                 for (int i = 0; i < argc; i++) {
@@ -118,7 +143,7 @@
                 AppLogDebug(@"Chromium initialization started successfully");
                 return YES;
             } else {
-                AppLogDebug(@"Must call initializeChromium from main thread");
+                AppLogDebug(@"Must call launchChromiumWithArgc from main thread");
                 self.isChromiumInitialized = NO;
                 return NO;
             }
@@ -139,13 +164,13 @@
     }
 }
 
-- (void)launchChromium {
+- (void)launchChromiumWithArgc:(int)argc argv:(const char **)argv {
     self.bridge = [NSClassFromString(@"PhiChromiumBridge") sharedInstance];
     if ([self.bridge conformsToProtocol:@protocol(PhiChromiumBridgeProtocol)]) {
         self.bridge.delegate = [PhiChromiumCoordinator shared];
     }
-    [self initializeChromium];
-   
+    [self initializeChromiumWithLaunchArgc:argc launchArgv:argv];
+
 }
 
 @end

@@ -36,7 +36,7 @@ int main(int argc, const char * argv[]) {
         }
         
         AppLogInfo(@"ChromiumLauncher singleton created (Chromium will initialize after app launch)");
-        [launcher launchChromium];
+        [launcher launchChromiumWithArgc:argc argv:(const char **)argv];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     } @catch (NSException *exception) {
         AppLogError(@"Exception in main: %@ - %@", exception.name, exception.reason);
