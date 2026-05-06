@@ -1644,10 +1644,32 @@ extension TabStrip: TabStripDragDelegate {
             }
         } else {
             if toZone == .pinned {
-                // Case: normal -> pinned.
                 browserState.moveNormalTab(tabId: tab.guid, toPinnd: toIndex, selectAfterMove: tab.isActive)
             } else {
+                // Capture the source run BEFORE the local move so the
+                // range / index comparison is in the same coordinate
+                // system as the engine's drag preview.
+                let sourceToken = tab.groupToken
+                let preMoveRun = sourceToken.flatMap { token in
+                    currentGroupRuns().first(where: { $0.token == token })
+                }
+
                 browserState.moveNormalTabLocally(from: originalIndex, to: toIndex)
+
+                // B1 auto-leave: detach if the drop falls outside the
+                // pre-move range (in the run's pre-move index space).
+                if let sourceToken, let run = preMoveRun,
+                   !run.range.contains(toIndex) {
+                    AppLogDebug(
+                        "[TAB_GROUPS][STRIP_DRAG] auto-leave windowId=\(browserState.windowId) " +
+                        "tabId=\(tab.guid) token=\(sourceToken) " +
+                        "dropIndex=\(toIndex) outside preMoveRange=\(run.range)"
+                    )
+                    ChromiumLauncher.sharedInstance().bridge?.removeTabsFromGroup(
+                        withWindowId: Int64(browserState.windowId),
+                        tabIds: [NSNumber(value: Int64(tab.guid))]
+                    )
+                }
             }
         }
 
