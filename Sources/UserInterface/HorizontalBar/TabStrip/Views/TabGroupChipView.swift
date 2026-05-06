@@ -122,6 +122,10 @@ final class TabGroupChipView: NSView {
 
         addSubview(labelField)
         addSubview(countField)
+
+        toolTip = NSLocalizedString(
+            "Click to collapse or expand group",
+            comment: "Tab Groups - cursor tooltip for horizontal-strip group chip")
     }
 
     required init?(coder: NSCoder) {
