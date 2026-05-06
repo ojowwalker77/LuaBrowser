@@ -38,6 +38,28 @@ final class TabGroupChipView: NSView {
     static let compactSwatchWidth: CGFloat = 16
     static let compactRightPad: CGFloat = 4
 
+    // MARK: - Callbacks (set by TabStrip)
+
+    /// Called when the chip is clicked (mouseUp inside bounds, no drag,
+    /// not a right-click). `TabStrip` uses this to fire
+    /// `bridge.updateTabGroupCollapsed(...)`.
+    var onClick: ((String) -> Void)?
+
+    /// Called to populate the right-click menu. `TabStrip` reuses
+    /// `TabGroupSidebarItem.makeContextMenu` here. Returns nil → no menu.
+    var onMenuRequest: ((String) -> NSMenu?)?
+
+    // MARK: - Hover state
+
+    private var isHovered: Bool = false {
+        didSet {
+            guard oldValue != isHovered else { return }
+            applyAppearance()
+        }
+    }
+    private var hoverTrackingArea: NSTrackingArea?
+    private var mouseDownInside: Bool = false
+
     // MARK: - Data
 
     private(set) var token: String = ""
@@ -135,7 +157,9 @@ final class TabGroupChipView: NSView {
     // MARK: - Appearance
 
     private func applyAppearance() {
-        backgroundLayer.backgroundColor = color.chipTintColor.cgColor
+        backgroundLayer.backgroundColor = (isHovered
+            ? color.chipHoverTintColor
+            : color.chipTintColor).cgColor
         barLayer.backgroundColor = color.nsColor.cgColor
         compactSwatchLayer.backgroundColor = color.chipCompactSwatchColor.cgColor
         countBackgroundLayer.backgroundColor = color.chipHoverTintColor.cgColor
@@ -244,4 +268,64 @@ final class TabGroupChipView: NSView {
 
         return min(width, maxFullWidth)
     }
+
+    // MARK: - Mouse handling
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = hoverTrackingArea {
+            removeTrackingArea(area)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect, .cursorUpdate],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownInside = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { mouseDownInside = false }
+        guard mouseDownInside else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(p) else { return }
+        onClick?(token)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return onMenuRequest?(token)
+    }
+
+    // MARK: - Accessibility
+
+    override func accessibilityLabel() -> String? {
+        let format = NSLocalizedString(
+            "%@ tab group, %d tabs",
+            comment: "Tab Groups - VoiceOver label for horizontal-strip group chip")
+        return String(format: format, color.localizedName, memberCount)
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
 }
