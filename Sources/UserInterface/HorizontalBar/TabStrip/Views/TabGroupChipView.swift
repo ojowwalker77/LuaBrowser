@@ -237,9 +237,9 @@ final class TabGroupChipView: NSView {
                 .size(withAttributes: [.font: countFont])
                 .width
             let countWidth = ceil(countTextWidth) + countHorizontalPadding * 2
-            width += countWidth + countToLabelGap - labelRightPadding + labelRightPadding
-            // (Keep the same trailing padding as the no-badge case; the
-            // badge sits inside the trailing-padding budget.)
+            // With badge: bar + leftPad + textW + gap + countW + rightPad
+            // (no-badge already accounts for bar + leftPad + textW + rightPad)
+            width += countToLabelGap + countWidth
         }
 
         return min(width, maxFullWidth)
