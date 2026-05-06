@@ -49,8 +49,8 @@
             continue;
         }
         NSString *arg = [NSString stringWithUTF8String:bytes];
-        if (arg == nil) {
-            AppLogWarn(@"Skipping argv[%d]: not valid UTF-8", i);
+        if (arg == nil || ![arg hasPrefix:@"--"]) {
+            AppLogWarn(@"Skipping argv[%d]: not valid", i);
             continue;
         }
         [arguments addObject:arg];
