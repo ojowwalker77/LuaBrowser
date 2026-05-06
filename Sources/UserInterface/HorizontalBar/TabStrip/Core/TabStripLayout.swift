@@ -305,6 +305,7 @@ enum TabStripLayoutEngine {
             totalContentWidth: totalWidth
         )
     }
+
     /// Group-aware variant. Decides chip mode (all-or-nothing — every
     /// chip in the strip switches together) by trying `.full` first; if
     /// the resulting `baseWidth` would force tabs below the
@@ -379,10 +380,9 @@ enum TabStripLayoutEngine {
                 activeW = baseWidth
                 inactiveW = baseWidth
             } else {
-                let activeIdx = input.activeTabIndex
-                let isActiveExcluded = (input.excludedTabIndex != nil && input.excludedTabIndex == activeIdx)
-                let isActiveCollapsed = activeIdx.map { collapsedMemberSet.contains($0) } ?? false
-                if activeIdx != nil && !isActiveExcluded && !isActiveCollapsed {
+                if let activeIdx = input.activeTabIndex,
+                   input.excludedTabIndex != activeIdx,
+                   !collapsedMemberSet.contains(activeIdx) {
                     activeW = input.activeTabWidth
                     let remainingForInactive = availableForTabs - activeW
                     let inactiveCount = effectiveTabCount - 1
@@ -446,7 +446,7 @@ enum TabStripLayoutEngine {
             }
 
             currentX += input.spacing
-            let isActive = (input.activeTabIndex != nil && i == input.activeTabIndex!)
+            let isActive = (input.activeTabIndex == i)
             let width = isActive ? activeW : inactiveW
             let frame = CGRect(x: currentX, y: TabStripMetrics.Strip.bottomSpacing,
                                 width: width, height: input.tabHeight)
