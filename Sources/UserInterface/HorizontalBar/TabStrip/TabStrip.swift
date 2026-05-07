@@ -1034,7 +1034,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let item = TabGroupSidebarItem(group: group, browserState: browserState)
         let menu = NSMenu()
         item.makeContextMenu(on: menu)
-        return menu.items.isEmpty ? nil : menu
+        guard !menu.items.isEmpty else { return nil }
+        // NSMenuItem.target is weak. The local `item` would
+        // deallocate as soon as this method returns, leaving every
+        // menu entry with a nil target — AppKit then disables them
+        // all. Anchor the helper's lifetime to the menu by stashing
+        // it on the first item's representedObject (strongly held
+        // by NSMenuItem, which is strongly held by NSMenu).
+        menu.items.first?.representedObject = item
+        return menu
     }
 
     private func performLayout(context: TabStripAnimationContext, completion: (() -> Void)? = nil) {
