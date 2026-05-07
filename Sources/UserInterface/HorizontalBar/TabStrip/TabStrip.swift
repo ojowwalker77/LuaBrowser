@@ -540,18 +540,13 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// Without this, the chip's auto-name count badge and underline
     /// color stay stale until the next unrelated relayout.
     private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
-        let liveTokens = Set(groups.keys)
-        // Drop subscriptions for vanished groups.
-        groupChangeCancellables = groupChangeCancellables.filter { liveTokens.contains($0.key) }
-        // Add subscriptions for new groups.
-        for (token, info) in groups where groupChangeCancellables[token] == nil {
-            groupChangeCancellables[token] = info.objectWillChange
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    guard let self = self, self.isActive else { return }
-                    self.refreshChipWidth(for: token)
-                    self.performLayout(context: .dataChanged)
-                }
+        WebContentGroupInfo.reconcileSubscriptions(
+            groups: groups,
+            cancellables: &groupChangeCancellables
+        ) { [weak self] token in
+            guard let self = self, self.isActive else { return }
+            self.refreshChipWidth(for: token)
+            self.performLayout(context: .dataChanged)
         }
     }
 

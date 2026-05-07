@@ -53,4 +53,31 @@ final class WebContentGroupInfo: ObservableObject {
             comment: "Tab Groups - auto-generated group title, e.g. 'Blue · 3 tabs'")
         return String(format: format, color.localizedName, memberCount)
     }
+
+    /// Reconciles a per-token cancellable map against the current
+    /// `groups` snapshot, dropping subscriptions for vanished tokens
+    /// and adding `objectWillChange` sinks for new ones. `onChange` is
+    /// invoked on the main queue with the changed token whenever a
+    /// surviving group fires.
+    ///
+    /// Why this lives here: the only events that travel through
+    /// `info.objectWillChange` (membership flips via `Tab.groupToken`,
+    /// title / color / collapsed mutations) don't republish
+    /// `BrowserState.$groups`, so any UI that mirrors group state must
+    /// subscribe per-info. Centralizing the subscription bookkeeping
+    /// avoids duplicating the same boilerplate at every observer
+    /// (currently `TabStrip` and `WebContentContainerViewController`).
+    static func reconcileSubscriptions(
+        groups: [String: WebContentGroupInfo],
+        cancellables: inout [String: AnyCancellable],
+        onChange: @escaping (String) -> Void
+    ) {
+        let liveTokens = Set(groups.keys)
+        cancellables = cancellables.filter { liveTokens.contains($0.key) }
+        for (token, info) in groups where cancellables[token] == nil {
+            cancellables[token] = info.objectWillChange
+                .receive(on: DispatchQueue.main)
+                .sink { _ in onChange(token) }
+        }
+    }
 }
