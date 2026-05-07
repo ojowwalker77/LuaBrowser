@@ -58,6 +58,7 @@ import Countly
         if let account = AccountController.shared.account {
             SentryService.configureUser(account)
         }
+        MemoryUsageMonitor.shared.start()
         
         DefaultExtensionManifestWriter.start()
         
@@ -93,6 +94,7 @@ import Countly
     
     func applicationWillTerminate(_ notification: Notification) {
         AppLogInfo("-------applicationWillTerminate----")
+        MemoryUsageMonitor.shared.stop()
         ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
     }
     

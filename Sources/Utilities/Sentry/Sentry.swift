@@ -125,4 +125,18 @@ import Sentry
             }
         }
     }
+
+    static func captureMemoryThresholdExceeded(snapshot: MemoryUsageSnapshot) {
+        SentrySDK.capture(message: "Phi memory usage threshold exceeded") { scope in
+            scope.setLevel(.warning)
+            scope.setTag(value: "memory", key: "area")
+            scope.setTag(value: "exceeded", key: "memory.threshold")
+            scope.setContext(value: snapshot.sentryContext, key: "memory_usage")
+
+            scope.clearAttachments()
+            if let stringData = PhiLogging.applicationLog(maxLength: Int(maxSentryLogSize))?.data(using: .utf8) {
+                scope.addAttachment(Attachment(data: stringData, filename: "logs.txt"))
+            }
+        }
+    }
 }

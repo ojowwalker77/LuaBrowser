@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		04FE4637EFE3A1396687DD63 /* AISettingsConnectorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */; };
 		15B618E574463D94C98AEA5F /* AISettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */; };
+		4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000002 /* MemoryUsageModels.swift */; };
+		4D454D4F5259000000000004 /* MemoryUsageMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000005 /* MemoryUsageMonitor.swift */; };
+		4D454D4F5259000000000006 /* ProcessMemorySampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000007 /* ProcessMemorySampler.swift */; };
 		3703C88C2F68F78500E7CF6D /* AISettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C88B2F68F78500E7CF6D /* AISettingView.swift */; };
 		3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */; };
 		3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9832F6956E600E7CF6D /* SentinelHelper.swift */; };
@@ -502,6 +505,9 @@
 		37FC8C912F335942004675B8 /* WebContentProgressBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentProgressBarView.swift; sourceTree = "<group>"; };
 		37FC8DA92F39B2DE004675B8 /* LayoutModeSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutModeSettingView.swift; sourceTree = "<group>"; };
 		4508A9352EEFF2EB007C94E2 /* AccountWebWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountWebWindowController.swift; sourceTree = "<group>"; };
+		4D454D4F5259000000000002 /* MemoryUsageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryUsageModels.swift; sourceTree = "<group>"; };
+		4D454D4F5259000000000005 /* MemoryUsageMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryUsageMonitor.swift; sourceTree = "<group>"; };
+		4D454D4F5259000000000007 /* ProcessMemorySampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMemorySampler.swift; sourceTree = "<group>"; };
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
 		8417101CC460A0D12720DE81 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelAPIClient.swift; sourceTree = "<group>"; };
@@ -1262,6 +1268,7 @@
 		B0F370CD2E4326DC000B51F9 /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				4D454D4F5259000000000003 /* Diagnostics */,
 				370D03AB2F0E463B0087A1C9 /* Theme */,
 				37289F102EFE601F0003624E /* EventTrack */,
 				CCBF0F9C2ECEC08E005E729B /* Deeplink */,
@@ -1281,6 +1288,16 @@
 				376193522F4EB8630094A78E /* SystemUtils.swift */,
 			);
 			path = Utilities;
+			sourceTree = "<group>";
+		};
+		4D454D4F5259000000000003 /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				4D454D4F5259000000000002 /* MemoryUsageModels.swift */,
+				4D454D4F5259000000000005 /* MemoryUsageMonitor.swift */,
+				4D454D4F5259000000000007 /* ProcessMemorySampler.swift */,
+			);
+			path = Diagnostics;
 			sourceTree = "<group>";
 		};
 		B0F370CE2E4326EB000B51F9 /* Application */ = {
@@ -1828,6 +1845,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */,
+				4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */,
+				4D454D4F5259000000000004 /* MemoryUsageMonitor.swift in Sources */,
+				4D454D4F5259000000000006 /* ProcessMemorySampler.swift in Sources */,
 				37EA25EF2F6D5A5A00D3C4A9 /* CommonMessageRouter.swift in Sources */,
 				37C1B2F92EE2B18700DD4496 /* OverlayToastViewController.swift in Sources */,
 				CC4351C92ECAD209009D8FC3 /* CustomSlider.swift in Sources */,
