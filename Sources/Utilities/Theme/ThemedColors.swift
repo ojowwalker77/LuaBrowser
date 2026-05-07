@@ -153,7 +153,7 @@ private func makeDesignTheme(
     let darkTheme = NSColor(hex: darkThemeColor)
 
     theme.setColor(
-        light: NSColor(hex: lightOverlay, alpha: 0.8),
+        light: NSColor(hex: lightOverlay, alpha: 0.4),
         dark: NSColor(hex: darkOverlay, alpha: 0.8),
         for: .windowOverlayBackground
     )
