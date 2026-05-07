@@ -32,7 +32,16 @@ final class TabGroupChipView: NSView {
     static let countHorizontalPadding: CGFloat = 6
     static let countVerticalPadding: CGFloat = 1
     static let countToLabelGap: CGFloat = 6
-    static let maxFullWidth: CGFloat = 140
+    static let maxFullWidth: CGFloat = 180
+    /// Extra slack added to the measured label width when computing
+    /// the chip's overall width. NSTextField (TextKit) renders text
+    /// a hair wider than `NSString.size(withAttributes:)` reports —
+    /// glyph side-bearing, subpixel rounding, plus `.byTruncatingTail`
+    /// being conservative about reserving space for the ellipsis.
+    /// Without this slack the label gets exactly its natural width
+    /// and gets aggressively truncated to "h…" even for short
+    /// titles like "hello".
+    static let labelSafetyMargin: CGFloat = 4
     /// Compact mode: bar + swatch + 4pt right pad.
     static let compactWidth: CGFloat = 24
     static let compactSwatchWidth: CGFloat = 16
@@ -304,7 +313,9 @@ final class TabGroupChipView: NSView {
         // Trailing edge reserves space for the chevron with the same
         // labelRightPadding gap to the chip's right border.
         let chevronOverhead = chevronToContentGap + chevronSize + labelRightPadding
-        var width = barWidth + labelLeftPadding + ceil(labelWidth) + chevronOverhead
+        var width = barWidth + labelLeftPadding
+                  + ceil(labelWidth) + labelSafetyMargin
+                  + chevronOverhead
 
         if hasUserSetTitle {
             let countString = "\(memberCount)" as NSString
