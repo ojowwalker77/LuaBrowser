@@ -424,14 +424,11 @@ class WebContentContainerViewController: NSViewController {
     }
 
     private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
-        let liveTokens = Set(groups.keys)
-        groupChangeCancellables = groupChangeCancellables.filter { liveTokens.contains($0.key) }
-        for (token, info) in groups where groupChangeCancellables[token] == nil {
-            groupChangeCancellables[token] = info.objectWillChange
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    self?.updateContentOuterBorder()
-                }
+        WebContentGroupInfo.reconcileSubscriptions(
+            groups: groups,
+            cancellables: &groupChangeCancellables
+        ) { [weak self] _ in
+            self?.updateContentOuterBorder()
         }
     }
     
