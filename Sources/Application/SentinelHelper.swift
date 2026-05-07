@@ -162,12 +162,16 @@ enum SentinelHelper {
         }
     }
 
-    private static func bootLogURL() -> URL {
+    /// Directory containing Sentinel's `boot.log` (same base path as `bootLogURL()`).
+    static func sentinelLogsDirectoryURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent(sentinelLogDirName(), isDirectory: true)
-            .appendingPathComponent("boot.log", isDirectory: false)
+    }
+
+    private static func bootLogURL() -> URL {
+        sentinelLogsDirectoryURL().appendingPathComponent("boot.log", isDirectory: false)
     }
 
     /// Mirrors `SentinelLogger.logDirName` from the Sentinel project.

@@ -6,9 +6,11 @@
 import Foundation
 import Cocoa
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension AppController {
     static let extensionInfoItemTag = 500002
+    static let exportLogsItemTag = 500011
     static let toggleBookmarkBarItemTag = 500003
     static let toggleBookmarkBarOnNewTabItemTag = 500004
     static let layoutModeDefaultItemTag = 500005
@@ -173,6 +175,7 @@ extension AppController {
                 // Remove existing custom items to avoid duplication on menu rebuild
                 subMenu.items.removeAll {
                     $0.tag == AppController.extensionInfoItemTag ||
+                    $0.tag == AppController.exportLogsItemTag ||
                     $0.tag == AppController.whatsNewItemTag
                 }
                 
@@ -182,11 +185,20 @@ extension AppController {
                 extensionInfoItem.tag = AppController.extensionInfoItemTag
                 extensionInfoItem.isHidden = true
                 extensionInfoItem.target = self
+
+                let exportLogsItem = NSMenuItem(title: NSLocalizedString("Export Logs...", comment: "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"),
+                                                action: #selector(exportLogs(_:)),
+                                                keyEquivalent: "")
+                exportLogsItem.tag = AppController.exportLogsItemTag
+                exportLogsItem.isHidden = true
+                exportLogsItem.target = self
                 
                 if subMenu.items.count > 0 {
                     subMenu.insertItem(extensionInfoItem, at: 0)
+                    subMenu.insertItem(exportLogsItem, at: 1)
                 } else {
                     subMenu.addItem(extensionInfoItem)
+                    subMenu.addItem(exportLogsItem)
                 }
 
                 let whatsNewItem = NSMenuItem(title: NSLocalizedString("What's New", comment: "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'"),
@@ -349,6 +361,108 @@ extension AppController {
         BrowserState.currentState()?.createTab("chrome://whats-new", focusAfterCreate: true)
     }
     
+    @objc func exportLogs(_ sender: Any?) {
+        let phiLogsURL = URL(fileURLWithPath: FileSystemUtils.phiBrowserDataDirectory(), isDirectory: true)
+            .appendingPathComponent("PhiLogs", isDirectory: true)
+        let sentinelLogsURL = SentinelHelper.sentinelLogsDirectoryURL()
+        let fm = FileManager.default
+        let hasPhi = fm.fileExists(atPath: phiLogsURL.path)
+        let hasSentinel = fm.fileExists(atPath: sentinelLogsURL.path)
+        guard hasPhi || hasSentinel else {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("Export Logs", comment: "Help menu - Log export alert title when no log folders exist")
+            alert.informativeText = NSLocalizedString("No Phi or Sentinel log folders were found.", comment: "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing")
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+            alert.runModal()
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [.zip]
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        panel.nameFieldStringValue = "Phi_Logs_\(formatter.string(from: Date())).zip"
+        panel.title = NSLocalizedString("Export Logs", comment: "Help menu - NSSavePanel window title for saving the log export zip")
+        panel.prompt = NSLocalizedString("Export", comment: "Help menu - NSSavePanel primary button title for confirming log export save location")
+
+        let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self, response == .OK, let destURL = panel.url else { return }
+            do {
+                try self.zipPhiLogsExport(
+                    phiLogsURL: phiLogsURL,
+                    sentinelLogsURL: sentinelLogsURL,
+                    includePhi: hasPhi,
+                    includeSentinel: hasSentinel,
+                    destinationZIP: destURL
+                )
+            } catch {
+                AppLogError("Log export failed: \(error.localizedDescription)")
+                let alert = NSAlert()
+                alert.messageText = NSLocalizedString("Export Failed", comment: "Help menu - Log export error alert title")
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+                alert.runModal()
+            }
+        }
+
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(panel.runModal())
+        }
+    }
+
+    private func zipPhiLogsExport(
+        phiLogsURL: URL,
+        sentinelLogsURL: URL,
+        includePhi: Bool,
+        includeSentinel: Bool,
+        destinationZIP: URL
+    ) throws {
+        let fm = FileManager.default
+        let staging = fm.temporaryDirectory.appendingPathComponent("PhiLogExport-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
+
+        var zipRoots: [String] = []
+        if includePhi {
+            let dest = staging.appendingPathComponent("PhiLogs", isDirectory: true)
+            try fm.copyItem(at: phiLogsURL, to: dest)
+            zipRoots.append("PhiLogs")
+        }
+        if includeSentinel {
+            let dest = staging.appendingPathComponent("SentinelLogs", isDirectory: true)
+            try fm.copyItem(at: sentinelLogsURL, to: dest)
+            zipRoots.append("SentinelLogs")
+        }
+        guard !zipRoots.isEmpty else { return }
+
+        if fm.fileExists(atPath: destinationZIP.path) {
+            try fm.removeItem(at: destinationZIP)
+        }
+
+        let stderrPipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.arguments = ["-r", "-q", destinationZIP.path] + zipRoots
+        process.currentDirectoryURL = staging
+        process.standardError = stderrPipe
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let errText = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = errText.isEmpty ? "zip exited with status \(process.terminationStatus)." : errText
+            throw NSError(domain: "PhiLogExport", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: detail])
+        }
+    }
+
     @objc func showExtensionInfo(_ sender: Any?) {
         let versionsDict = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.extensionManager.phiExtensionVersions
         
@@ -496,7 +610,9 @@ extension AppController {
                 #selector(triggerDeeplink(_:)),
                 #selector(clearUserData(_:)),
                 #selector(clearLoginStatus(_:)),
-                #selector(clearAllUserData(_:))
+                #selector(clearAllUserData(_:)),
+                #selector(showExtensionInfo(_:)),
+                #selector(exportLogs(_:))
             ]
 
             if let action = item.action {
@@ -524,6 +640,9 @@ extension AppController: NSMenuDelegate {
         let optionKeyPressed = NSEvent.modifierFlags.contains(.option)
         if let extensionInfoItem = menu.item(withTag: AppController.extensionInfoItemTag) {
             extensionInfoItem.isHidden = !optionKeyPressed
+        }
+        if let exportLogsItem = menu.item(withTag: AppController.exportLogsItemTag) {
+            exportLogsItem.isHidden = !optionKeyPressed
         }
     }
 }

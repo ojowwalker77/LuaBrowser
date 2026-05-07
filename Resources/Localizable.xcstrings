@@ -441,6 +441,18 @@
     "Error" : {
       "comment" : "Phi Link - Custom bot generic error text"
     },
+    "Export" : {
+      "comment" : "Help menu - NSSavePanel primary button title for confirming log export save location"
+    },
+    "Export Failed" : {
+      "comment" : "Help menu - Log export error alert title"
+    },
+    "Export Logs" : {
+      "comment" : "Help menu - Log export alert title when no log folders exist\nHelp menu - NSSavePanel window title for saving the log export zip"
+    },
+    "Export Logs..." : {
+      "comment" : "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"
+    },
     "Extension Info" : {
       "comment" : "Extension info alert - Title of the alert showing extension version information\nHelp menu - Menu item to show extension version info, only visible when holding Option key"
     },
@@ -708,6 +720,9 @@
     "No extensions found or versions unavailable." : {
       "comment" : "Extension info alert - Fallback when no extension versions are available"
     },
+    "No Phi or Sentinel log folders were found." : {
+      "comment" : "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing"
+    },
     "No Results" : {
       "comment" : "Shortcuts settings - Empty state text when no shortcuts match search"
     },
@@ -727,7 +742,7 @@
       "comment" : "Phi Link - Official Bot title"
     },
     "OK" : {
-      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nFeedback form - OK button to dismiss file size alert"
+      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nFeedback form - OK button to dismiss file size alert\nGeneric - OK button to dismiss an alert"
     },
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
