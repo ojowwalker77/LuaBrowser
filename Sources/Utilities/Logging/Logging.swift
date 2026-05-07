@@ -57,12 +57,16 @@ struct PhiLogging {
 // Default log level for the app.
 public let DDDefaultLogLevel: DDLogLevel = .error
 
-// - TODO: OC Logging/lunching log
+private enum PhiLoggingInstallation {
+    static var didInstall = false
+}
+
+/// Installs file + OS loggers once. Call `[PhiLoggingRuntime installSharedLogging]` from `main.m` before any Objective-C
+/// `AppLog*` / `DDLog*`; `applicationWillFinishLaunching` also calls this as a fallback.
+/// Repeat calls are no-ops so `DDFileLogger` is never torn down (which would roll the current file).
 public func setupLogging() {
-    // Reset loggers before installing the shared configuration.
-    DDLog.removeAllLoggers()
-    
-    // Add the console logger alongside the rolling file logger.
+    if PhiLoggingInstallation.didInstall { return }
+
     let consoleLogger = DDOSLogger.sharedInstance
     consoleLogger.logFormatter = PhiLogFormatter()
     
@@ -79,6 +83,17 @@ public func setupLogging() {
     DDLog.add(fileLogger, with: .info)
     DDLog.add(consoleLogger, with: .info)
 #endif
+    PhiLoggingInstallation.didInstall = true
+}
+
+/// Entry point for Objective-C (`main.m`, Chromium launcher) so logging is installed before any `AppLog*`
+/// or `DDLog*` calls. Swift global functions are not visible to ObjC; use this instead of calling
+/// `setupLogging()` from `.m` files.
+@objc(PhiLoggingRuntime)
+public final class PhiLoggingRuntime: NSObject {
+    @objc public static func installSharedLogging() {
+        setupLogging()
+    }
 }
 
 /// Returns the app log directory.

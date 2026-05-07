@@ -15,7 +15,6 @@ class Account {
     init(userID: String, userInfo: User? = nil) {
         self.userID = userID
         self.userInfo = userInfo
-        setupLogging()
         if let userInfo {
             EventTracker.updateUserProfile(userInfo)
         }

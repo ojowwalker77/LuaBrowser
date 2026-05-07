@@ -13,6 +13,7 @@
 
 int main(int argc, const char * argv[]) {
     @try {
+        [PhiLoggingRuntime installSharedLogging];
         AppLogInfo(@"PhiBrowser starting with main entry point...");
         AppLogInfo(@"Command line arguments: argc=%d", argc);
         
