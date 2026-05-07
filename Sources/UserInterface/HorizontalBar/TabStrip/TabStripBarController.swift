@@ -89,6 +89,13 @@ final class TabStripBarController: NSViewController {
         tabStrip.tabFrame(for: tab, in: coordView)
     }
 
+    /// Forwards to the underlying tab strip — used by the content border
+    /// outline coordinator to draw per-group colored boundary paths
+    /// (unified underline + active-tab outline) in WCC coords.
+    func groupGeometries(in coordView: NSView, activeTab: Tab?) -> [TabStrip.GroupGeometry] {
+        tabStrip.groupGeometries(in: coordView, activeTab: activeTab)
+    }
+
     /// Set by the coordinator to receive a notification on each strip layout.
     var onTabStripLayoutChanged: (() -> Void)? {
         get { tabStrip.onLayoutChanged }

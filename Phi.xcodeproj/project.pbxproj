@@ -183,7 +183,6 @@
 		8EE5BEEC2F14FF9800698D7D /* TabCloseButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EE5BEEB2F14FF9800698D7D /* TabCloseButton.swift */; };
 		8EEBD7692FAB137E008CBD9A /* TabGroupRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EEBD7682FAB137E008CBD9A /* TabGroupRun.swift */; };
 		8EEBD76C2FAB1731008CBD9A /* TabGroupChipView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EEBD76A2FAB1731008CBD9A /* TabGroupChipView.swift */; };
-		8EEBD76D2FAB1731008CBD9A /* TabGroupUnderlineLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EEBD76B2FAB1731008CBD9A /* TabGroupUnderlineLayer.swift */; };
 		8EEC91C22F8623EB00C5336E /* ExtensionPopupAnchor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EEC91C12F8623EB00C5336E /* ExtensionPopupAnchor.swift */; };
 		8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */; };
 		8EF36C062F4E9EC100FCC91E /* TabContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C052F4E9EC100FCC91E /* TabContentView.swift */; };
@@ -559,7 +558,6 @@
 		8EE5BEEB2F14FF9800698D7D /* TabCloseButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabCloseButton.swift; sourceTree = "<group>"; };
 		8EEBD7682FAB137E008CBD9A /* TabGroupRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupRun.swift; sourceTree = "<group>"; };
 		8EEBD76A2FAB1731008CBD9A /* TabGroupChipView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupChipView.swift; sourceTree = "<group>"; };
-		8EEBD76B2FAB1731008CBD9A /* TabGroupUnderlineLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupUnderlineLayer.swift; sourceTree = "<group>"; };
 		8EEC91C12F8623EB00C5336E /* ExtensionPopupAnchor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionPopupAnchor.swift; sourceTree = "<group>"; };
 		8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabViewModel.swift; sourceTree = "<group>"; };
 		8EF36C052F4E9EC100FCC91E /* TabContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentView.swift; sourceTree = "<group>"; };
@@ -1130,7 +1128,6 @@
 			isa = PBXGroup;
 			children = (
 				8EEBD76A2FAB1731008CBD9A /* TabGroupChipView.swift */,
-				8EEBD76B2FAB1731008CBD9A /* TabGroupUnderlineLayer.swift */,
 				8EE5BEEB2F14FF9800698D7D /* TabCloseButton.swift */,
 				8E4C949B2F10DA5800B09A80 /* NewTabButton.swift */,
 				8E4C94952F10AEED00B09A80 /* TabBackgroundLayer.swift */,
@@ -2087,7 +2084,6 @@
 				CC376D262EC6D5EE00270B93 /* DynamicColor+Color.swift in Sources */,
 				3777EEF42FC4442700C85E41 /* FloatingNewTabView.swift in Sources */,
 				8EEBD76C2FAB1731008CBD9A /* TabGroupChipView.swift in Sources */,
-				8EEBD76D2FAB1731008CBD9A /* TabGroupUnderlineLayer.swift in Sources */,
 				374BCE992F7157FD0043C656 /* TabAreaContextMenuHelper.swift in Sources */,
 				37604F632F14C52300B9FB37 /* DefaultColors.swift in Sources */,
 				37B978102EF403AB007E0568 /* GradientBorderButton.swift in Sources */,

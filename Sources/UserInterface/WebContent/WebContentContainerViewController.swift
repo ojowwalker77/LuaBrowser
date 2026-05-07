@@ -122,13 +122,19 @@ class WebContentContainerViewController: NSViewController {
     private let outerBorderLayer = CAShapeLayer()
     private var outerBorderThemeObservation: AnyObject?
 
-    /// Sibling stroke that traces *just* the active tab's outline portion
-    /// (the part `appendActiveTabOutline` produces). Painted in the active
-    /// tab's group color when the tab belongs to a group, with the same
-    /// 1pt lineWidth as `outerBorderLayer`, so it covers the underlying
-    /// gray pixel-for-pixel along the same path. `path = nil` whenever the
-    /// active tab is ungrouped or no horizontal-strip outline applies.
-    private let activeTabGroupTintLayer = CAShapeLayer()
+    /// Per-group colored stroke that traces a single unified path:
+    /// horizontal underline from the chip's leading edge → up-and-over
+    /// the active tab's outline (when the active tab is in this group)
+    /// → horizontal underline to the last member tab's trailing edge.
+    /// One layer per visible expanded group, keyed by token.
+    ///
+    /// Replaces what would otherwise be (a) a separate filled band in
+    /// `TabStrip.normalContainer.layer` and (b) a separate stroke
+    /// covering the active tab outline. Two-shape rendering creates a
+    /// perpendicular seam at the inverse-curve apex that no padding /
+    /// corner-radius tweak can fully eliminate; one path eliminates it
+    /// by construction.
+    private var groupBoundaryLayers: [String: CAShapeLayer] = [:]
 
     /// Per-group `objectWillChange` subscriptions — needed because the
     /// active tab's group color and the active tab's groupToken can both
@@ -236,21 +242,6 @@ class WebContentContainerViewController: NSViewController {
             guard let self else { return }
             self.outerBorderLayer.strokeColor = ThemedColor.border.resolve(in: self.view).cgColor
         }
-
-        // Group-tint stroke for the active tab outline. Same path geometry
-        // as the corresponding portion of `outerBorderLayer`, painted on
-        // top to mask the default gray with the group color.
-        activeTabGroupTintLayer.fillColor = NSColor.clear.cgColor
-        activeTabGroupTintLayer.strokeColor = NSColor.clear.cgColor
-        activeTabGroupTintLayer.lineWidth = 1
-        activeTabGroupTintLayer.lineCap = .butt
-        activeTabGroupTintLayer.lineJoin = .round
-        activeTabGroupTintLayer.zPosition = LayerZIndex.contentOuterBorder + 1
-        activeTabGroupTintLayer.actions = [
-            "strokeColor": NSNull(),
-            "lineWidth": NSNull()
-        ]
-        view.layer?.addSublayer(activeTabGroupTintLayer)
         
         // Add left-edge hover trigger for floating sidebar.
         view.addSubview(floatingSidebarTriggerView)
@@ -438,7 +429,7 @@ class WebContentContainerViewController: NSViewController {
     private func updateContentOuterBorder() {
         guard let controller = currentWebContentController else {
             outerBorderLayer.path = nil
-            activeTabGroupTintLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
         let isComfortableLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
@@ -451,7 +442,7 @@ class WebContentContainerViewController: NSViewController {
         let r = controller.splitViewContainerFrame(in: view)
         guard r.width > 0, r.height > 0 else {
             outerBorderLayer.path = nil
-            activeTabGroupTintLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
 
@@ -556,30 +547,134 @@ class WebContentContainerViewController: NSViewController {
         outerBorderLayer.path = path
         outerBorderLayer.strokeColor = ThemedColor.border.resolve(in: view).cgColor
 
-        // Group tint sits on top of the unified border, following only the
-        // active-tab outline portion. Drawn iff the active tab is in a
-        // group AND the unified-path active-tab branch was taken (same
-        // geometric guard as above).
-        if let af = activeFrame,
-           af.minX - invR > leftX + cornerR,
-           af.maxX + invR < rightX - cornerR,
-           let token = controller.associatedTab?.groupToken,
-           let groupColor = browserState?.groups[token]?.color {
-            let tintPath = CGMutablePath()
-            TabStripMetrics.appendActiveTabOutline(
-                to: tintPath,
-                leftX: af.minX,
-                rightX: af.maxX,
-                apexY: topY,
-                tabTopY: af.maxY
-            )
-            activeTabGroupTintLayer.path = tintPath
-            activeTabGroupTintLayer.strokeColor = groupColor.nsColor.cgColor
-        } else {
-            activeTabGroupTintLayer.path = nil
-        }
+        updateGroupBoundaryLayers(apexY: topY, invR: invR)
 
         CATransaction.commit()
+    }
+
+    /// Builds / refreshes one `CAShapeLayer` per visible expanded group,
+    /// each tracing a unified path: horizontal underline from chip to
+    /// the active tab's left apex (if the group contains the active
+    /// tab) → up over the active tab outline → down to the right apex
+    /// → horizontal underline to the last member tab. For groups that
+    /// don't contain the active tab the path is just the horizontal
+    /// segment.
+    ///
+    /// Single path means the seam at the inverse-curve apex no longer
+    /// exists by construction — stroke is one continuous shape.
+    private func updateGroupBoundaryLayers(apexY: CGFloat, invR: CGFloat) {
+        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let activeTab = currentWebContentController?.associatedTab
+        guard traditionalLayout,
+              let geometries = tabStripBarController?.groupGeometries(in: view,
+                                                                       activeTab: activeTab) else {
+            clearGroupBoundaryLayers()
+            return
+        }
+
+        // Tear down vanished tokens.
+        let liveTokens = Set(geometries.map { $0.token })
+        for (token, layer) in groupBoundaryLayers where !liveTokens.contains(token) {
+            layer.removeFromSuperlayer()
+            groupBoundaryLayers.removeValue(forKey: token)
+        }
+
+        let cornerR = TabStripMetrics.Tab.cornerRadius
+        let activeFrame = tabStripBarController?.tabFrame(for: activeTab, in: view)
+
+        for geom in geometries {
+            guard let group = browserState?.groups[geom.token] else { continue }
+
+            let layer: CAShapeLayer
+            if let existing = groupBoundaryLayers[geom.token] {
+                layer = existing
+            } else {
+                layer = CAShapeLayer()
+                layer.fillColor = NSColor.clear.cgColor
+                layer.lineWidth = 1
+                layer.lineCap = .butt
+                layer.lineJoin = .round
+                layer.zPosition = LayerZIndex.contentOuterBorder + 1
+                layer.actions = ["strokeColor": NSNull(), "lineWidth": NSNull()]
+                view.layer?.addSublayer(layer)
+                groupBoundaryLayers[geom.token] = layer
+            }
+
+            // Inset the horizontal segment ends so the underline
+            // doesn't bleed into an adjacent (non-member) active
+            // tab's inverse-curve "shadow". An active tab's apex
+            // tip extends `invR − interTabGap` (= 8 − 3 = 5pt) past
+            // its neighboring chip's leading edge; without this
+            // inset our underline pokes 5pt under that adjacent
+            // apex curve, leaving a small triangular seam between
+            // the (gray) curve and the (colored) horizontal line.
+            //
+            // For groups whose active member sits at this boundary
+            // we keep the path extending all the way to its own
+            // apex tip via `min`/`max` — the inset only affects the
+            // free, non-curving end.
+            let edgeInset: CGFloat = invR - 3
+            let leftInsetX = geom.leftX + edgeInset
+            let rightInsetX = geom.rightX - edgeInset
+
+            let path = CGMutablePath()
+            if geom.containsActive, let af = activeFrame {
+                let leftLineStart = min(leftInsetX, af.minX - invR)
+                let rightLineEnd = max(rightInsetX, af.maxX + invR)
+                path.move(to: CGPoint(x: leftLineStart, y: apexY))
+                path.addLine(to: CGPoint(x: af.minX - invR, y: apexY))
+                // up the left inverse curve
+                path.addCurve(
+                    to: CGPoint(x: af.minX, y: apexY + invR),
+                    control1: CGPoint(x: af.minX - invR / 2, y: apexY),
+                    control2: CGPoint(x: af.minX, y: apexY + invR / 2)
+                )
+                // up the left side
+                path.addLine(to: CGPoint(x: af.minX, y: af.maxY - cornerR))
+                // top-left corner
+                path.addCurve(
+                    to: CGPoint(x: af.minX + cornerR, y: af.maxY),
+                    control1: CGPoint(x: af.minX, y: af.maxY - cornerR / 2),
+                    control2: CGPoint(x: af.minX + cornerR / 2, y: af.maxY)
+                )
+                // top edge
+                path.addLine(to: CGPoint(x: af.maxX - cornerR, y: af.maxY))
+                // top-right corner
+                path.addCurve(
+                    to: CGPoint(x: af.maxX, y: af.maxY - cornerR),
+                    control1: CGPoint(x: af.maxX - cornerR / 2, y: af.maxY),
+                    control2: CGPoint(x: af.maxX, y: af.maxY - cornerR / 2)
+                )
+                // down the right side
+                path.addLine(to: CGPoint(x: af.maxX, y: apexY + invR))
+                // down the right inverse curve
+                path.addCurve(
+                    to: CGPoint(x: af.maxX + invR, y: apexY),
+                    control1: CGPoint(x: af.maxX, y: apexY + invR / 2),
+                    control2: CGPoint(x: af.maxX + invR / 2, y: apexY)
+                )
+                // right apex → horizontal → group-right (or apex tip
+                // itself if active is the rightmost / only member).
+                path.addLine(to: CGPoint(x: rightLineEnd, y: apexY))
+            } else {
+                // No active tab in this group — just a horizontal
+                // underline along the strip's bottom edge, with the
+                // same 5pt edge inset so adjacent active apexes
+                // outside this group don't clip our line.
+                path.move(to: CGPoint(x: leftInsetX, y: apexY))
+                path.addLine(to: CGPoint(x: rightInsetX, y: apexY))
+            }
+
+            layer.path = path
+            layer.strokeColor = group.color.nsColor.cgColor
+        }
+    }
+
+    private func clearGroupBoundaryLayers() {
+        for (_, layer) in groupBoundaryLayers {
+            layer.removeFromSuperlayer()
+        }
+        groupBoundaryLayers.removeAll()
     }
     
     // MARK: - Tab Management
