@@ -99,23 +99,16 @@ struct TabStripLayoutOutput {
     /// when `groupRuns` was empty in input.
     let chipFrames: [String: ChipPlacement]
 
-    /// Rounded-rect underline rect per **expanded** group. Collapsed
-    /// groups have no member run on the strip, so no underline. Empty
-    /// when `groupRuns` was empty in input.
-    let underlineFrames: [String: CGRect]
-
     init(tabFrames: [CGRect],
          separatorXPositions: [CGFloat],
          newTabButtonFrame: CGRect,
          totalContentWidth: CGFloat,
-         chipFrames: [String: ChipPlacement] = [:],
-         underlineFrames: [String: CGRect] = [:]) {
+         chipFrames: [String: ChipPlacement] = [:]) {
         self.tabFrames = tabFrames
         self.separatorXPositions = separatorXPositions
         self.newTabButtonFrame = newTabButtonFrame
         self.totalContentWidth = totalContentWidth
         self.chipFrames = chipFrames
-        self.underlineFrames = underlineFrames
     }
 }
 
@@ -404,8 +397,6 @@ enum TabStripLayoutEngine {
         var tabFrames: [CGRect] = []
         var separatorXs: [CGFloat] = []
         var chipFrames: [String: ChipPlacement] = [:]
-        var memberMinX: [String: CGFloat] = [:]
-        var memberMaxX: [String: CGFloat] = [:]
 
         var currentX = startOffsetX
 
@@ -423,12 +414,6 @@ enum TabStripLayoutEngine {
                 let chipFrame = CGRect(x: currentX, y: chipY,
                                         width: chipWidth, height: TabGroupChipView.height)
                 chipFrames[run.token] = ChipPlacement(frame: chipFrame, mode: chipMode)
-                // Seed the underline range with the chip's leading
-                // edge so the underline runs continuously from chip
-                // through the last member tab. Without this seed the
-                // underline starts at the first tab's minX, leaving
-                // a visual gap that makes the chip look unrelated.
-                memberMinX[run.token] = chipFrame.minX
                 currentX += chipWidth + input.spacing
             }
 
@@ -458,12 +443,6 @@ enum TabStripLayoutEngine {
                                 width: width, height: input.tabHeight)
             tabFrames.append(frame)
 
-            // Track group min/max X for underline derivation.
-            for run in input.groupRuns where run.range.contains(i) {
-                memberMinX[run.token] = min(memberMinX[run.token] ?? CGFloat.infinity, frame.minX)
-                memberMaxX[run.token] = max(memberMaxX[run.token] ?? -CGFloat.infinity, frame.maxX)
-            }
-
             currentX += width
             let separatorX = currentX + input.spacing
             separatorXs.append(separatorX)
@@ -481,27 +460,12 @@ enum TabStripLayoutEngine {
         currentX += btnSize.width + TabStripMetrics.NewTabButton.insets.right
         let totalWidth = currentX
 
-        // ── Underline rects: only for expanded groups with members.
-        var underlineFrames: [String: CGRect] = [:]
-        for run in input.groupRuns where !run.isCollapsed {
-            guard let lo = memberMinX[run.token], let hi = memberMaxX[run.token] else {
-                continue
-            }
-            let x = lo + 2
-            let w = max(0, hi - lo - 4)
-            // Strip-local Y: 1pt above strip bottom, 3pt tall.
-            underlineFrames[run.token] = CGRect(
-                x: x, y: 1, width: w, height: TabGroupUnderlineLayer.height
-            )
-        }
-
         return TabStripLayoutOutput(
             tabFrames: tabFrames,
             separatorXPositions: separatorXs,
             newTabButtonFrame: newTabFrame,
             totalContentWidth: totalWidth,
-            chipFrames: chipFrames,
-            underlineFrames: underlineFrames
+            chipFrames: chipFrames
         )
     }
 

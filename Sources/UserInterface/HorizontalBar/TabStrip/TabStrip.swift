@@ -76,7 +76,11 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     // MARK: - Group view pools
     private var chipViews: [String: TabGroupChipView] = [:]
-    private var underlineLayers: [String: TabGroupUnderlineLayer] = [:]
+    // Note: per-group underlines are no longer drawn here. They live
+    // alongside the active-tab outline in `WebContentContainerViewController`,
+    // tracing one unified path per group, so the chip/underline/active
+    // outline have no perpendicular seams between them. The chips
+    // themselves remain in the strip's normalContainer.
 
     /// Pre-measured chip widths in `.full` mode, keyed by token. Refreshed
     /// when title / color / member count changes; passed to the layout
@@ -266,6 +270,57 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// disappears while the proxy crosses into the pinned zone — regardless
     /// of which zone the drag started from. Pinned tabs in their resting
     /// position never get a gap.
+    /// Geometric envelope for one visible tab group on the strip, in
+    /// `coordView` coordinates. Used by
+    /// `WebContentContainerViewController` to draw a single unified
+    /// colored path per group (chip-edge → horizontal underline →
+    /// active tab outline (if applicable) → horizontal underline →
+    /// last-tab edge), which avoids the perpendicular seam that two
+    /// separate band+stroke shapes produce at the active tab's
+    /// inverse-curve apex.
+    ///
+    /// Collapsed groups are omitted: the chip is still rendered on
+    /// the strip but the group has no member-tab run, so there is no
+    /// underline to draw.
+    struct GroupGeometry {
+        let token: String
+        let leftX: CGFloat
+        let rightX: CGFloat
+        let containsActive: Bool
+    }
+
+    /// `activeTab` is the tab whose outline should be carved into the
+    /// path (typically `currentWebContentController.associatedTab` —
+    /// the *visible* tab — rather than `browserState.focusingTab`, to
+    /// stay aligned with the unified content-border outline during the
+    /// deferred-first-paint switch path).
+    func groupGeometries(in coordView: NSView, activeTab: Tab?) -> [GroupGeometry] {
+        let runs = currentGroupRuns()
+        let normalTabs = browserState.normalTabs
+        let activeIdx = normalTabs.firstIndex {
+            isTabActive($0, activeTab: activeTab)
+        }
+        var result: [GroupGeometry] = []
+        for run in runs where !run.isCollapsed {
+            guard let chip = chipViews[run.token],
+                  chip.superview != nil,
+                  run.range.upperBound < normalTabs.count else { continue }
+            let lastTab = normalTabs[run.range.upperBound]
+            guard let lastTabView = normalTabViews[tabId(for: lastTab)],
+                  lastTabView.superview != nil else { continue }
+            let chipFrame = chip.convert(chip.bounds, to: coordView)
+            let lastFrame = lastTabView.convert(lastTabView.bounds, to: coordView)
+            let containsActive = activeIdx.map { run.range.contains($0) } ?? false
+            result.append(GroupGeometry(
+                token: run.token,
+                leftX: chipFrame.minX,
+                rightX: lastFrame.maxX,
+                containsActive: containsActive
+            ))
+        }
+        return result
+    }
+
     func tabFrame(for tab: Tab?, in coordView: NSView) -> CGRect? {
         guard let tab else { return nil }
         // Match by uniqueId, not reference: WebContentViewController.associatedTab
@@ -454,8 +509,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         separatorViews.removeAll()
         chipViews.values.forEach { $0.removeFromSuperview() }
         chipViews.removeAll()
-        underlineLayers.values.forEach { $0.removeFromSuperlayer() }
-        underlineLayers.removeAll()
         chipFullWidths.removeAll()
 
         hoveredTabIndex = nil
@@ -904,27 +957,24 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             updateNormalContainerMask()
         }
 
-        // Chip + underline placement runs only for the normal zone and
-        // only when the engine output carries placements (ungrouped
-        // strips emit empty dictionaries).
+        // Chip placement runs only for the normal zone. Per-group
+        // colored boundary paths (underline + active outline) are
+        // drawn in WCC, not here.
         if !isPinned {
-            applyGroupPlacements(
+            applyChipPlacements(
                 container: container,
-                chipFrames: layoutOutput.chipFrames,
-                underlineFrames: layoutOutput.underlineFrames
+                chipFrames: layoutOutput.chipFrames
             )
         }
     }
 
-    /// Allocates / reuses chip views and underline layers, sets their
-    /// frames (with scroll offset baked in), and tears down stale
-    /// entries. Called from `applyLayout` for the normal zone only.
-    private func applyGroupPlacements(
+    /// Allocates / reuses chip views, sets their frames (with scroll
+    /// offset baked in), and tears down stale entries. Called from
+    /// `applyLayout` for the normal zone only.
+    private func applyChipPlacements(
         container: NSView,
-        chipFrames: [String: ChipPlacement],
-        underlineFrames: [String: CGRect]
+        chipFrames: [String: ChipPlacement]
     ) {
-        // ── Chip views.
         for (token, placement) in chipFrames {
             let chip: TabGroupChipView
             if let existing = chipViews[token] {
@@ -960,30 +1010,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         for (token, view) in chipViews where chipFrames[token] == nil {
             view.removeFromSuperview()
             chipViews.removeValue(forKey: token)
-        }
-
-        // ── Underline layers.
-        for (token, rect) in underlineFrames {
-            let layer: TabGroupUnderlineLayer
-            if let existing = underlineLayers[token] {
-                layer = existing
-            } else {
-                layer = TabGroupUnderlineLayer()
-                container.layer?.addSublayer(layer)
-                layer.zPosition = -10  // Below TabItemView layers.
-                underlineLayers[token] = layer
-            }
-            if let group = browserState.groups[token] {
-                layer.setColor(group.color.nsColor)
-            }
-            var r = rect
-            r.origin.x -= currentScrollOffset
-            layer.setFrameAndPath(r)
-        }
-        // Tear down underlines for collapsed or vanished groups.
-        for (token, layer) in underlineLayers where underlineFrames[token] == nil {
-            layer.removeFromSuperlayer()
-            underlineLayers.removeValue(forKey: token)
         }
     }
 
