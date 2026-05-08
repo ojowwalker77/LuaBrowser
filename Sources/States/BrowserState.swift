@@ -30,6 +30,7 @@ class BrowserState {
         let url: String?
         let guid: Int?
         let index: Int
+        let syncChromiumOrder: Bool
         
         func matches(tab: Tab) -> Bool {
             if let guid { return tab.guid == guid }
@@ -646,7 +647,9 @@ class BrowserState {
         // Honor any pending insertion target for tabs promoted into the normal tab list.
         if let pending = pendingNormalTabInsertion {
             if pending.matches(tab: tab) {
-                insertIntoNormalTabOrder(tabGuid: tab.guid, at: pending.index)
+                insertIntoNormalTabOrder(tabGuid: tab.guid,
+                                         at: pending.index,
+                                         syncChromiumOrder: pending.syncChromiumOrder)
                 pendingNormalTabInsertion = nil
                 let elapsed = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 AppLogDebug("[NativeTab] ⏱ handleNewTabFromChromium tabId=\(tab.guid) took \(String(format: "%.2f", elapsed))ms")
@@ -967,7 +970,7 @@ class BrowserState {
         wrapper.moveSelf(to: newIndex, selectAfterMove: selectAfterMove)
     }
     
-    /// Reorders normal tabs locally without notifying Chromium.
+    /// Reorders normal tabs locally and mirrors their relative order to Chromium.
     /// - Parameters:
     ///   - fromIndex: Source index inside `normalTabs`.
     ///   - toIndex: Destination insertion index inside `normalTabs`.
@@ -1003,23 +1006,53 @@ class BrowserState {
         normalTabs = normalTabOrder.compactMap { guid in
             tabs.first { $0.guid == guid }
         }
+
+        syncNormalTabRelativeOrderToChromium(tabId: guid)
+    }
+
+    private func syncNormalTabRelativeOrderToChromium(tabId: Int) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+            return
+        }
+
+        if movedIndex + 1 < normalTabOrder.count {
+            let anchorTabId = normalTabOrder[movedIndex + 1]
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+            return
+        }
+
+        if movedIndex > 0 {
+            let anchorTabId = normalTabOrder[movedIndex - 1]
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
     }
     
     func scheduleNormalTabInsertion(tabGuid: Int, at index: Int) {
-        pendingNormalTabInsertion = PendingNormalTabInsertion(url: nil, guid: tabGuid, index: index)
+        pendingNormalTabInsertion = PendingNormalTabInsertion(url: nil,
+                                                              guid: tabGuid,
+                                                              index: index,
+                                                              syncChromiumOrder: true)
     }
     
     /// Inserts a tab guid into `normalTabOrder` at the requested index.
     /// - Parameters:
     ///   - tabGuid: Chromium tab guid.
     ///   - index: Destination index relative to `normalTabs`.
-    private func insertIntoNormalTabOrder(tabGuid: Int, at index: Int) {
+    private func insertIntoNormalTabOrder(tabGuid: Int, at index: Int, syncChromiumOrder: Bool = false) {
         normalTabOrder.removeAll { $0 == tabGuid }
         
         let insertIndex = min(max(0, index), normalTabOrder.count)
         normalTabOrder.insert(tabGuid, at: insertIndex)
         
         updateNormalTabs()
+        if syncChromiumOrder {
+            syncNormalTabRelativeOrderToChromium(tabId: tabGuid)
+        }
     }
     
     /// Reorder pinned  tab
@@ -1082,10 +1115,15 @@ class BrowserState {
             }
             pinnedTab.webContentWrapper?.updateTabCustomValue("")
             
-            insertIntoNormalTabOrder(tabGuid: normalTab.guid, at: normalIndex)
+            insertIntoNormalTabOrder(tabGuid: normalTab.guid,
+                                     at: normalIndex,
+                                     syncChromiumOrder: true)
         } else {
             // New tabs are appended first, so record the intended insertion index up front.
-            pendingNormalTabInsertion = PendingNormalTabInsertion(url: pinnedTab.url ?? "", guid: nil, index: normalIndex)
+            pendingNormalTabInsertion = PendingNormalTabInsertion(url: pinnedTab.url ?? "",
+                                                                  guid: nil,
+                                                                  index: normalIndex,
+                                                                  syncChromiumOrder: true)
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: pinnedTab.url ?? "", at: -1, windowId: windowId, customGuid: nil)
         }
       
@@ -1256,10 +1294,15 @@ class BrowserState {
             }
             
             // Insert the existing tab into the desired normal-tab position.
-            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid, at: index)
+            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
+                                     at: index,
+                                     syncChromiumOrder: true)
         } else {
             // Create a new Chromium tab and let `newTab()` apply the pending insertion point.
-            pendingNormalTabInsertion = PendingNormalTabInsertion(url: url, guid: nil, index: index)
+            pendingNormalTabInsertion = PendingNormalTabInsertion(url: url,
+                                                                  guid: nil,
+                                                                  index: index,
+                                                                  syncChromiumOrder: true)
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url,
                                                                    at: -1,
                                                                    windowId: windowId,

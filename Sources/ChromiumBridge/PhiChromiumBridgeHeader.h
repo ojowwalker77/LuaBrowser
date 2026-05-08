@@ -297,6 +297,17 @@ typedef NS_ENUM(NSUInteger, DownloadEventType) {
 /// @param windowId The window ID to execute the command on
 - (void)executeCommand:(int)commandId windowId:(int64_t)windowId;
 
+- (void)moveTabWithWindowId:(int64_t)windowId
+                      tabId:(int64_t)tabId
+                beforeTabId:(int64_t)anchorTabId;
+- (void)moveTabWithWindowId:(int64_t)windowId
+                      tabId:(int64_t)tabId
+                 afterTabId:(int64_t)anchorTabId;
+- (void)moveTabToFirstWithWindowId:(int64_t)windowId
+                             tabId:(int64_t)tabId;
+- (void)moveTabToLastWithWindowId:(int64_t)windowId
+                            tabId:(int64_t)tabId;
+
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
 - (void)getFaviconForURL:(NSString *)urlString profileId:(NSString * _Nullable)profileId completion:(void (^)(NSData * _Nullable faviconData))completion;
