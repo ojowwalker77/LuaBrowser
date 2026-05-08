@@ -1027,6 +1027,22 @@ class BrowserState {
         if let tab = tabs.first(where: { $0.guid == tabId }),
            tab.groupToken == token {
             tab.groupToken = nil
+            // The tab just dropped its membership but its position
+            // in normalTabOrder is unchanged. If it was a *middle*
+            // member, the remaining members on either side now
+            // straddle a non-member, splitting the group's
+            // contiguous run. `currentGroupRuns` would emit two
+            // runs sharing the same token, and
+            // `layoutNormalWithGroups` would render two chip slots
+            // for one chip view — leaving an empty slot at the
+            // first run and visually orphaning the early member.
+            //
+            // Mirror of the inserted-non-member fix: treat the
+            // freshly-detached tab as an interloper and slide it
+            // past the group's last remaining member so the run
+            // stays unbroken.
+            relocateInterloperOutOfGroupRun(tabGuid: tabId)
+            updateNormalTabs()
         }
         // Drop any stale claim for this tab so a future arrival doesn't
         // resurrect the membership.
