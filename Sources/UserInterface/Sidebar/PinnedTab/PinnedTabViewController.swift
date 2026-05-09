@@ -25,6 +25,7 @@ class PinnedTabViewController: NSViewController {
         collectionView.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark])
 
         collectionView.backgroundColors = [.clear]
+        collectionView.clipsToBounds = true
         collectionView.register(PinnedTabItem.self, forItemWithIdentifier: PinnedTabItem.reuseIdentifier)
         collectionView.register(PinnedExtensionItem.self, forItemWithIdentifier: PinnedExtensionItem.reuseIdentifier)
         return collectionView
@@ -105,16 +106,6 @@ class PinnedTabViewController: NSViewController {
         }
     }
     
-    private lazy var scrollView: NSScrollView = {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.documentView = collectionView
-        return scrollView
-    }()
-
     private lazy var emptyView: DragAwareView = {
         let containerView = DragAwareView()
         containerView.dragController = self
@@ -198,14 +189,14 @@ class PinnedTabViewController: NSViewController {
         dragDestination.dragController = self
         view = dragDestination
         
-        setupScrollView()
+        setupPinnedCollectionArea()
     }
 
-    private func setupScrollView() {
-        view.addSubview(scrollView)
+    private func setupPinnedCollectionArea() {
+        view.addSubview(collectionView)
         view.addSubview(emptyView)
 
-        scrollView.snp.makeConstraints { make in
+        collectionView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
@@ -401,7 +392,7 @@ class PinnedTabViewController: NSViewController {
         let isEmpty = pinnedTabs.isEmpty && pinnedExtensionItems.isEmpty
         let showEmptyView = isEmpty && isDraggingTab
         emptyView.isHidden = !showEmptyView
-        scrollView.isHidden = showEmptyView
+        collectionView.isHidden = showEmptyView
     }
 
     private func updateAllItemsSelectionState(_ focusing: Tab?) {
