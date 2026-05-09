@@ -16,6 +16,12 @@ struct TabStripChipFrame {
     /// auto-leave gate to find the group's right boundary frame in
     /// `normalTabFrames`.
     let lastMemberIndex: Int
+    /// True when this run is collapsed (every member's frame in
+    /// `normalTabFrames` is `.zero`). Edge-based hit testing uses
+    /// the chip itself as a single hit-test entry standing in for
+    /// the entire run when this is true; otherwise visible member
+    /// frames serve as the run's landmarks directly.
+    let isCollapsed: Bool
     /// Chip frame in normalContainer coordinates with scroll offset
     /// already added back in (matching `normalTabFrames`).
     let frame: CGRect
@@ -547,18 +553,22 @@ final class TabStripDragController {
             // (e.g. cross-zone transition's first tick before
             // targetContainerType updates to .normal).
             let excluded = context.sourceContainerType == .normal ? context.sourceIndex : nil
+            let normalCursorX = localPoint.x
+                - metrics.normalContainerFrame.minX
+                + metrics.normalScrollOffset
             if let xFrame = metrics.draggedTabFrameInNormal {
                 let index = calculateGapIndexEdgeBased(
                     xFrame: xFrame,
                     tabFrames: metrics.normalTabFrames,
+                    chipFrames: metrics.chipFrames,
+                    cursorX: normalCursorX,
                     excludedIndex: excluded,
                     previousIndex: context.targetIndex
                 )
                 return (.normal, index)
             }
-            let localX = localPoint.x - metrics.normalContainerFrame.minX + metrics.normalScrollOffset
             let index = calculateGapIndex(
-                localX: localX,
+                localX: normalCursorX,
                 tabFrames: metrics.normalTabFrames,
                 excludedIndex: excluded
             )
@@ -600,27 +610,90 @@ final class TabStripDragController {
     private func calculateGapIndexEdgeBased(
         xFrame: CGRect,
         tabFrames: [CGRect],
+        chipFrames: [TabStripChipFrame],
+        cursorX: CGFloat,
         excludedIndex: Int?,
         previousIndex: Int
     ) -> Int {
-        var visibleFrames: [(index: Int, frame: CGRect)] = []
-        for (i, frame) in tabFrames.enumerated() {
-            if let exclude = excludedIndex, i == exclude { continue }
-            if frame == .zero { continue }
-            visibleFrames.append((i, frame))
+        // An entry is one hit-test target — either a visible tab or
+        // a chip standing in for an entire collapsed run. For a tab
+        // entry `afterIndex == beforeIndex + 1`; for a chip stand-in
+        // `afterIndex = run.upperBound + 1` so flipping past the
+        // chip jumps the gap clean across the whole hidden run in a
+        // single step. `isChipStandIn` switches the threshold rule
+        // because the chip is far narrower than the proxy and the
+        // proxy is clamped inside the layout content area, so proxy
+        // edges can't give meaningful "before/after chip" feedback.
+        struct Entry {
+            let beforeIndex: Int
+            let afterIndex: Int
+            let frame: CGRect
+            let isChipStandIn: Bool
         }
-        if visibleFrames.isEmpty { return 0 }
 
-        // Map the previous data-model gap to a visibleFrames index.
-        // `prevJ` is the smallest visible position whose tab was on
-        // the "before-the-gap" side of the previous demarcation.
-        let prevJ = visibleFrames.firstIndex(where: { $0.index >= previousIndex })
-            ?? visibleFrames.count
+        // Look up collapsed-run chips by their first-member index so
+        // the entry builder can emit a stand-in at that position
+        // instead of skipping the run's `.zero` member frames.
+        let collapsedChipsByFirst: [Int: TabStripChipFrame] = Dictionary(
+            uniqueKeysWithValues: chipFrames
+                .filter { $0.isCollapsed }
+                .map { ($0.firstMemberIndex, $0) }
+        )
 
-        for (j, item) in visibleFrames.enumerated() {
-            let midX = item.frame.midX
+        var entries: [Entry] = []
+        var i = 0
+        while i < tabFrames.count {
+            if let chip = collapsedChipsByFirst[i] {
+                entries.append(Entry(
+                    beforeIndex: chip.firstMemberIndex,
+                    afterIndex: chip.lastMemberIndex + 1,
+                    frame: chip.frame,
+                    isChipStandIn: true
+                ))
+                i = chip.lastMemberIndex + 1
+                continue
+            }
+            if let exclude = excludedIndex, i == exclude {
+                i += 1
+                continue
+            }
+            if tabFrames[i] == .zero {
+                i += 1
+                continue
+            }
+            entries.append(Entry(
+                beforeIndex: i,
+                afterIndex: i + 1,
+                frame: tabFrames[i],
+                isChipStandIn: false
+            ))
+            i += 1
+        }
+        if entries.isEmpty { return 0 }
+
+        // Map the previous data-model gap to an entries index.
+        // `prevJ` is the smallest entry position whose target was
+        // on the "before-the-gap" side of the previous demarcation.
+        let prevJ = entries.firstIndex(where: { $0.beforeIndex >= previousIndex })
+            ?? entries.count
+
+        for (j, entry) in entries.enumerated() {
+            let midX = entry.frame.midX
             let stateIsBefore: Bool
-            if j >= prevJ {
+            if entry.isChipStandIn {
+                // Chip stand-ins use cursor-based judgment. The
+                // asymmetric proxy-edge rule below assumes proxy
+                // and target are similar widths — true for a tab,
+                // false for a chip ~½ of a tab wide. Anchoring on
+                // cursor.x sidesteps that mismatch and the proxy
+                // clamp issue (proxy can't always reach chip.midX
+                // after the gap pushes chips rightward). Implicit
+                // hysteresis comes from the chip's frame shifting
+                // with the gap target — once the flip lands, the
+                // chip moves ~gapW away and the threshold for the
+                // reverse flip lands well outside cursor jiggle.
+                stateIsBefore = (cursorX < midX)
+            } else if j >= prevJ {
                 // Was "before T_j"; only flip to "after" if x's
                 // right edge has caught up to T_j's center.
                 stateIsBefore = (xFrame.maxX < midX)
@@ -630,10 +703,10 @@ final class TabStripDragController {
                 stateIsBefore = (xFrame.minX <= midX)
             }
             if stateIsBefore {
-                return item.index
+                return entry.beforeIndex
             }
         }
-        return (visibleFrames.last?.index ?? 0) + 1
+        return entries.last?.afterIndex ?? 0
     }
 
     /// Calculates the gap index for a pointer position within one container.
