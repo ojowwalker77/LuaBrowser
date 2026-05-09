@@ -1803,6 +1803,7 @@ extension TabStrip: TabStripDragDelegate {
                 token: run.token,
                 firstMemberIndex: run.range.lowerBound,
                 lastMemberIndex: run.range.upperBound,
+                isCollapsed: run.isCollapsed,
                 frame: chip.frame.offsetBy(dx: currentScrollOffset, dy: 0)
             )
         }

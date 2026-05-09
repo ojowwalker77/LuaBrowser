@@ -365,12 +365,17 @@ enum TabStripLayoutEngine {
         var baseWidth: CGFloat = effectiveTabCount > 0
             ? max(0, availableForTabs / CGFloat(effectiveTabCount))
             : 0
-        if baseWidth < chipModeThreshold {
+        // Compact mode is purely a width-pressure response — when
+        // visible tabs would shrink below the threshold, chips fall
+        // back to a 24pt compact form to claw width back. With no
+        // visible tabs to allocate width to (effectiveTabCount == 0,
+        // e.g. user drags the only non-grouped tab while every group
+        // is collapsed) there is no pressure and chips should stay
+        // in full mode so the title and count remain visible.
+        if effectiveTabCount > 0 && baseWidth < chipModeThreshold {
             chipMode = .compact
             availableForTabs = input.containerWidth - fixedOverheadBase - chipsCompactOverhead
-            baseWidth = effectiveTabCount > 0
-                ? max(0, availableForTabs / CGFloat(effectiveTabCount))
-                : 0
+            baseWidth = max(0, availableForTabs / CGFloat(effectiveTabCount))
         }
 
         // ── Width allocation — byte-identical logic to ungrouped path.
