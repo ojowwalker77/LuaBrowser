@@ -465,6 +465,9 @@
     "Export Logs..." : {
       "comment" : "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"
     },
+    "Export User Data..." : {
+      "comment" : "Help menu - Submenu item to save Phi user data folder as a zip backup"
+    },
     "Extension Info" : {
       "comment" : "Extension info alert - Title of the alert showing extension version information\nHelp menu - Menu item to show extension version info, only visible when holding Option key"
     },
@@ -565,7 +568,7 @@
       "comment" : "Debug import user data - Confirmation alert title before replacing Phi user data from zip"
     },
     "Import User Data..." : {
-      "comment" : "Debug menu - Menu item to replace Phi user data from a zip backup and relaunch the app"
+      "comment" : "Help menu - Submenu item to replace Phi user data from a zip backup and relaunch the app"
     },
     "Import..." : {
       "comment" : "Debug import user data - Alert button to open file picker for zip backup"
@@ -668,6 +671,9 @@
     },
     "Manage Extensions" : {
       "comment" : "Address bar menu - Extensions submenu item to open extension management\nExtension list - Button to open extensions management page"
+    },
+    "Manage User Data" : {
+      "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup"
     },
     "Mint" : {
       "comment" : "Mint theme color name"
@@ -945,9 +951,6 @@
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
     },
-    "Sign in again to continue" : {
-      "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
-    },
     "Set as default" : {
       "comment" : "Account settings - Button to set Phi as default browser"
     },
@@ -977,6 +980,9 @@
     },
     "Show in Finder" : {
       "comment" : "Download item row - Menu option to reveal file in Finder\nDownload item row - Tooltip for show in finder button\nTooltip for button to reveal downloaded file in Finder in living downloads toast"
+    },
+    "Sign in again to continue" : {
+      "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
     },
     "Site Settings" : {
       "comment" : "Address bar menu - Settings menu item\nAddress bar menu - Settings submenu title"
@@ -1112,6 +1118,9 @@
     "View Details" : {
       "comment" : "Account settings - Button to view invitation code details"
     },
+    "We need to refresh your session before account features can keep working. Please sign in again." : {
+      "comment" : "Auth reauthentication - Alert body explaining required authentication"
+    },
     "We provide a Telegram bot to relay your messages @philink_bot" : {
       "comment" : "Phi Link - Official Bot subtitle"
     },
@@ -1141,9 +1150,6 @@
     },
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
-    },
-    "We need to refresh your session before account features can keep working. Please sign in again." : {
-      "comment" : "Auth reauthentication - Alert body explaining required authentication"
     },
     "Zoom in" : {
       "comment" : "Image preview: accessibility label for zoom in control"

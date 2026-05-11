@@ -189,14 +189,6 @@ extension AppController {
         )
         openUserDirItem.target = self
         debugMenu.addItem(openUserDirItem)
-
-        let importUserDataItem = NSMenuItem(
-            title: NSLocalizedString("Import User Data...", comment: "Debug menu - Menu item to replace Phi user data from a zip backup and relaunch the app"),
-            action: #selector(importUserDataFromBackup(_:)),
-            keyEquivalent: ""
-        )
-        importUserDataItem.target = self
-        debugMenu.addItem(importUserDataItem)
         
         return debugMenuItem
     }
@@ -666,8 +658,30 @@ extension AppController {
             rawBase = "Phi"
         }
         let sanitized = Self.sanitizedBackupFileNameComponent(rawBase)
-        let base = sanitized.isEmpty ? "Phi" : sanitized
-        return "\(base)-data.zip"
+        let fallbackSlug = "Phi"
+        let resolvedSlug: String
+        if sanitized.isEmpty {
+            resolvedSlug = fallbackSlug
+        } else {
+            resolvedSlug = sanitized
+        }
+        let userSegment: String?
+        if resolvedSlug.caseInsensitiveCompare("Phi") == .orderedSame {
+            userSegment = nil
+        } else {
+            userSegment = resolvedSlug
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd"
+        let dateString = formatter.string(from: Date())
+        if let userSegment {
+            return "Phi-\(userSegment)-data-\(dateString).zip"
+        }
+        return "Phi-data-\(dateString).zip"
     }
 
     private static func sanitizedBackupFileNameComponent(_ raw: String) -> String {
@@ -700,6 +714,11 @@ extension AppController {
             let detail = errText.isEmpty ? "zip exited with status \(process.terminationStatus)." : errText
             throw NSError(domain: "PhiUserDataBackup", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: detail])
         }
+    }
+
+    @MainActor
+    @objc func exportUserData(_ sender: Any?) {
+        _ = performPhiUserDataBackupExport()
     }
 
     @MainActor

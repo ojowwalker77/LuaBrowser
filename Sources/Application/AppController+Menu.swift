@@ -11,6 +11,8 @@ import UniformTypeIdentifiers
 extension AppController {
     static let extensionInfoItemTag = 500002
     static let exportLogsItemTag = 500011
+    static let manageUserDataHelpSeparatorTag = 500012
+    static let manageUserDataParentItemTag = 500013
     static let toggleBookmarkBarItemTag = 500003
     static let toggleBookmarkBarOnNewTabItemTag = 500004
     static let layoutModeDefaultItemTag = 500005
@@ -176,7 +178,9 @@ extension AppController {
                 subMenu.items.removeAll {
                     $0.tag == AppController.extensionInfoItemTag ||
                     $0.tag == AppController.exportLogsItemTag ||
-                    $0.tag == AppController.whatsNewItemTag
+                    $0.tag == AppController.whatsNewItemTag ||
+                    $0.tag == AppController.manageUserDataHelpSeparatorTag ||
+                    $0.tag == AppController.manageUserDataParentItemTag
                 }
                 
                 let extensionInfoItem = NSMenuItem(title: NSLocalizedString("Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
@@ -213,6 +217,31 @@ extension AppController {
                 } else {
                     subMenu.addItem(whatsNewItem)
                 }
+
+                let userDataSeparator = NSMenuItem.separator()
+                userDataSeparator.tag = AppController.manageUserDataHelpSeparatorTag
+                subMenu.addItem(userDataSeparator)
+
+                let manageUserDataTitle = NSLocalizedString("Manage User Data", comment: "Help menu - Parent menu item for exporting and importing Phi user data backup")
+                let manageUserDataItem = NSMenuItem(title: manageUserDataTitle, action: nil, keyEquivalent: "")
+                manageUserDataItem.tag = AppController.manageUserDataParentItemTag
+                let userDataSubmenu = NSMenu(title: manageUserDataTitle)
+                let exportUserDataItem = NSMenuItem(
+                    title: NSLocalizedString("Export User Data...", comment: "Help menu - Submenu item to save Phi user data folder as a zip backup"),
+                    action: #selector(exportUserData(_:)),
+                    keyEquivalent: ""
+                )
+                exportUserDataItem.target = self
+                let importUserDataItem = NSMenuItem(
+                    title: NSLocalizedString("Import User Data...", comment: "Help menu - Submenu item to replace Phi user data from a zip backup and relaunch the app"),
+                    action: #selector(importUserDataFromBackup(_:)),
+                    keyEquivalent: ""
+                )
+                importUserDataItem.target = self
+                userDataSubmenu.addItem(exportUserDataItem)
+                userDataSubmenu.addItem(importUserDataItem)
+                manageUserDataItem.submenu = userDataSubmenu
+                subMenu.addItem(manageUserDataItem)
                 
                 subMenu.delegate = self
             }
@@ -611,7 +640,9 @@ extension AppController {
                 #selector(clearLoginStatus(_:)),
                 #selector(clearAllUserData(_:)),
                 #selector(showExtensionInfo(_:)),
-                #selector(exportLogs(_:))
+                #selector(exportLogs(_:)),
+                #selector(exportUserData(_:)),
+                #selector(importUserDataFromBackup(_:))
             ]
 
             if let action = item.action {
