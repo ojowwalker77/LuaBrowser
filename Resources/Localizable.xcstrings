@@ -621,9 +621,6 @@
     "Keep" : {
       "comment" : "Download item row - Tooltip for keep button on safety warning\nTooltip for keep button on safety warning in living downloads toast"
     },
-    "Later" : {
-      "comment" : "Auth reauthentication - Secondary action to defer Auth0 web authentication"
-    },
     "Launch Phi Sentinel automatically at login" : {
       "comment" : "AI settings - Toggle to auto-launch Phi Sentinel at system login"
     },
@@ -822,9 +819,6 @@
     "Phi needs Full Disk Access to import your data from Safari." : {
       "comment" : "Import browser data page - Description explaining why Full Disk Access permission is needed"
     },
-    "Phi needs you to authenticate again to restore account features. You can keep browsing for now, but token-based features will be unavailable until you reauthenticate." : {
-      "comment" : "Auth reauthentication - Alert body explaining degraded auth state"
-    },
     "Phi Sentinel" : {
       "comment" : "AI settings - Section title for Phi Sentinel background helper"
     },
@@ -951,7 +945,7 @@
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
     },
-    "Session Expired" : {
+    "Sign in again to continue" : {
       "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
     },
     "Set as default" : {
@@ -1147,6 +1141,9 @@
     },
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
+    },
+    "We need to refresh your session before account features can keep working. Please sign in again." : {
+      "comment" : "Auth reauthentication - Alert body explaining required authentication"
     },
     "Zoom in" : {
       "comment" : "Image preview: accessibility label for zoom in control"

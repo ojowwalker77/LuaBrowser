@@ -149,8 +149,6 @@ extension AccountUserDefaults {
         case lastKnownSidebarWidth
         case authReauthenticationReason
         case authReauthenticationFirstDetectedAt
-        case authReauthenticationPromptDeferrals
-        case authReauthenticationNextPromptAt
     }
     
     /// Notification popup behavior mode.

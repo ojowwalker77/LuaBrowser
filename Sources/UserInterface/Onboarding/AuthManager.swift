@@ -139,7 +139,7 @@ class AuthManager {
     // which leaves the local Auth0 SDK with a rotated (stale) refresh token.
     private var lastSuccessfulSyncAt: Date?
     private let renewCooldown: TimeInterval = 60 * 60 // 1 hour
-    private let renewUrgentWindow: TimeInterval = 30 * 60 // 30 minutes before expiry
+    private let renewUrgentWindow: TimeInterval = 60 * 60 // 60 minutes before expiry
 
     private var isRenewing = false
     private let failureTrace = AuthFailureTraceBuffer()
@@ -149,7 +149,6 @@ class AuthManager {
             NotificationCenter.default.post(name: .authReauthenticationStateDidChange, object: nil)
         }
     }
-    let reauthenticationPolicy: AuthReauthenticationPolicy = .default
     var isPresentingReauthenticationPrompt = false
     var hasPersistedReauthenticationState = false
 

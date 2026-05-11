@@ -16,76 +16,30 @@ enum AuthReauthenticationState: Equatable {
     case normal
     case required(
         reason: AuthReauthenticationReason,
-        firstDetectedAt: Date,
-        promptDeferrals: Int,
-        nextPromptAt: Date?
+        firstDetectedAt: Date
     )
     case reauthenticating(
         reason: AuthReauthenticationReason,
-        firstDetectedAt: Date,
-        promptDeferrals: Int,
-        nextPromptAt: Date?
+        firstDetectedAt: Date
     )
 
     var requiredDetails: (
         reason: AuthReauthenticationReason,
-        firstDetectedAt: Date,
-        promptDeferrals: Int,
-        nextPromptAt: Date?
+        firstDetectedAt: Date
     )? {
         switch self {
-        case let .required(reason, firstDetectedAt, promptDeferrals, nextPromptAt),
-             let .reauthenticating(reason, firstDetectedAt, promptDeferrals, nextPromptAt):
-            return (reason, firstDetectedAt, promptDeferrals, nextPromptAt)
+        case let .required(reason, firstDetectedAt),
+             let .reauthenticating(reason, firstDetectedAt):
+            return (reason, firstDetectedAt)
         case .normal:
             return nil
         }
     }
 }
 
-struct AuthReauthenticationPolicy {
-    static let `default` = AuthReauthenticationPolicy(
-        maxPromptDeferrals: 3,
-        maxOfflineDuration: 7 * 24 * 60 * 60,
-        promptIntervals: [
-            10.0 * 60,
-            60.0 * 60
-        ]
-    )
-
-    let maxPromptDeferrals: Int
-    let maxOfflineDuration: TimeInterval
-    let promptIntervals: [TimeInterval]
-
-    func shouldForceLogin(
-        firstDetectedAt: Date,
-        promptDeferrals: Int,
-        now: Date
-    ) -> Bool {
-        promptDeferrals >= maxPromptDeferrals ||
-            now.timeIntervalSince(firstDetectedAt) > maxOfflineDuration
-    }
-
-    func nextPromptAt(afterDeferrals promptDeferrals: Int, now: Date) -> Date? {
-        guard promptDeferrals > 0 else { return nil }
-        let intervalIndex = min(promptDeferrals - 1, promptIntervals.count - 1)
-        guard promptIntervals.indices.contains(intervalIndex) else {
-            return nil
-        }
-        return now.addingTimeInterval(promptIntervals[intervalIndex])
-    }
-
-    func canPrompt(nextPromptAt: Date?, now: Date) -> Bool {
-        guard let nextPromptAt else { return true }
-        return now >= nextPromptAt
-    }
-}
-
 private struct PersistedAuthReauthenticationState {
     let reason: AuthReauthenticationReason
     let firstDetectedAt: Date
-    let promptDeferrals: Int
-    let nextPromptAt: Date?
 }
 
 extension AuthManager {
@@ -94,15 +48,7 @@ extension AuthManager {
     }
 
     func hasReauthenticationGraceSession() -> Bool {
-        if let details = reauthenticationState.requiredDetails {
-            return !reauthenticationPolicy.shouldForceLogin(
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: details.promptDeferrals,
-                now: Date()
-            )
-        }
-
-        return hasPersistedReauthenticationState
+        reauthenticationState.requiredDetails != nil || hasPersistedReauthenticationState
     }
 
     func restorePersistedReauthenticationStateIfNeeded(
@@ -121,21 +67,8 @@ extension AuthManager {
         hasPersistedReauthenticationState = true
         reauthenticationState = .required(
             reason: persisted.reason,
-            firstDetectedAt: persisted.firstDetectedAt,
-            promptDeferrals: persisted.promptDeferrals,
-            nextPromptAt: persisted.nextPromptAt
+            firstDetectedAt: persisted.firstDetectedAt
         )
-
-        if reauthenticationPolicy.shouldForceLogin(
-            firstDetectedAt: persisted.firstDetectedAt,
-            promptDeferrals: persisted.promptDeferrals,
-            now: Date()
-        ) {
-            Task { @MainActor [weak self] in
-                self?.forceLogoutAfterReauthenticationFailure(reason: "reauthentication_policy_limit")
-            }
-            return
-        }
 
         if promptIfDue {
             Task { @MainActor [weak self] in
@@ -155,16 +88,12 @@ extension AuthManager {
         let existing = reauthenticationState.requiredDetails
         let persisted = existing == nil ? persistedReauthenticationState() : nil
         let firstDetectedAt = existing?.firstDetectedAt ?? persisted?.firstDetectedAt ?? now
-        let promptDeferrals = existing?.promptDeferrals ?? persisted?.promptDeferrals ?? 0
-        let nextPromptAt = existing?.nextPromptAt ?? persisted?.nextPromptAt
 
         recordTrace(
             "reauthentication-required",
             details: [
                 "reason": reason.rawValue,
-                "firstDetectedAt": iso8601String(firstDetectedAt),
-                "promptDeferrals": String(promptDeferrals),
-                "nextPromptAt": iso8601String(nextPromptAt)
+                "firstDetectedAt": iso8601String(firstDetectedAt)
             ],
             callStackSymbols: Array(Thread.callStackSymbols.prefix(16))
         )
@@ -173,25 +102,12 @@ extension AuthManager {
 
         reauthenticationState = .required(
             reason: reason,
-            firstDetectedAt: firstDetectedAt,
-            promptDeferrals: promptDeferrals,
-            nextPromptAt: nextPromptAt
+            firstDetectedAt: firstDetectedAt
         )
         persistReauthenticationState(
             reason: reason,
-            firstDetectedAt: firstDetectedAt,
-            promptDeferrals: promptDeferrals,
-            nextPromptAt: nextPromptAt
+            firstDetectedAt: firstDetectedAt
         )
-
-        if reauthenticationPolicy.shouldForceLogin(
-            firstDetectedAt: firstDetectedAt,
-            promptDeferrals: promptDeferrals,
-            now: now
-        ) {
-            forceLogoutAfterReauthenticationFailure(reason: "reauthentication_policy_limit")
-            return
-        }
 
         promptForReauthenticationIfNeeded(trigger: "renew_failed")
     }
@@ -203,86 +119,36 @@ extension AuthManager {
             return
         }
 
-        let now = Date()
-        guard reauthenticationPolicy.canPrompt(nextPromptAt: details.nextPromptAt, now: now) else {
-            recordTrace(
-                "reauthentication-prompt-skipped",
-                details: [
-                    "reason": details.reason.rawValue,
-                    "trigger": trigger,
-                    "nextPromptAt": iso8601String(details.nextPromptAt)
-                ]
-            )
-            return
-        }
+        recordTrace(
+            "reauthentication-prompt-presented",
+            details: [
+                "reason": details.reason.rawValue,
+                "trigger": trigger
+            ]
+        )
 
         isPresentingReauthenticationPrompt = true
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = NSLocalizedString(
-            "Session Expired",
+            "Sign in again to continue",
             comment: "Auth reauthentication - Alert title when the access token can no longer be renewed"
         )
         alert.informativeText = NSLocalizedString(
-            "Phi needs you to authenticate again to restore account features. You can keep browsing for now, but token-based features will be unavailable until you reauthenticate.",
-            comment: "Auth reauthentication - Alert body explaining degraded auth state"
+            "We need to refresh your session before account features can keep working. Please sign in again.",
+            comment: "Auth reauthentication - Alert body explaining required authentication"
         )
         alert.addButton(withTitle: NSLocalizedString(
             "Reauthenticate",
             comment: "Auth reauthentication - Primary action to start Auth0 web authentication"
         ))
-        alert.addButton(withTitle: NSLocalizedString(
-            "Later",
-            comment: "Auth reauthentication - Secondary action to defer Auth0 web authentication"
-        ))
 
-        let response = alert.runModal()
+        alert.runModal()
         isPresentingReauthenticationPrompt = false
 
-        switch response {
-        case .alertFirstButtonReturn:
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let succeeded = await self.reauthenticateExpiredSession()
-                if !succeeded {
-                    self.forceLogoutAfterReauthenticationFailure(reason: "webauth_failed")
-                }
-            }
-        default:
-            let nextDeferrals = details.promptDeferrals + 1
-            let nextPromptAt = reauthenticationPolicy.nextPromptAt(
-                afterDeferrals: nextDeferrals,
-                now: Date()
-            )
-            reauthenticationState = .required(
-                reason: details.reason,
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: nextDeferrals,
-                nextPromptAt: nextPromptAt
-            )
-            persistReauthenticationState(
-                reason: details.reason,
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: nextDeferrals,
-                nextPromptAt: nextPromptAt
-            )
-            recordTrace(
-                "reauthentication-deferred",
-                details: [
-                    "reason": details.reason.rawValue,
-                    "trigger": trigger,
-                    "promptDeferrals": String(nextDeferrals),
-                    "nextPromptAt": iso8601String(nextPromptAt)
-                ]
-            )
-
-            if reauthenticationPolicy.shouldForceLogin(
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: nextDeferrals,
-                now: Date()
-            ) {
-                forceLogoutAfterReauthenticationFailure(reason: "reauthentication_deferred_limit")
-            }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.reauthenticateExpiredSession()
         }
     }
 
@@ -294,15 +160,12 @@ extension AuthManager {
 
         reauthenticationState = .reauthenticating(
             reason: details.reason,
-            firstDetectedAt: details.firstDetectedAt,
-            promptDeferrals: details.promptDeferrals,
-            nextPromptAt: details.nextPromptAt
+            firstDetectedAt: details.firstDetectedAt
         )
         recordTrace(
             "reauthentication-started",
             details: [
-                "reason": details.reason.rawValue,
-                "promptDeferrals": String(details.promptDeferrals)
+                "reason": details.reason.rawValue
             ]
         )
 
@@ -314,13 +177,10 @@ extension AuthManager {
                 .start()
 
             guard storeReauthenticatedCredentials(results) else {
-                reportReauthenticationResult(
-                    succeeded: false,
-                    reason: details.reason,
-                    details: [
-                        "failure": "user_mismatch",
-                        "promptDeferrals": String(details.promptDeferrals)
-                    ]
+                handleReauthenticationFailure(
+                    details: details,
+                    failure: "user_mismatch",
+                    extraDetails: [:]
                 )
                 return false
             }
@@ -334,32 +194,11 @@ extension AuthManager {
             )
             return true
         } catch {
-            reauthenticationState = .required(
-                reason: details.reason,
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: details.promptDeferrals,
-                nextPromptAt: details.nextPromptAt
-            )
-            persistReauthenticationState(
-                reason: details.reason,
-                firstDetectedAt: details.firstDetectedAt,
-                promptDeferrals: details.promptDeferrals,
-                nextPromptAt: details.nextPromptAt
-            )
-            recordTrace(
-                "reauthentication-failed",
-                details: [
-                    "reason": details.reason.rawValue,
+            handleReauthenticationFailure(
+                details: details,
+                failure: "webauth_error",
+                extraDetails: [
                     "error": error.localizedDescription
-                ]
-            )
-            reportReauthenticationResult(
-                succeeded: false,
-                reason: details.reason,
-                details: [
-                    "failure": "webauth_error",
-                    "error": error.localizedDescription,
-                    "promptDeferrals": String(details.promptDeferrals)
                 ]
             )
             AppLogError("reauthentication with auth0 failed: \(error.localizedDescription)")
@@ -368,7 +207,33 @@ extension AuthManager {
     }
 
     @MainActor
-    func forceLogoutAfterReauthenticationFailure(reason: String) {
+    private func handleReauthenticationFailure(
+        details: (
+            reason: AuthReauthenticationReason,
+            firstDetectedAt: Date
+        ),
+        failure: String,
+        extraDetails: [String: String]
+    ) {
+        var reportDetails = extraDetails
+        reportDetails["failure"] = failure
+
+        recordTrace(
+            "reauthentication-failed",
+            details: [
+                "reason": details.reason.rawValue
+            ].merging(reportDetails) { _, newValue in newValue }
+        )
+        forceLogoutAfterReauthenticationFailure(reason: failure, shouldReport: false)
+        reportReauthenticationResult(
+            succeeded: false,
+            reason: details.reason,
+            details: reportDetails
+        )
+    }
+
+    @MainActor
+    func forceLogoutAfterReauthenticationFailure(reason: String, shouldReport: Bool = true) {
         let reauthenticationReason = reauthenticationState.requiredDetails?.reason
         recordTrace(
             "reauthentication-forced-logout",
@@ -377,7 +242,7 @@ extension AuthManager {
             ],
             callStackSymbols: Array(Thread.callStackSymbols.prefix(16))
         )
-        if let reauthenticationReason {
+        if shouldReport, let reauthenticationReason {
             reportReauthenticationResult(
                 succeeded: false,
                 reason: reauthenticationReason,
@@ -404,28 +269,15 @@ extension AuthManager {
             return nil
         }
 
-        let nextPromptTimestamp = defaults.double(
-            forKey: AccountUserDefaults.DefaultsKey.authReauthenticationNextPromptAt.rawValue
-        )
-        let nextPromptAt = nextPromptTimestamp > 0
-            ? Date(timeIntervalSince1970: nextPromptTimestamp)
-            : nil
-
         return PersistedAuthReauthenticationState(
             reason: reason,
-            firstDetectedAt: Date(timeIntervalSince1970: firstDetectedTimestamp),
-            promptDeferrals: defaults.integer(
-                forKey: AccountUserDefaults.DefaultsKey.authReauthenticationPromptDeferrals.rawValue
-            ),
-            nextPromptAt: nextPromptAt
+            firstDetectedAt: Date(timeIntervalSince1970: firstDetectedTimestamp)
         )
     }
 
     func persistReauthenticationState(
         reason: AuthReauthenticationReason,
-        firstDetectedAt: Date,
-        promptDeferrals: Int,
-        nextPromptAt: Date?
+        firstDetectedAt: Date
     ) {
         guard let defaults = AccountController.shared.account?.userDefaults else {
             return
@@ -433,8 +285,6 @@ extension AuthManager {
 
         defaults.set(reason.rawValue, forKey: .authReauthenticationReason)
         defaults.set(firstDetectedAt.timeIntervalSince1970, forKey: .authReauthenticationFirstDetectedAt)
-        defaults.set(promptDeferrals, forKey: .authReauthenticationPromptDeferrals)
-        defaults.set(nextPromptAt?.timeIntervalSince1970, forKey: .authReauthenticationNextPromptAt)
         hasPersistedReauthenticationState = true
     }
 
@@ -447,8 +297,9 @@ extension AuthManager {
 
         defaults.set(nil, forKey: .authReauthenticationReason)
         defaults.set(nil, forKey: .authReauthenticationFirstDetectedAt)
-        defaults.set(nil, forKey: .authReauthenticationPromptDeferrals)
-        defaults.set(nil, forKey: .authReauthenticationNextPromptAt)
+        defaults.set(nil, forKey: "authReauthenticationFailedAttempts")
+        defaults.set(nil, forKey: "authReauthenticationPromptDeferrals")
+        defaults.set(nil, forKey: "authReauthenticationNextPromptAt")
     }
 }
 
