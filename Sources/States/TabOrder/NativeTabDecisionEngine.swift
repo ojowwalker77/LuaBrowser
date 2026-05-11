@@ -279,6 +279,50 @@ struct NativeTabRelationGraph: Equatable {
         }
     }
 
+    /// Slice-shaped variant of `fixOpenersAfterMovingTab`. For each
+    /// member `m` in the moved slice, re-parents every direct child
+    /// `c` of `m` that lies **outside** the slice to `m`'s opener (or
+    /// removes the entry if `m` has no opener) — mirroring the
+    /// grandparent-inheritance semantics of the single-tab helper.
+    /// Children that lie **inside** the slice keep their opener
+    /// unchanged: members keep their relative positions to each other,
+    /// so intra-slice opener edges have stable geometric meaning.
+    ///
+    /// Self-loops on members are cleaned up the same way as in
+    /// `fixOpenersAfterMovingTab`.
+    ///
+    /// Implementation note: phases 1 and 2 are separated because Set
+    /// iteration order is non-deterministic; mutating openerByTabId
+    /// in-flight would let an external child get re-parented multiple
+    /// times (m1→m2→grandparent) depending on visit order. Snapshot
+    /// the desired final opener per external child first, then apply.
+    mutating func fixOpenersAfterMovingSlice(_ memberIds: Set<Int>) {
+        // Phase 1: capture (external child → its slice-member parent's
+        //          opener) pairs before any mutation.
+        var newOpenerForChild: [Int: Int?] = [:]
+        for movedTabId in memberIds {
+            let newOpenerTabId = openerByTabId[movedTabId]
+            for childTabId in directChildren(of: movedTabId)
+            where !memberIds.contains(childTabId) {
+                newOpenerForChild[childTabId] = newOpenerTabId
+            }
+        }
+
+        // Phase 2: apply captured re-parents.
+        for (childTabId, newOpener) in newOpenerForChild {
+            if let newOpener, newOpener != childTabId {
+                openerByTabId[childTabId] = newOpener
+            } else {
+                openerByTabId.removeValue(forKey: childTabId)
+            }
+        }
+
+        // Phase 3: clean up self-loops on members.
+        for movedTabId in memberIds where openerByTabId[movedTabId] == movedTabId {
+            openerByTabId.removeValue(forKey: movedTabId)
+        }
+    }
+
     func fixingOpenersAfterMovingTab(_ movedTabId: Int) -> NativeTabRelationGraph {
         var graph = self
         graph.fixOpenersAfterMovingTab(movedTabId)

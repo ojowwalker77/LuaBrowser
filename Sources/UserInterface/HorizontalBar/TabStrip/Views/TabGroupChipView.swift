@@ -65,6 +65,17 @@ final class TabGroupChipView: NSView {
     /// `TabGroupSidebarItem.makeContextMenu` here. Returns nil → no menu.
     var onMenuRequest: ((String) -> NSMenu?)?
 
+    /// Fired when chip mouseDown + horizontal drag exceeds threshold —
+    /// promotes click-pending to active group drag. Window coordinates
+    /// of the current mouse position.
+    var onDragStart: ((_ token: String, _ windowLocation: CGPoint) -> Void)?
+
+    /// Fired on every `mouseDragged` while drag is active.
+    var onDrag: ((_ token: String, _ windowLocation: CGPoint) -> Void)?
+
+    /// Fired on `mouseUp` when the drag was active (not on a click).
+    var onDragEnd: ((_ token: String, _ windowLocation: CGPoint) -> Void)?
+
     // MARK: - Hover state
 
     private var isHovered: Bool = false {
@@ -75,6 +86,25 @@ final class TabGroupChipView: NSView {
     }
     private var hoverTrackingArea: NSTrackingArea?
     private var mouseDownInside: Bool = false
+
+    // MARK: - Click vs drag state machine
+    //
+    // mouseDown captures `mouseDownLocation` and sets pendingAction = .click.
+    // mouseDragged promotes to `.drag` once |Δx| crosses the threshold and
+    // fires `onDragStart` once. Subsequent drag events fire `onDrag`.
+    // mouseUp routes to `onClick` (still .click) or `onDragEnd` (.drag).
+
+    private enum PendingChipAction {
+        case idle
+        case click
+        case drag
+    }
+    private var pendingAction: PendingChipAction = .idle
+    private var mouseDownLocation: CGPoint = .zero
+
+    /// Horizontal pixel threshold to promote click → drag. Matches
+    /// `TabGroupDragController.dragActivationThreshold`.
+    private static let dragActivationThreshold: CGFloat = 4
 
     // MARK: - Data
 
@@ -372,16 +402,56 @@ final class TabGroupChipView: NSView {
         addCursorRect(bounds, cursor: .pointingHand)
     }
 
+    /// Prevent AppKit from treating chip-area mouseDown as a
+    /// window-drag handle. The main window has
+    /// `isMovableByWindowBackground = true`
+    /// (`MainBrowserWindowController.swift`), so without these two
+    /// overrides drags on the chip would move the host window.
+    /// `acceptsFirstResponder = true` matches `TabItemView` and is
+    /// required for AppKit to treat this view as one that "responds
+    /// to mouse events" — otherwise the `mouseDownCanMoveWindow`
+    /// false return is ignored in the window-drag heuristic.
+    override var mouseDownCanMoveWindow: Bool { false }
+    override var acceptsFirstResponder: Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         mouseDownInside = true
+        mouseDownLocation = event.locationInWindow
+        pendingAction = .click
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard mouseDownInside else { return }
+        let dx = event.locationInWindow.x - mouseDownLocation.x
+        switch pendingAction {
+        case .click:
+            if abs(dx) >= Self.dragActivationThreshold {
+                pendingAction = .drag
+                onDragStart?(token, event.locationInWindow)
+            }
+        case .drag:
+            onDrag?(token, event.locationInWindow)
+        case .idle:
+            break
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { mouseDownInside = false }
+        defer {
+            mouseDownInside = false
+            pendingAction = .idle
+        }
         guard mouseDownInside else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        guard bounds.contains(p) else { return }
-        onClick?(token)
+        switch pendingAction {
+        case .click:
+            let p = convert(event.locationInWindow, from: nil)
+            guard bounds.contains(p) else { return }
+            onClick?(token)
+        case .drag:
+            onDragEnd?(token, event.locationInWindow)
+        case .idle:
+            break
+        }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

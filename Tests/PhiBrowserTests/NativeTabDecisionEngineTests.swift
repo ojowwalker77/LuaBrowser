@@ -466,4 +466,56 @@ final class NativeTabDecisionEngineTests: XCTestCase {
         XCTAssertNil(relationGraph.openerByTabId[2])
         XCTAssertEqual(relationGraph.resetOnActiveChangeTabIds, [2])
     }
+
+    // MARK: - fixOpenersAfterMovingSlice
+
+    func testFixOpenersAfterMovingSlicePreservesIntraSliceEdges() {
+        var graph = NativeTabRelationGraph(
+            knownTabIds: Set([1, 2, 3]),
+            openerByTabId: [2: 1, 3: 2], // 1 → 2 → 3, all within the moved slice
+            resetOnActiveChangeTabIds: [],
+            version: 0
+        )
+
+        graph.fixOpenersAfterMovingSlice([1, 2, 3])
+
+        // Intra-slice opener edges must remain unchanged — slice members
+        // keep their relative positions, so the geometric meaning of these
+        // edges is preserved.
+        XCTAssertEqual(graph.openerByTabId[2], 1)
+        XCTAssertEqual(graph.openerByTabId[3], 2)
+    }
+
+    func testFixOpenersAfterMovingSliceRetargetsCrossSliceChildToGrandparent() {
+        var graph = NativeTabRelationGraph(
+            knownTabIds: Set([1, 2, 3, 4]),
+            openerByTabId: [2: 1, 3: 2, 4: 3],
+            resetOnActiveChangeTabIds: [],
+            version: 0
+        )
+
+        // Slice [2, 3] moves. 3's direct child 4 lives outside the slice
+        // and should be re-parented to 3's opener (= 2) — mirroring the
+        // grandparent-inheritance semantics of fixOpenersAfterMovingTab.
+        graph.fixOpenersAfterMovingSlice([2, 3])
+
+        XCTAssertEqual(graph.openerByTabId[4], 2)
+        // Within-slice edge 2 → 3 stays put.
+        XCTAssertEqual(graph.openerByTabId[3], 2)
+        // 2's own opener (outside slice) is unaffected by this method.
+        XCTAssertEqual(graph.openerByTabId[2], 1)
+    }
+
+    func testFixOpenersAfterMovingSliceOrphansChildWhenSliceMemberHasNoOpener() {
+        var graph = NativeTabRelationGraph(
+            knownTabIds: Set([2, 3, 4]),
+            openerByTabId: [4: 2], // 2 has no opener; 4 is 2's child outside slice
+            resetOnActiveChangeTabIds: [],
+            version: 0
+        )
+
+        graph.fixOpenersAfterMovingSlice([2, 3])
+
+        XCTAssertNil(graph.openerByTabId[4])
+    }
 }
