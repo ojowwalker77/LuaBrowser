@@ -1322,12 +1322,145 @@ class BrowserState {
         )
         
         normalTabOrder.insert(guid, at: insertIndex)
-        
+
         normalTabs = normalTabOrder.compactMap { guid in
             tabs.first { $0.guid == guid }
         }
 
         syncNormalTabRelativeOrderToChromium(tabId: guid)
+    }
+
+    /// Reorders a contiguous slice of group members in `normalTabOrder`
+    /// as a single atomic operation. The slice's group membership is
+    /// invariant; only its position changes.
+    ///
+    /// - Parameters:
+    ///   - memberIds: Member guids in source order. **Must** be
+    ///     contiguous in `normalTabOrder`; otherwise the call asserts
+    ///     in debug and bails out in release.
+    ///   - to: Destination insertion index in `normalTabOrder`. Drops
+    ///     in `[s, s+N]` (the slice's own range, inclusive of its
+    ///     right edge) are no-ops — callers should already filter
+    ///     these via `TabGroupDragContext.hasPositionChanged`, but the
+    ///     method double-checks.
+    func moveNormalTabSlice(memberIds: [Int], to: Int) {
+        guard !memberIds.isEmpty,
+              let firstIdx = normalTabOrder.firstIndex(of: memberIds[0]) else {
+            AppLogWarn("[TabGroupDrag] moveNormalTabSlice: empty or unknown members=\(memberIds)")
+            return
+        }
+        let n = memberIds.count
+        let sourceRange = firstIdx..<(firstIdx + n)
+        // Safety clamp — protects against out-of-bounds callers. Valid
+        // pre-removal insertions are in [0, normalTabOrder.count].
+        let clampedTo = min(max(0, to), normalTabOrder.count)
+        if clampedTo != to {
+            AppLogWarn("[TabGroupDrag] moveNormalTabSlice clamped to=\(to)→\(clampedTo)")
+        }
+
+        // Contiguity check: each subsequent member must sit at firstIdx + offset.
+        for offset in 0..<n {
+            let expectedIdx = firstIdx + offset
+            guard expectedIdx < normalTabOrder.count,
+                  normalTabOrder[expectedIdx] == memberIds[offset] else {
+                assertionFailure(
+                    "[TabGroupDrag] moveNormalTabSlice non-contiguous members=\(memberIds) firstIdx=\(firstIdx)"
+                )
+                AppLogWarn("[TabGroupDrag] moveNormalTabSlice non-contiguous bail members=\(memberIds)")
+                return
+            }
+        }
+
+        // No-op for drops anywhere inside the source range (inclusive
+        // of the right edge — t == s+N inserts immediately past the
+        // slice's own right edge, same physical slot).
+        guard clampedTo < sourceRange.lowerBound || clampedTo > sourceRange.upperBound else {
+            AppLogDebug("[TabGroupDrag] moveNormalTabSlice no-op to=\(clampedTo) source=\(sourceRange)")
+            return
+        }
+
+        let adjustedTo = clampedTo > sourceRange.upperBound ? clampedTo - n : clampedTo
+        AppLogDebug(
+            "[TabGroupDrag] moveNormalTabSlice members=\(memberIds) " +
+            "source=\(sourceRange) to=\(clampedTo) adjustedTo=\(adjustedTo)"
+        )
+
+        // 1. Capture cross-slice external children — needed for
+        //    locallyFixedOpenerTabIds tracking after the graph fix.
+        let memberSet = Set(memberIds)
+        var externalChildren: Set<Int> = []
+        for m in memberIds {
+            for c in nativeRelationGraph.directChildren(of: m)
+            where !memberSet.contains(c) {
+                externalChildren.insert(c)
+            }
+        }
+
+        // 2. Mutate normalTabOrder — atomic slice remove + insert.
+        normalTabOrder.removeSubrange(sourceRange)
+        normalTabOrder.insert(contentsOf: memberIds, at: adjustedTo)
+
+        // 3. Fix opener graph for cross-slice edges only; track in
+        //    locallyFixedOpenerTabIds so a subsequent Chromium snapshot
+        //    won't revert the local fix-up.
+        nativeRelationGraph.fixOpenersAfterMovingSlice(memberSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        // 4. Re-derive normalTabs from the new normalTabOrder.
+        updateNormalTabs()
+
+        // 5. Mirror the slice's new position to Chromium via an
+        //    anchor-based batch call (`moveGroupWithWindowId:tokenHex:
+        //    beforeTabId:` or `afterTabId:`). Mirrors the single-tab
+        //    path's `syncNormalTabRelativeOrderToChromium`: pick the
+        //    right neighbor of the slice's new range for the
+        //    beforeTabId form; fall back to the left neighbor for
+        //    afterTabId. Anchors are guids in `normalTabOrder`, so
+        //    Chromium converts to its own TabStripModel index space
+        //    server-side — Mac's `pinnedTabs.count` is intentionally
+        //    not used here because it does NOT map 1:1 to Chromium's
+        //    pinned region.
+        guard let firstMember = tabs.first(where: { $0.guid == memberIds[0] }),
+              let token = firstMember.groupToken else {
+            AppLogWarn(
+                "[TabGroupDrag] moveNormalTabSlice: first member has no groupToken " +
+                "id=\(memberIds[0]); skipping Chromium sync"
+            )
+            return
+        }
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        let firstNewIdx = adjustedTo
+        let lastNewIdx = adjustedTo + n - 1
+        if lastNewIdx + 1 < normalTabOrder.count {
+            let anchorTabId = normalTabOrder[lastNewIdx + 1]
+            AppLogDebug(
+                "[TabGroupDrag] bridge.moveGroup token=\(token) " +
+                "beforeTabId=\(anchorTabId)"
+            )
+            bridge.moveGroup(
+                withWindowId: windowId.int64Value,
+                tokenHex: token,
+                beforeTabId: anchorTabId.int64Value
+            )
+        } else if firstNewIdx > 0 {
+            let anchorTabId = normalTabOrder[firstNewIdx - 1]
+            AppLogDebug(
+                "[TabGroupDrag] bridge.moveGroup token=\(token) " +
+                "afterTabId=\(anchorTabId)"
+            )
+            bridge.moveGroup(
+                withWindowId: windowId.int64Value,
+                tokenHex: token,
+                afterTabId: anchorTabId.int64Value
+            )
+        } else {
+            AppLogDebug(
+                "[TabGroupDrag] moveNormalTabSlice: slice covers entire normal " +
+                "zone — no anchor available, skipping Chromium sync"
+            )
+        }
     }
 
     private func syncNormalTabRelativeOrderToChromium(tabId: Int) {

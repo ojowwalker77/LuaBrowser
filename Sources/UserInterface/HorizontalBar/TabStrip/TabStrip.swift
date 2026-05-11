@@ -56,7 +56,13 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// approach and re-subscribe whenever the dictionary changes.
     private var groupChangeCancellables: [String: AnyCancellable] = [:]
     private let dragController = TabStripDragController()
+    private let groupDragController = TabGroupDragController()
     private var isActive = false
+
+    /// Local NSEvent monitor installed for the lifetime of a group
+    /// drag — listens for the Esc key (keyCode 53) and cancels the
+    /// drag. Local-only so it doesn't leak past this app's events.
+    private var groupDragEscMonitor: Any?
 
     // MARK: - Scroll
     private var currentScrollOffset: CGFloat = 0.0
@@ -164,6 +170,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         self.browserState = browserState
         super.init(frame: .zero)
         dragController.delegate = self
+        groupDragController.delegate = self
         setupUI()
     }
 
@@ -214,21 +221,55 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let activeTab = browserState.focusingTab
 
         let context = dragController.context
-        let externalPreview = (context == nil) ? externalDragPreview : nil
+        let groupContext = groupDragController.context
+        // External preview only applies when no in-window drag is active.
+        let externalPreview = (context == nil && groupContext == nil) ? externalDragPreview : nil
+
         // Resolve pinned-zone drag parameters.
         let pinnedExcluded = (context?.sourceContainerType == .pinned) ? context?.sourceIndex : nil
         let pinnedGap = (context?.targetContainerType == .pinned)
             ? context?.targetIndex
             : (externalPreview?.zone == .pinned ? externalPreview?.index : nil)
- 
-        // Resolve normal-zone drag parameters.
-        let normalExcluded = (context?.sourceContainerType == .normal) ? context?.sourceIndex : nil
-        let normalGap = (context?.targetContainerType == .normal)
-            ? context?.targetIndex
-            : (externalPreview?.zone == .normal ? externalPreview?.index : nil)
-        let normalGapW = (context?.targetContainerType == .normal)
-            ? context?.draggedTabWidth
-            : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
+
+        // Resolve normal-zone drag parameters. Whole-group drag takes
+        // priority — it's mutually exclusive with single-tab drag at
+        // the controller level (entry points come from different
+        // mouseDown sources), and uses excludedGroupRange + slice-wide
+        // gap rather than single-tab semantics.
+        let normalExcluded: Int?
+        let normalExcludedRange: ClosedRange<Int>?
+        let normalGap: Int?
+        let normalGapW: CGFloat?
+        if let gctx = groupContext {
+            normalExcluded = nil
+            let r = gctx.sourceRange
+            // When the target is inside the slice's own footprint the
+            // drop is a no-op (hasPositionChanged stays false) — leave
+            // the natural layout in place (no exclusion, no gap). The
+            // proxy transform (deltaX) still lifts the slice visually
+            // so the user sees it follow the cursor, but other tabs
+            // don't slide around. Once the target moves outside the
+            // slice, we switch to the excluded+gap visual.
+            let inSlice = gctx.targetIndex >= r.lowerBound && gctx.targetIndex <= r.upperBound
+            if inSlice {
+                normalExcludedRange = nil
+                normalGap = nil
+                normalGapW = nil
+            } else {
+                normalExcludedRange = r.isEmpty ? nil : r.lowerBound...(r.upperBound - 1)
+                normalGap = gctx.targetIndex
+                normalGapW = gctx.initialSliceWidth
+            }
+        } else {
+            normalExcluded = (context?.sourceContainerType == .normal) ? context?.sourceIndex : nil
+            normalExcludedRange = nil
+            normalGap = (context?.targetContainerType == .normal)
+                ? context?.targetIndex
+                : (externalPreview?.zone == .normal ? externalPreview?.index : nil)
+            normalGapW = (context?.targetContainerType == .normal)
+                ? context?.draggedTabWidth
+                : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
+        }
 
         // Pinned zone.
         updateLayoutOnly(
@@ -249,11 +290,64 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             activeTab: activeTab,
             isPinned: false,
             excludedIndex: normalExcluded,
+            excludedGroupRange: normalExcludedRange,
             gapIndex: normalGap,
             gapWidth: normalGapW
         )
 
+        // Apply / clear translation transform on the dragged slice's
+        // chip + member views. Runs every layout pass: when a group
+        // drag is active, deltaX shifts the slice with the cursor;
+        // when it's nil, transforms reset to identity so the views
+        // render at their newly-assigned natural frames.
+        applyGroupDragTransforms(context: groupContext)
+
         onLayoutChanged?()
+    }
+
+    /// Sets `layer.transform` on the dragged group's chip + member
+    /// views to the current mouse delta, and resets all other chip /
+    /// normal-tab transforms to identity. Also raises the dragged
+    /// views' `zPosition` so they render above the rest of the strip
+    /// while drag is active.
+    private func applyGroupDragTransforms(context: TabGroupDragContext?) {
+        let identity = CATransform3DIdentity
+        if let ctx = context {
+            let deltaX = ctx.currentMouseLocation.x - ctx.initialMouseLocation.x
+            let translation = CATransform3DMakeTranslation(deltaX, 0, 0)
+            let memberSet = Set(ctx.memberTabIds)
+            let token = ctx.draggingChipToken
+
+            for tab in browserState.normalTabs {
+                guard let view = normalTabViews[tab.uniqueId] else { continue }
+                if memberSet.contains(tab.guid) {
+                    view.layer?.transform = translation
+                    view.layer?.zPosition = 200
+                } else {
+                    view.layer?.transform = identity
+                    view.layer?.zPosition = 10
+                }
+            }
+            for (t, chip) in chipViews {
+                if t == token {
+                    chip.layer?.transform = translation
+                    chip.layer?.zPosition = 200
+                } else {
+                    chip.layer?.transform = identity
+                    chip.layer?.zPosition = 50
+                }
+            }
+        } else {
+            // No active group drag — reset any leftover transforms.
+            for (_, view) in normalTabViews {
+                view.layer?.transform = identity
+                view.layer?.zPosition = 10
+            }
+            for (_, chip) in chipViews {
+                chip.layer?.transform = identity
+                chip.layer?.zPosition = 50
+            }
+        }
     }
 
     /// Returns the given tab's frame in `coordView`'s coordinate space, or nil
@@ -507,10 +601,22 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 finalRightX = max(finalRightX, proxyFrame.maxX + edgeInset)
             }
 
+            // Whole-group drag: the dragged group's chip + members are
+            // visually translated via `layer.transform`, but their
+            // `.frame` (and therefore `chip.convert(...)` / view.convert
+            // result) stays at the drag-start position. Offset the
+            // geometry by the same deltaX so the underline + active-
+            // tab outline path follow the cursor.
+            let groupDragDeltaX: CGFloat = {
+                guard let gctx = groupDragController.context,
+                      gctx.draggingChipToken == run.token else { return 0 }
+                return gctx.currentMouseLocation.x - gctx.initialMouseLocation.x
+            }()
+
             result.append(GroupGeometry(
                 token: run.token,
-                leftX: finalLeftX,
-                rightX: finalRightX,
+                leftX: finalLeftX + groupDragDeltaX,
+                rightX: finalRightX + groupDragDeltaX,
                 containsActive: containsActive
             ))
         }
@@ -538,7 +644,17 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
               view.superview != nil else {
             return nil
         }
-        return view.convert(view.bounds, to: coordView)
+        let frame = view.convert(view.bounds, to: coordView)
+        // Whole-group drag: members are visually translated via
+        // `layer.transform`; their `.frame` (= the convert result)
+        // stays at drag-start. Mirror the offset so consumers like
+        // the active-tab outline carving track the cursor.
+        if let gctx = groupDragController.context,
+           gctx.memberTabIds.contains(tab.guid) {
+            let deltaX = gctx.currentMouseLocation.x - gctx.initialMouseLocation.x
+            return frame.offsetBy(dx: deltaX, dy: 0)
+        }
+        return frame
     }
 
     // MARK: - Mouse Tracking
@@ -904,6 +1020,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         activeTab: Tab?,
         isPinned: Bool,
         excludedIndex: Int? = nil,
+        excludedGroupRange: ClosedRange<Int>? = nil,
         gapIndex: Int? = nil,
         gapWidth: CGFloat? = nil
     ) {
@@ -915,6 +1032,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             activeTab: activeTab,
             isPinned: isPinned,
             excludedIndex: excludedIndex,
+            excludedGroupRange: excludedGroupRange,
             gapIndex: gapIndex,
             gapWidth: gapWidth
         )
@@ -949,6 +1067,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         activeTab: Tab?,
         isPinned: Bool,
         excludedIndex: Int? = nil,
+        excludedGroupRange: ClosedRange<Int>? = nil,
         gapIndex: Int? = nil,
         gapWidth: CGFloat? = nil
     ) -> TabStripLayoutOutput {
@@ -969,7 +1088,16 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         } else {
             let activeIndex = tabs.firstIndex { isTabActive($0, activeTab: activeTab) }
             let runs = currentGroupRuns()
-            let gapBeforeRunStartChip = !isPinned && (dragController.context?.gapBeforeRunStartChip ?? false)
+            // Single-tab drag uses its own cursor-half heuristic to pick
+            // before-vs-after-chip gap placement. Whole-group drag
+            // ALWAYS wants gap-before-chip when the target lands at a
+            // foreign run's start: the slice should slot in front of
+            // the chip (between the previous tab and the foreign group),
+            // not between the chip and its first member.
+            let gapBeforeRunStartChip = !isPinned && (
+                (groupDragController.context != nil)
+                || (dragController.context?.gapBeforeRunStartChip ?? false)
+            )
             let input = TabStripLayoutInput(
                 containerWidth: containerWidth,
                 tabCount: tabs.count,
@@ -980,6 +1108,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 activeTabWidth: TabStripMetrics.Tab.activeMinWidth,
                 tabHeight: TabStripMetrics.Strip.tabHeight,
                 excludedTabIndex: excludedIndex,
+                excludedGroupRange: isPinned ? nil : excludedGroupRange,
                 gapAtIndex: gapIndex,
                 gapWidth: gapWidth,
                 groupRuns: isPinned ? [] : runs,
@@ -1111,12 +1240,22 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             }
         }
         let draggingTab = dragController.context?.draggingTab
+        // Members of the actively-dragged group keep their drag-start
+        // frames; `applyGroupDragTransforms` drives cursor follow via
+        // layer.transform. The layout engine emits .zero placeholders
+        // for these indices, which we MUST NOT apply (it would collapse
+        // the views to a point at the strip's origin).
+        let draggedGroupMemberIds: Set<Int> =
+            (!isPinned ? Set(groupDragController.context?.memberTabIds ?? []) : [])
 
         for (index, tab) in tabs.enumerated() {
             let id = tabId(for: tab)
             guard let view = viewPool[id] else { continue }
 
             if draggingTab != nil && tab === draggingTab {
+                continue
+            }
+            if draggedGroupMemberIds.contains(tab.guid) {
                 continue
             }
 
@@ -1195,6 +1334,24 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 chip.onMenuRequest = { [weak self] tappedToken in
                     self?.makeChipMenu(token: tappedToken)
                 }
+                chip.onDragStart = { [weak self] tappedToken, winLoc in
+                    guard let self else { return }
+                    let local = self.convert(winLoc, from: nil)
+                    if self.groupDragController.startDragging(token: tappedToken, mouseLocation: local) {
+                        self.installGroupDragEscMonitor()
+                    }
+                }
+                chip.onDrag = { [weak self] _, winLoc in
+                    guard let self else { return }
+                    let local = self.convert(winLoc, from: nil)
+                    self.groupDragController.continueDragging(mouseLocation: local)
+                }
+                chip.onDragEnd = { [weak self] _, winLoc in
+                    guard let self else { return }
+                    let local = self.convert(winLoc, from: nil)
+                    self.groupDragController.endDragging(mouseLocation: local)
+                    self.removeGroupDragEscMonitor()
+                }
             }
             guard let group = browserState.groups[token] else { continue }
             let memberCount = browserState.normalTabs
@@ -1208,6 +1365,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 mode: placement.mode,
                 isCollapsed: group.isCollapsed
             )
+            // The chip of the actively-dragged group keeps its
+            // drag-start frame; `applyGroupDragTransforms` handles
+            // cursor follow + zPosition. Skipping frame assignment
+            // here avoids overwriting the visual position with the
+            // layout engine's placeholder x (chip contributes no
+            // width during whole-group drag).
+            if groupDragController.context?.draggingChipToken == token {
+                continue
+            }
             var f = placement.frame
             f.origin.x -= currentScrollOffset
             chip.frame = f
@@ -1322,6 +1488,25 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             runs.append(GroupRun(token: token, range: i...j, isCollapsed: isCollapsed))
             i = j + 1
         }
+        #if DEBUG
+        // Contiguity invariant: each group token should appear in at
+        // most one run. A repeat means somewhere along the way a
+        // group's members got split by an intruder tab — `applyLayout`
+        // would render two chips for the same token, which is the
+        // visible symptom of the invariant breaking. Catch it where
+        // it's detectable instead of waiting for the visual artifact.
+        var tokenCounts: [String: Int] = [:]
+        for run in runs {
+            tokenCounts[run.token, default: 0] += 1
+        }
+        for (token, count) in tokenCounts where count > 1 {
+            let liveOrder = browserState.normalTabs.map { $0.guid }
+            assertionFailure(
+                "[TabGroupDrag] group contiguity broken: token=\(token) " +
+                "appears in \(count) runs in normalTabs=\(liveOrder)"
+            )
+        }
+        #endif
         return runs
     }
 
@@ -2118,6 +2303,7 @@ extension TabStrip: TabStripDragDelegate {
         activeTab: Tab?,
         isPinned: Bool,
         excludedIndex: Int?,
+        excludedGroupRange: ClosedRange<Int>? = nil,
         gapIndex: Int?,
         gapWidth: CGFloat? = nil
     ) {
@@ -2127,6 +2313,7 @@ extension TabStrip: TabStripDragDelegate {
             activeTab: activeTab,
             isPinned: isPinned,
             excludedIndex: excludedIndex,
+            excludedGroupRange: excludedGroupRange,
             gapIndex: gapIndex,
             gapWidth: gapWidth
         )
@@ -2317,5 +2504,206 @@ extension TabStrip: TabStripDragDelegate {
         hideFloatingDragPreview()
         cachedTabDragImage = nil
         cachedPageDragImage = nil
+    }
+}
+
+// MARK: - TabGroupDragDelegate
+extension TabStrip: TabGroupDragDelegate {
+    func groupDragControllerSnapshot(token: String) -> TabGroupDragStartSnapshot? {
+        let runs = currentGroupRuns()
+        guard let run = runs.first(where: { $0.token == token }) else {
+            AppLogWarn("[TabGroupDrag] snapshot: token not in current runs token=\(token)")
+            return nil
+        }
+        guard let chipView = chipViews[token], chipView.superview != nil else {
+            AppLogWarn("[TabGroupDrag] snapshot: chip view missing token=\(token)")
+            return nil
+        }
+        // GroupRun.range is ClosedRange<Int>; convert to half-open Range<Int>
+        // for `TabGroupDragContext.sourceRange`.
+        let sourceRange = run.range.lowerBound..<(run.range.upperBound + 1)
+        let members = Array(browserState.normalTabs[run.range]).map { $0.guid }
+
+        // Bring chipView.frame into normalTabFrames space (scroll offset
+        // is subtracted from chip.frame in `applyChipPlacements`, but
+        // metrics' normalTabFrames add it back; mirror that).
+        let chipFrameInMetricsSpace = chipView.frame.offsetBy(dx: currentScrollOffset, dy: 0)
+
+        let metrics = dragControllerRequestMetrics()
+        let frames = metrics.normalTabFrames
+
+        let sliceWidth: CGFloat
+        if run.isCollapsed {
+            sliceWidth = chipFrameInMetricsSpace.width
+        } else {
+            // run.range is in normalTabs index space — same as normalTabFrames.
+            let upper = min(run.range.upperBound, frames.count - 1)
+            let lastMemberMaxX = (run.range.lowerBound...upper).reduce(chipFrameInMetricsSpace.maxX) { acc, idx in
+                max(acc, frames[idx].maxX)
+            }
+            sliceWidth = lastMemberMaxX - chipFrameInMetricsSpace.minX
+        }
+
+        // ── Pre-compute snap candidates for the entire drag. Use the
+        //    natural pre-drag frames (this method runs before any
+        //    layout transition) and adjust positions for tabs AFTER
+        //    the source range — in the during-drag excluded layout
+        //    those tabs slide left by `sliceWidth` to fill the slice's
+        //    space. Pre-shifting here gives each candidate a stable
+        //    `x` that equals where the slice's left edge would land
+        //    post-commit, regardless of which side of the natural-vs-
+        //    excluded layout transition the drag is currently in.
+        let count = browserState.normalTabs.count
+        let naturalSliceLeftX = chipFrameInMetricsSpace.minX
+        var foreignRunStartToken: [Int: String] = [:]
+        var insideForeign: Set<Int> = []
+        for r in runs where r.token != token {
+            foreignRunStartToken[r.range.lowerBound] = r.token
+            if r.range.lowerBound + 1 <= r.range.upperBound {
+                for i in (r.range.lowerBound + 1)...r.range.upperBound {
+                    insideForeign.insert(i)
+                }
+            }
+        }
+        let chipByToken: [String: CGRect] = Dictionary(
+            uniqueKeysWithValues: metrics.chipFrames.map { ($0.token, $0.frame) }
+        )
+
+        // Adjustment helper: tabs and chips at indices >= sourceRange's
+        // upper bound shift left by sliceWidth in the excluded layout.
+        func shifted(_ x: CGFloat, atOrAfterSource: Bool) -> CGFloat {
+            return atOrAfterSource ? x - sliceWidth : x
+        }
+
+        var snapCandidates: [(index: Int, x: CGFloat)] = []
+        for insertion in 0...count {
+            if insideForeign.contains(insertion) { continue }
+            let x: CGFloat
+            if insertion >= sourceRange.lowerBound && insertion <= sourceRange.upperBound {
+                // No-op zone: any drop here is a no-op; anchor to the
+                // chip's natural drag-start position so cursor hovering
+                // near source keeps targetIndex inside the source range.
+                x = naturalSliceLeftX
+            } else if let foreignToken = foreignRunStartToken[insertion],
+                      let chipFrame = chipByToken[foreignToken] {
+                // Foreign group's chip — slice lands BEFORE the chip.
+                x = shifted(chipFrame.minX, atOrAfterSource: insertion >= sourceRange.upperBound)
+            } else if insertion == 0 {
+                // Slice at very start of strip. Use the leftmost minX
+                // of any non-source tab or non-dragging chip.
+                var leftmost = CGFloat.infinity
+                for (i, f) in frames.enumerated() where !sourceRange.contains(i) && f != .zero {
+                    leftmost = min(leftmost, f.minX)
+                }
+                for cf in metrics.chipFrames where cf.token != token {
+                    leftmost = min(leftmost, cf.frame.minX)
+                }
+                x = leftmost == CGFloat.infinity ? metrics.normalContainerFrame.minX : leftmost
+            } else if insertion >= count {
+                // Slice at very end of strip. Use the largest excluded-
+                // layout maxX of any non-source tab, AND any non-dragging
+                // chip (the chip can be the strip's last visible element
+                // when a trailing group is collapsed and its member is
+                // zero-width).
+                var endX: CGFloat = -.infinity
+                for (i, f) in frames.enumerated() where !sourceRange.contains(i) && f != .zero {
+                    let candidateMaxX = shifted(f.maxX, atOrAfterSource: i >= sourceRange.upperBound)
+                    endX = max(endX, candidateMaxX)
+                }
+                for cf in metrics.chipFrames where cf.token != token {
+                    let atOrAfterSource = cf.firstMemberIndex >= sourceRange.upperBound
+                    let candidateMaxX = shifted(cf.frame.maxX, atOrAfterSource: atOrAfterSource)
+                    endX = max(endX, candidateMaxX)
+                }
+                x = endX == -.infinity ? naturalSliceLeftX : endX
+            } else if insertion < sourceRange.lowerBound,
+                      insertion < frames.count, frames[insertion] != .zero {
+                // Before source — no shift.
+                x = frames[insertion].minX
+            } else if insertion < frames.count, frames[insertion] != .zero {
+                // After source — shift left by sliceWidth.
+                x = shifted(frames[insertion].minX, atOrAfterSource: true)
+            } else {
+                x = naturalSliceLeftX
+            }
+            snapCandidates.append((insertion, x))
+        }
+
+        let firstNormalSlotX: CGFloat = {
+            // Seed with naturalSliceLeftX so when the slice itself is
+            // at the strip's leftmost position (= no non-source tab
+            // sits to its left) we still get the correct leftmost
+            // anchor — not the leftmost non-source tab's minX which
+            // could be far to the right of the slice.
+            var leftmost = naturalSliceLeftX
+            for (i, f) in frames.enumerated() where !sourceRange.contains(i) && f != .zero {
+                leftmost = min(leftmost, f.minX)
+            }
+            for cf in metrics.chipFrames where cf.token != token {
+                leftmost = min(leftmost, cf.frame.minX)
+            }
+            return leftmost
+        }()
+
+        return TabGroupDragStartSnapshot(
+            memberTabIds: members,
+            sourceRange: sourceRange,
+            chipFrame: chipFrameInMetricsSpace,
+            sliceWidth: sliceWidth,
+            isCollapsed: run.isCollapsed,
+            snapCandidates: snapCandidates,
+            firstNormalSlotX: firstNormalSlotX
+        )
+    }
+
+    func groupDragControllerDidUpdate() {
+        // Triggers `layout()`, which honors the controller's context
+        // (excludedGroupRange + slice-wide gap) and drives
+        // `applyGroupDragTransforms` for the slice's cursor follow.
+        needsLayout = true
+    }
+
+    func groupDragControllerCommitMove(memberTabIds: [Int], to: Int) {
+        // `BrowserState.moveNormalTabSlice` and the controller's
+        // `endDragging` both log their own commit lines; no need for
+        // a redundant log here.
+        browserState.moveNormalTabSlice(memberIds: memberTabIds, to: to)
+    }
+
+    func groupDragControllerDidCancel() {
+        needsLayout = true
+        removeGroupDragEscMonitor()
+    }
+
+    func groupDragControllerCurrentNormalTabOrder() -> [Int] {
+        // normalTabOrder is private; normalTabs (its derived array)
+        // is exposed and 1:1 in guid order — same liveness signal.
+        return browserState.normalTabs.map { $0.guid }
+    }
+
+    // MARK: - Esc cancel (group drag only)
+
+    /// Installs a process-local keyDown monitor that cancels the
+    /// active group drag on Esc (keyCode 53). Single-tab drag is
+    /// untouched — it has its own cancel paths via the existing
+    /// drag controller.
+    fileprivate func installGroupDragEscMonitor() {
+        guard groupDragEscMonitor == nil else { return }
+        groupDragEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self else { return event }
+            guard event.keyCode == 53 else { return event }
+            // Eat the event so other handlers (e.g. menus) don't react.
+            AppLogDebug("[TabGroupDrag] Esc captured → cancelDragging")
+            self.groupDragController.cancelDragging()
+            return nil
+        }
+    }
+
+    fileprivate func removeGroupDragEscMonitor() {
+        if let monitor = groupDragEscMonitor {
+            NSEvent.removeMonitor(monitor)
+            groupDragEscMonitor = nil
+        }
     }
 }

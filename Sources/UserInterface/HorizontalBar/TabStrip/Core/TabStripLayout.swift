@@ -28,6 +28,16 @@ struct TabStripLayoutInput {
 
     /// Index excluded from layout, typically the dragged tab.
     let excludedTabIndex: Int?
+    /// Inclusive range of normal-tab indices excluded from layout in
+    /// whole-group drag (chip + every member of the dragged group).
+    /// Treated like a multi-tab variant of `excludedTabIndex`: each
+    /// excluded index gets a `.zero` placeholder frame and contributes
+    /// no width or spacing to the flow. The chip whose run start lies
+    /// in this range is kept in `chipFrames` (so `applyChipPlacements`
+    /// doesn't tear it down) but does not advance `currentX`; the
+    /// caller leaves its visible frame at the drag-start value and
+    /// drives cursor follow via a `layer.transform` translation.
+    let excludedGroupRange: ClosedRange<Int>?
     /// Gap insertion index.
     let gapAtIndex: Int?
     /// Gap width.
@@ -60,6 +70,7 @@ struct TabStripLayoutInput {
          activeTabWidth: CGFloat,
          tabHeight: CGFloat,
          excludedTabIndex: Int? = nil,
+         excludedGroupRange: ClosedRange<Int>? = nil,
          gapAtIndex: Int? = nil,
          gapWidth: CGFloat? = nil,
          groupRuns: [GroupRun] = [],
@@ -74,6 +85,7 @@ struct TabStripLayoutInput {
         self.activeTabWidth = activeTabWidth
         self.tabHeight = tabHeight
         self.excludedTabIndex = excludedTabIndex
+        self.excludedGroupRange = excludedGroupRange
         self.gapAtIndex = gapAtIndex
         self.gapWidth = gapWidth
         self.groupRuns = groupRuns
@@ -191,10 +203,16 @@ enum TabStripLayoutEngine {
         // New-tab button width plus its trailing inset.
         let btnSize = TabStripMetrics.NewTabButton.size
         let buttonOverhead = btnSize.width + TabStripMetrics.NewTabButton.insets.right
-        // Excluding the dragged tab changes the available width calculation.
+        // Excluding the dragged tab(s) changes the available width
+        // calculation. excludedTabIndex (single-tab drag) and
+        // excludedGroupRange (whole-group drag) are mutually exclusive
+        // in practice but we subtract both defensively.
         var effectiveTabCount = input.tabCount
         if input.excludedTabIndex != nil {
             effectiveTabCount -= 1
+        }
+        if let groupRange = input.excludedGroupRange {
+            effectiveTabCount -= groupRange.count
         }
         effectiveTabCount = max(0, effectiveTabCount)
         // Total width consumed before tab widths are assigned.
@@ -257,6 +275,12 @@ enum TabStripLayoutEngine {
             }
             if let excluded = input.excludedTabIndex, i == excluded {
                 // Keep indices aligned by inserting a placeholder frame.
+                tabFrames.append(.zero)
+                separatorXs.append(-1000)
+                continue
+            }
+            if let groupRange = input.excludedGroupRange, groupRange.contains(i) {
+                // Whole-group drag member: zero placeholder, no width.
                 tabFrames.append(.zero)
                 separatorXs.append(-1000)
                 continue
@@ -335,6 +359,12 @@ enum TabStripLayoutEngine {
         if let excluded = input.excludedTabIndex,
            !collapsedMemberSet.contains(excluded) {
             effectiveTabCount -= 1
+        }
+        if let groupRange = input.excludedGroupRange {
+            // Members already counted as collapsed don't shrink width
+            // again (collapsed members are already zero-width).
+            let netExcluded = groupRange.filter { !collapsedMemberSet.contains($0) }.count
+            effectiveTabCount -= netExcluded
         }
         effectiveTabCount = max(0, effectiveTabCount)
 
@@ -440,7 +470,18 @@ enum TabStripLayoutEngine {
                 let chipFrame = CGRect(x: currentX, y: chipY,
                                         width: chipWidth, height: TabGroupChipView.height)
                 chipFrames[run.token] = ChipPlacement(frame: chipFrame, mode: chipMode)
-                currentX += chipWidth + input.spacing
+                // Whole-group drag: the chip of the dragged group is kept
+                // in chipFrames so applyChipPlacements doesn't tear it
+                // down, but consumes no width — the chip view's frame
+                // stays at the drag-start value and `layer.transform`
+                // handles cursor follow.
+                let runIsExcluded: Bool = {
+                    guard let groupRange = input.excludedGroupRange else { return false }
+                    return groupRange.contains(run.range.lowerBound)
+                }()
+                if !runIsExcluded {
+                    currentX += chipWidth + input.spacing
+                }
             }
 
             // Default gap placement: AFTER chip (when gap is at
@@ -461,6 +502,13 @@ enum TabStripLayoutEngine {
 
             // Collapsed-group member: skip frame allocation.
             if collapsedMemberSet.contains(i) {
+                tabFrames.append(.zero)
+                separatorXs.append(-1000)
+                continue
+            }
+
+            // Whole-group drag: members are lifted out of flow.
+            if let groupRange = input.excludedGroupRange, groupRange.contains(i) {
                 tabFrames.append(.zero)
                 separatorXs.append(-1000)
                 continue

@@ -143,6 +143,8 @@
 		897C09F62F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */; };
 		897C09F72F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */; };
 		897C09F82F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */; };
+		8E2A91272FB18051003E1F05 /* TabGroupDragContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */; };
+		8E2A91282FB18051003E1F05 /* TabGroupDragController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */; };
 		8E486A752F3ED68600078DEC /* StatusURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E486A742F3ED68600078DEC /* StatusURLView.swift */; };
 		8E486A772F3EEF8A00078DEC /* StatusURLViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E486A762F3EEF8A00078DEC /* StatusURLViewModel.swift */; };
 		8E4C94962F10AEED00B09A80 /* TabBackgroundLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C94952F10AEED00B09A80 /* TabBackgroundLayer.swift */; };
@@ -520,6 +522,8 @@
 		897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingView.swift; sourceTree = "<group>"; };
 		897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingViewController.swift; sourceTree = "<group>"; };
 		897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsViewModel.swift; sourceTree = "<group>"; };
+		8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragContext.swift; sourceTree = "<group>"; };
+		8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragController.swift; sourceTree = "<group>"; };
 		8E486A742F3ED68600078DEC /* StatusURLView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusURLView.swift; sourceTree = "<group>"; };
 		8E486A762F3EEF8A00078DEC /* StatusURLViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusURLViewModel.swift; sourceTree = "<group>"; };
 		8E4C94952F10AEED00B09A80 /* TabBackgroundLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBackgroundLayer.swift; sourceTree = "<group>"; };
@@ -1133,6 +1137,8 @@
 		8E9E96AB2F0F6E64002D0D21 /* TabStrip */ = {
 			isa = PBXGroup;
 			children = (
+				8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */,
+				8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */,
 				376CE5E72F2C669B0093D937 /* TabStripRightButtons.swift */,
 				376CE5E52F2C66900093D937 /* TabStripBarController.swift */,
 				8E762CC52F16531A00631087 /* TabStripAnimation.swift */,
@@ -2037,6 +2043,8 @@
 				8E9E96AC2F0F6E64002D0D21 /* TabItemView.swift in Sources */,
 				8E4C949A2F10D01500B09A80 /* TabStripLayout.swift in Sources */,
 				8E9E96AD2F0F6E64002D0D21 /* TabStripState.swift in Sources */,
+				8E2A91272FB18051003E1F05 /* TabGroupDragContext.swift in Sources */,
+				8E2A91282FB18051003E1F05 /* TabGroupDragController.swift in Sources */,
 				8E9E96AE2F0F6E64002D0D21 /* TabStripMetrics.swift in Sources */,
 				8E9E96AF2F0F6E64002D0D21 /* TabStrip.swift in Sources */,
 				376CE5E62F2C66900093D937 /* TabStripBarController.swift in Sources */,

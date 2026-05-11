@@ -308,6 +308,24 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                      tokenHex:(NSString *)tokenHex
                       toIndex:(NSInteger)toIndex;
 
+/// Reposition the group identified by `tokenHex` so that its **last**
+/// member lands immediately before `anchorTabId` in the strip.
+/// `anchorTabId` MUST NOT be a member of the group; if it is, the call
+/// is a no-op (chromium-side logs WARNING). Mirrors `moveTab
+/// withWindowId:tabId:beforeTabId:` for whole groups.
+- (void)moveGroupWithWindowId:(int64_t)windowId
+                     tokenHex:(NSString *)tokenHex
+                  beforeTabId:(int64_t)anchorTabId;
+
+/// Reposition the group identified by `tokenHex` so that its **first**
+/// member lands immediately after `anchorTabId` in the strip.
+/// `anchorTabId` MUST NOT be a member of the group; if it is, the call
+/// is a no-op. Mirrors `moveTab withWindowId:tabId:afterTabId:` for
+/// whole groups.
+- (void)moveGroupWithWindowId:(int64_t)windowId
+                     tokenHex:(NSString *)tokenHex
+                   afterTabId:(int64_t)anchorTabId;
+
 /// Update the group's display title (empty string clears to Chromium auto).
 - (void)updateTabGroupTitleWithWindowId:(int64_t)windowId
                                 tokenHex:(NSString *)tokenHex
