@@ -627,6 +627,18 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)moveSelfToIndex:(NSInteger)newIndex selectAfterMove:(BOOL)selectAfterMove;
 - (void)moveSelfToNewWindow:(BOOL)activateNewWindow;
 - (void)moveSelfToWindow:(int64_t)targetWindowId atIndex:(NSInteger)insertIndex;
+
+/// Cross-window: move this tab to `targetWindowId`, inserting it
+/// immediately before `anchorTabId` and joining `targetGroupTokenHex`.
+- (void)moveSelfToWindow:(int64_t)targetWindowId
+   andAddToGroupTokenHex:(NSString *)targetGroupTokenHex
+             beforeTabId:(int64_t)anchorTabId;
+
+/// Cross-window: same as above but inserts after `anchorTabId`.
+- (void)moveSelfToWindow:(int64_t)targetWindowId
+   andAddToGroupTokenHex:(NSString *)targetGroupTokenHex
+              afterTabId:(int64_t)anchorTabId;
+
 - (void)updateTabCustomValue:(NSString *)customValue;
 - (void)focus;
 - (void)restoreFocus;
