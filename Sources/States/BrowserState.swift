@@ -36,7 +36,7 @@ class BrowserState {
         let guid: Int?
         let index: Int
         let syncChromiumOrder: Bool
-        
+
         func matches(tab: Tab) -> Bool {
             if let guid { return tab.guid == guid }
             guard let url else { return false }
@@ -45,6 +45,32 @@ class BrowserState {
     }
     /// Pending insertion state for tabs created by drag/drop into the normal-tab section.
     private var pendingNormalTabInsertion: PendingNormalTabInsertion?
+
+    /// Pending insertion state for a CROSS-WINDOW group arrival. Set by
+    /// the source's `moveGroupSliceToWindow` on this (target) state
+    /// right before it fires Chromium's atomic detach + insert. Each
+    /// of the N member tabs arrives via `handleNewTabFromChromium` —
+    /// the early branch there matches the incoming tab's guid against
+    /// `memberGuids` and inserts it at `atIndex + arrivedCount` so the
+    /// final positions are `[atIndex, atIndex+N)`.
+    ///
+    /// Robust against out-of-order arrival because we always insert at
+    /// "arrivedCount past atIndex" — earlier arrivals occupy the
+    /// earlier slots, later arrivals slot in after them. (Chromium's
+    /// `InsertDetachedTabGroupAt` should fire kInserted events in
+    /// group-order, but this is defensive.)
+    ///
+    /// Cleared on completion (all N arrived) or timeout
+    /// (`pendingGroupInsertionTimeoutSeconds` from request) or explicit
+    /// cancel.
+    private struct PendingGroupInsertion {
+        let memberGuids: Set<Int>
+        let atIndex: Int
+        var arrivedCount: Int
+        let requestedAt: Date
+    }
+    private var pendingGroupInsertion: PendingGroupInsertion?
+    private static let pendingGroupInsertionTimeoutSeconds: TimeInterval = 4.0
     private var nativeRelationGraph: NativeTabRelationGraph = .empty
     private var pendingSelectionOverride: NativePendingSelectionOverride?
 
@@ -603,6 +629,46 @@ class BrowserState {
         
         // Reattach to a bookmark entry when the local guid matches.
         handleBookmarkTabOpened(tab)
+
+        // Honor cross-window group arrival first (priority over single-
+        // tab pending). Each of the N members lands at
+        // `atIndex + arrivedCount`; arrival order should match
+        // Chromium's group order but the index formula tolerates skew.
+        if let pending = pendingGroupInsertion {
+            let isStale = pending.requestedAt.timeIntervalSinceNow
+                < -Self.pendingGroupInsertionTimeoutSeconds
+            if isStale {
+                AppLogWarn(
+                    "[TabGroupDrag] pendingGroupInsertion timed out (members=" +
+                    "\(pending.memberGuids), arrived=\(pending.arrivedCount)) — dropping"
+                )
+                pendingGroupInsertion = nil
+                // Fall through to single-tab pending / default flow.
+            } else if pending.memberGuids.contains(tab.guid) {
+                let insertIndex = pending.atIndex + pending.arrivedCount
+                AppLogDebug(
+                    "[TabGroupDrag] pendingGroupInsertion match tabId=\(tab.guid) " +
+                    "insertIndex=\(insertIndex) arrived=\(pending.arrivedCount + 1)/" +
+                    "\(pending.memberGuids.count)"
+                )
+                insertIntoNormalTabOrder(
+                    tabGuid: tab.guid,
+                    at: insertIndex,
+                    syncChromiumOrder: false
+                )
+                let newCount = pending.arrivedCount + 1
+                if newCount >= pending.memberGuids.count {
+                    pendingGroupInsertion = nil
+                } else {
+                    var updated = pending
+                    updated.arrivedCount = newCount
+                    pendingGroupInsertion = updated
+                }
+                let elapsed = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                AppLogDebug("[NativeTab] ⏱ handleNewTabFromChromium tabId=\(tab.guid) took \(String(format: "%.2f", elapsed))ms")
+                return
+            }
+        }
 
         // Honor any pending insertion target for tabs promoted into the normal tab list.
         if let pending = pendingNormalTabInsertion {
@@ -1399,6 +1465,256 @@ class BrowserState {
         }
     }
 
+    /// Cross-window companion to `moveNormalTabSlice`: relocates a
+    /// contiguous group slice from THIS window's normal-tab list into
+    /// `targetState`'s normal-tab list at `atIndex`.
+    ///
+    /// Unlike `moveNormalTabSlice`, this method does NOT pre-mutate
+    /// this window's `normalTabOrder` — Chromium's atomic detach +
+    /// insert (driven via the anchor-based bridge) fires
+    /// `TabStripModelChange::kRemoved` on the source and a batched
+    /// `TabStripModelChange::kInserted` on the target. The existing
+    /// observers in `PhiChromiumCoordinator` propagate those events to
+    /// each BrowserState's `tabs` / `normalTabOrder`; we only need to
+    /// pre-stage:
+    ///   (1) source-side opener-graph cleanup for cross-slice externals
+    ///       (because the moved members are leaving this window
+    ///       entirely — children that pointed to them must reattach to
+    ///       an ancestor that stays);
+    ///   (2) a `PendingGroupInsertion` on the target so its observer
+    ///       can normalize `normalTabOrder` at the requested position
+    ///       when the batched kInserted event arrives.
+    ///
+    /// WebContents transfer is owned by Chromium. Mac does NOT call
+    /// `wrapper.moveSelf(toWindow:)` here — the bridge
+    /// `moveGroupWithWindowId:tokenHex:toWindowId:beforeTabId:`/
+    /// `afterTabId:` (Task 1's anchor-based methods) drives the
+    /// detach + insert + active-tab restore atomically on Chromium's
+    /// side (see `tab_groups_proxy.cc` `MoveGroupAcrossStripsImpl`).
+    ///
+    /// Anchor resolution mirrors `moveNormalTabSlice`'s Chromium-sync
+    /// step: pick the **right neighbor** of the destination slot in
+    /// target's `normalTabs` for the `beforeTabId` form; fall back to
+    /// the **left neighbor** for `afterTabId`. The anchor must be a
+    /// guid that lives in the TARGET strip (not the source). Target
+    /// normalTabs being empty is treated as a known limitation —
+    /// would require a separate "cross-window MoveGroupTo end" bridge
+    /// (skipped per plan v1; tear-off to a brand-new window has its
+    /// own Task 5 path).
+    func moveGroupSliceToWindow(memberIds: [Int], targetState: BrowserState, atIndex: Int) {
+        guard !memberIds.isEmpty,
+              let firstIdx = normalTabOrder.firstIndex(of: memberIds[0]) else {
+            AppLogWarn("[TabGroupDrag] moveGroupSliceToWindow empty/unknown members=\(memberIds)")
+            return
+        }
+        let n = memberIds.count
+        let sourceRange = firstIdx..<(firstIdx + n)
+        let clampedAtIndex = min(max(0, atIndex), targetState.normalTabs.count)
+        if clampedAtIndex != atIndex {
+            AppLogWarn(
+                "[TabGroupDrag] moveGroupSliceToWindow clamped atIndex=\(atIndex)→" +
+                "\(clampedAtIndex) targetCount=\(targetState.normalTabs.count)"
+            )
+        }
+
+        // Contiguity check — slice invariant. Bails in release if
+        // members are not contiguous in source (defensive; controller
+        // already snapshots `sourceRange` at drag start).
+        for offset in 0..<n {
+            let expectedIdx = firstIdx + offset
+            guard expectedIdx < normalTabOrder.count,
+                  normalTabOrder[expectedIdx] == memberIds[offset] else {
+                assertionFailure(
+                    "[TabGroupDrag] moveGroupSliceToWindow non-contiguous members=\(memberIds) firstIdx=\(firstIdx)"
+                )
+                AppLogWarn("[TabGroupDrag] moveGroupSliceToWindow non-contiguous bail members=\(memberIds)")
+                return
+            }
+        }
+
+        guard let firstMember = tabs.first(where: { $0.guid == memberIds[0] }),
+              let token = firstMember.groupToken else {
+            AppLogWarn(
+                "[TabGroupDrag] moveGroupSliceToWindow: first member has no groupToken " +
+                "id=\(memberIds[0])"
+            )
+            return
+        }
+
+        // Source-side opener-graph cleanup. Same shape as
+        // `moveNormalTabSlice`: capture cross-slice external children
+        // BEFORE mutation, run `fixOpenersAfterMovingSlice` to re-parent
+        // them to a non-slice ancestor, then mark them in
+        // `locallyFixedOpenerTabIds` so a subsequent Chromium snapshot
+        // doesn't revert the local fix. The members themselves will
+        // be removed from `tabs` / `normalTabOrder` by the kRemoved
+        // observer once Chromium fires the cross-window detach event.
+        let memberSet = Set(memberIds)
+        var externalChildren: Set<Int> = []
+        for m in memberIds {
+            for c in nativeRelationGraph.directChildren(of: m)
+            where !memberSet.contains(c) {
+                externalChildren.insert(c)
+            }
+        }
+        nativeRelationGraph.fixOpenersAfterMovingSlice(memberSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        // Schedule target-side insertion. The batched kInserted event
+        // observed by `targetState`'s observer matches against this
+        // pending entry and lands the members at `clampedAtIndex` in
+        // target's `normalTabOrder`.
+        targetState.scheduleGroupInsertion(memberGuids: memberIds, atIndex: clampedAtIndex)
+
+        // Resolve anchor in target. Prefer right-neighbor (beforeTabId);
+        // fall back to left-neighbor (afterTabId). Target normalTabs
+        // being empty is a known v1 limitation — see method doc.
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        let srcWindowId = windowId.int64Value
+        let dstWindowId = targetState.windowId.int64Value
+
+        if clampedAtIndex < targetState.normalTabs.count {
+            let anchorGuid = targetState.normalTabs[clampedAtIndex].guid
+            AppLogDebug(
+                "[TabGroupDrag] bridge.moveGroup src=\(srcWindowId) dst=\(dstWindowId) " +
+                "token=\(token) beforeTabId=\(anchorGuid)"
+            )
+            bridge.moveGroup(
+                withWindowId: srcWindowId,
+                tokenHex: token,
+                toWindowId: dstWindowId,
+                beforeTabId: Int64(anchorGuid)
+            )
+        } else if clampedAtIndex > 0,
+                  clampedAtIndex - 1 < targetState.normalTabs.count {
+            let anchorGuid = targetState.normalTabs[clampedAtIndex - 1].guid
+            AppLogDebug(
+                "[TabGroupDrag] bridge.moveGroup src=\(srcWindowId) dst=\(dstWindowId) " +
+                "token=\(token) afterTabId=\(anchorGuid)"
+            )
+            bridge.moveGroup(
+                withWindowId: srcWindowId,
+                tokenHex: token,
+                toWindowId: dstWindowId,
+                afterTabId: Int64(anchorGuid)
+            )
+        } else {
+            AppLogWarn(
+                "[TabGroupDrag] moveGroupSliceToWindow: target normalTabs empty " +
+                "(clampedAtIndex=\(clampedAtIndex)) — no anchor available, " +
+                "skipping bridge call. Source members will stay put."
+            )
+            // Roll back the target-side schedule so we don't leave a
+            // dangling expectation if no bridge call fires.
+            targetState.cancelPendingGroupInsertion()
+        }
+    }
+
+    /// Tear-off variant of `moveGroupSliceToWindow`: detaches the
+    /// group identified by `memberIds` from THIS window's strip into a
+    /// brand-new Browser window. Chromium owns the new-window creation
+    /// (`chrome::MoveGroupToNewWindow`) so Mac does not have to wait
+    /// for a target `BrowserState` to be ready — the new window will
+    /// appear via the existing `.mainBrowserWindowCreated` notification
+    /// flow.
+    ///
+    /// Window placement (frame around `dropScreenLocation`) is recorded
+    /// on `tabDraggingSession`'s pending-placement queue. Even though
+    /// whole-group drag does NOT route through `tabDraggingSession`
+    /// for its lifecycle (see plan §Task 4.4), reusing the session's
+    /// placement queue avoids duplicating the
+    /// `.mainBrowserWindowCreated` observer + frame-resolution logic.
+    /// The session's observer was registered at app init; it picks up
+    /// the next eligible new window and applies the frame.
+    ///
+    /// As with `moveGroupSliceToWindow`, source-side `normalTabOrder`
+    /// is left alone — Chromium's kRemoved events fire and the
+    /// existing source observer drops the members from `tabs` /
+    /// `normalTabOrder` naturally. We do source-side opener-graph
+    /// fixup eagerly because the opener graph is Mac-only state that
+    /// Chromium's snapshot won't reconstitute.
+    ///
+    /// `@MainActor` because `tabDraggingSession` is main-actor
+    /// isolated. Callers (chip drag end on the source TabStrip) are
+    /// always main-actor anyway.
+    @MainActor
+    func moveGroupSliceToNewWindow(memberIds: [Int], dropScreenLocation: CGPoint) {
+        guard !memberIds.isEmpty,
+              let firstIdx = normalTabOrder.firstIndex(of: memberIds[0]) else {
+            AppLogWarn("[TabGroupDrag] moveGroupSliceToNewWindow empty/unknown members=\(memberIds)")
+            return
+        }
+        let n = memberIds.count
+
+        // Contiguity check (defensive — controller has already
+        // snapshotted sourceRange at drag start, but bail if state has
+        // drifted).
+        for offset in 0..<n {
+            let expectedIdx = firstIdx + offset
+            guard expectedIdx < normalTabOrder.count,
+                  normalTabOrder[expectedIdx] == memberIds[offset] else {
+                assertionFailure(
+                    "[TabGroupDrag] moveGroupSliceToNewWindow non-contiguous members=\(memberIds) firstIdx=\(firstIdx)"
+                )
+                AppLogWarn("[TabGroupDrag] moveGroupSliceToNewWindow non-contiguous bail members=\(memberIds)")
+                return
+            }
+        }
+
+        guard let firstMember = tabs.first(where: { $0.guid == memberIds[0] }),
+              let token = firstMember.groupToken else {
+            AppLogWarn(
+                "[TabGroupDrag] moveGroupSliceToNewWindow: first member has no " +
+                "groupToken id=\(memberIds[0])"
+            )
+            return
+        }
+
+        // Source-side opener-graph cleanup (same shape as
+        // `moveGroupSliceToWindow`).
+        let memberSet = Set(memberIds)
+        var externalChildren: Set<Int> = []
+        for m in memberIds {
+            for c in nativeRelationGraph.directChildren(of: m)
+            where !memberSet.contains(c) {
+                externalChildren.insert(c)
+            }
+        }
+        nativeRelationGraph.fixOpenersAfterMovingSlice(memberSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        // Record placement so the upcoming `.mainBrowserWindowCreated`
+        // observer (registered at session init) can frame the new
+        // window around the drop point. Provide the source NSWindow so
+        // the matcher in `handleMainBrowserWindowCreated` skips the
+        // source window (defensive — Chromium creates a brand-new
+        // window so the source NSWindow shouldn't fire that event, but
+        // belt-and-suspenders).
+        let sourceWindow = windowController?.window
+        tabDraggingSession.recordPendingTearOffWindowPlacement(
+            screenLocation: dropScreenLocation,
+            sourceWindow: sourceWindow
+        )
+
+        // Fire Chromium-side atomic "create new Browser + detach group +
+        // insert at index 0 + show window". The new Browser inherits
+        // this profile; window placement is applied by the session
+        // observer when `.mainBrowserWindowCreated` fires.
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        AppLogDebug(
+            "[TabGroupDrag] bridge.moveGroupToNewWindow src=\(windowId) " +
+            "token=\(token) members=\(memberIds) dropScreen=\(dropScreenLocation)"
+        )
+        bridge.moveGroupToNewWindow(
+            withWindowId: windowId.int64Value,
+            tokenHex: token
+        )
+    }
+
     private func syncNormalTabRelativeOrderToChromium(tabId: Int) {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge,
               let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
@@ -1426,6 +1742,36 @@ class BrowserState {
                                                               guid: tabGuid,
                                                               index: index,
                                                               syncChromiumOrder: true)
+    }
+
+    /// Source-driven companion: called by another window's
+    /// `moveGroupSliceToWindow` before firing Chromium's atomic
+    /// detach + insert. This (target) state's
+    /// `handleNewTabFromChromium` consumes the pending entry as
+    /// member tabs arrive, landing them at the requested base index.
+    /// See `PendingGroupInsertion` doc for details.
+    func scheduleGroupInsertion(memberGuids: [Int], atIndex: Int) {
+        pendingGroupInsertion = PendingGroupInsertion(
+            memberGuids: Set(memberGuids),
+            atIndex: atIndex,
+            arrivedCount: 0,
+            requestedAt: Date()
+        )
+        AppLogDebug(
+            "[TabGroupDrag] scheduleGroupInsertion windowId=\(windowId) " +
+            "members=\(memberGuids) atIndex=\(atIndex)"
+        )
+    }
+
+    /// Drop the pending group insertion. Used when the source side
+    /// decides not to fire the bridge after all (e.g. no anchor
+    /// available in target). Leaving a dangling entry would interfere
+    /// with subsequent legitimate insertions in this target.
+    func cancelPendingGroupInsertion() {
+        if pendingGroupInsertion != nil {
+            AppLogDebug("[TabGroupDrag] cancelPendingGroupInsertion windowId=\(windowId)")
+            pendingGroupInsertion = nil
+        }
     }
     
     /// Inserts a tab guid into `normalTabOrder` at the requested index.

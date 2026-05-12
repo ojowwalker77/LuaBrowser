@@ -33,6 +33,27 @@ protocol TabGroupDragDelegate: AnyObject {
     /// Commits the slice move when dragging ends with a real position change.
     func groupDragControllerCommitMove(memberTabIds: [Int], to: Int)
 
+    /// Commits a cross-window slice move when dragging ends over
+    /// another browser window. Members are detached from THIS strip
+    /// and re-attached to the target via Chromium's atomic group
+    /// detach + insert (see `BrowserState.moveGroupSliceToWindow`).
+    /// `atIndex` is in the target strip's `normalTabs` coordinate space.
+    func groupDragControllerCommitMoveCrossWindow(
+        memberTabIds: [Int],
+        targetWindowController: MainBrowserWindowController,
+        atIndex: Int
+    )
+
+    /// Tears off the slice into a brand-new Browser window. Chromium
+    /// owns the new-window creation atomically; Mac only records the
+    /// pending placement (`dropScreenLocation`) so the new window
+    /// frames around the drop point when it appears via
+    /// `.mainBrowserWindowCreated`.
+    func groupDragControllerCommitTearOff(
+        memberTabIds: [Int],
+        dropScreenLocation: CGPoint
+    )
+
     /// Cancels the drag and restores the original layout.
     func groupDragControllerDidCancel()
 
@@ -40,6 +61,34 @@ protocol TabGroupDragDelegate: AnyObject {
     /// for liveness checks (so a member-tab close mid-drag can abort
     /// cleanly rather than commit a stale slice).
     func groupDragControllerCurrentNormalTabOrder() -> [Int]
+
+    /// Last-known screen-coordinate location of the dragging cursor.
+    /// The controller takes mouse positions in tab-strip-local space,
+    /// but cross-window hit-tests need screen coordinates. The strip
+    /// owns the window↔screen conversion via `NSWindow.convertPoint`.
+    /// Returns `nil` if no screen point has been observed yet (very
+    /// first `continueDragging` tick before the first window/screen
+    /// reading lands) — treat as "cursor still in source strip".
+    func groupDragControllerCurrentScreenPoint() -> CGPoint?
+
+    /// Resolve a screen point to a cross-window drop target on another
+    /// browser window's tab strip. Returns `nil` when (a) `screenPoint`
+    /// is over the source window, (b) `screenPoint` is over a window
+    /// that rejects cross-window drags, or (c) the resolved zone is
+    /// `.pinned` (groups cannot land in the pinned region).
+    func groupDragControllerResolveExternalDropTarget(screenPoint: CGPoint) -> ExternalGroupDropTarget?
+
+    /// Whether `screenPoint` is inside the source tab strip's drag
+    /// boundary. Used to distinguish `.local` from `.tearOff` once the
+    /// cross-window resolver has returned `nil`.
+    func groupDragControllerIsInsideDragBoundary(screenPoint: CGPoint) -> Bool
+
+    /// Whether `screenPoint` is over ANY non-source browser window's
+    /// tab strip drag boundary (regardless of whether the position
+    /// there is a valid drop slot for the group). Used to distinguish
+    /// `.rejected` (over another window but no valid slot, e.g., the
+    /// pinned region) from `.tearOff` (outside all browser windows).
+    func groupDragControllerIsOverAnotherBrowserStrip(screenPoint: CGPoint) -> Bool
 }
 
 final class TabGroupDragController {
@@ -102,7 +151,47 @@ final class TabGroupDragController {
         let prevTargetIndex = ctx.targetIndex
         ctx.currentMouseLocation = mouseLocation
 
-        if !ctx.snapCandidates.isEmpty {
+        // Resolve drop action by cursor position. Four-way branch:
+        //   1. cursor over another window's strip at a valid slot   → .external
+        //   2. cursor over another window's strip but invalid slot  → .rejected
+        //      (e.g., pinned region — groups can't be pinned)
+        //   3. cursor outside source strip AND outside all other
+        //      windows' strips                                      → .tearOff
+        //   4. cursor inside source strip                           → .local
+        // When screen point is unknown (very first tick) treat as .local.
+        let prevAction = ctx.pendingDropAction
+        let nextAction: PendingGroupDropAction
+        if let screenPoint = delegate.groupDragControllerCurrentScreenPoint() {
+            if let target = delegate.groupDragControllerResolveExternalDropTarget(screenPoint: screenPoint) {
+                nextAction = .external(target)
+            } else if delegate.groupDragControllerIsOverAnotherBrowserStrip(screenPoint: screenPoint) {
+                // Over another window's strip but target refused the
+                // specific zone (e.g., pinned). Treat as silent
+                // rejection — distinct from tear-off.
+                nextAction = .rejected
+            } else if !delegate.groupDragControllerIsInsideDragBoundary(screenPoint: screenPoint) {
+                nextAction = .tearOff
+            } else {
+                nextAction = .local
+            }
+        } else {
+            nextAction = .local
+        }
+        ctx.pendingDropAction = nextAction
+
+        if !pendingDropActionsEqual(prevAction, nextAction) {
+            AppLogDebug(
+                "[TabGroupDrag] continueDragging action=" +
+                "\(describe(prevAction))→\(describe(nextAction))"
+            )
+        }
+
+        // Snap target only matters for .local; for .external / .tearOff
+        // the destination index is computed elsewhere (target strip's
+        // groupDropTarget for .external, irrelevant for .tearOff).
+        // Skipping snap also avoids spurious "targetIndex=X→Y" logs
+        // when the cursor is in another window.
+        if case .local = nextAction, !ctx.snapCandidates.isEmpty {
             // Pinned soft-clamp: proxy can visually overshoot the
             // pinned/normal boundary but the snap target stays within
             // the normal zone.
@@ -130,6 +219,38 @@ final class TabGroupDragController {
         delegate.groupDragControllerDidUpdate()
     }
 
+    /// Equality for `PendingGroupDropAction` —  the enum has an
+    /// associated-value case, so synthesized `Equatable` would require
+    /// `ExternalGroupDropTarget: Equatable`. Manual compare avoids
+    /// pulling Equatable through the target struct's window-controller
+    /// reference.
+    private func pendingDropActionsEqual(
+        _ a: PendingGroupDropAction,
+        _ b: PendingGroupDropAction
+    ) -> Bool {
+        switch (a, b) {
+        case (.local, .local), (.tearOff, .tearOff), (.rejected, .rejected):
+            return true
+        case let (.external(la), .external(lb)):
+            return la.windowController === lb.windowController
+                && la.zone == lb.zone
+                && la.index == lb.index
+        default:
+            return false
+        }
+    }
+
+    private func describe(_ action: PendingGroupDropAction) -> String {
+        switch action {
+        case .local: return "local"
+        case .external(let t):
+            let win = t.windowController.browserState.windowId
+            return "external(window=\(win), zone=\(t.zone), index=\(t.index))"
+        case .rejected: return "rejected"
+        case .tearOff: return "tearOff"
+        }
+    }
+
     /// - Returns: `true` if the drop committed a slice move.
     @discardableResult
     func endDragging(mouseLocation: CGPoint) -> Bool {
@@ -142,6 +263,69 @@ final class TabGroupDragController {
             return false
         }
         ctx.currentMouseLocation = mouseLocation
+
+        // Dispatch by drop action. Tear-off path still no-op pending
+        // Task 5; .external commits via the cross-window delegate
+        // hook which fires Chromium's atomic detach + insert.
+        switch ctx.pendingDropAction {
+        case .external(let target):
+            AppLogDebug(
+                "[TabGroupDrag] endDragging commit external " +
+                "members=\(ctx.memberTabIds) " +
+                "targetWindow=\(target.windowController.browserState.windowId) " +
+                "zone=\(target.zone) atIndex=\(target.index)"
+            )
+            delegate?.groupDragControllerCommitMoveCrossWindow(
+                memberTabIds: ctx.memberTabIds,
+                targetWindowController: target.windowController,
+                atIndex: target.index
+            )
+            context = nil
+            delegate?.groupDragControllerDidUpdate()
+            return true
+
+        case .rejected:
+            AppLogDebug(
+                "[TabGroupDrag] endDragging rejected — target zone refused " +
+                "members=\(ctx.memberTabIds); cancelling, slice stays in source"
+            )
+            context = nil
+            delegate?.groupDragControllerDidCancel()
+            return false
+
+        case .tearOff:
+            // Resolve drop screen point from the delegate. Required
+            // for the new-window frame placement (see
+            // `BrowserState.moveGroupSliceToNewWindow`). Fallback to
+            // cancel if the delegate has no recorded screen point —
+            // shouldn't happen in practice (continueDragging already
+            // requires a screen point for the action to flip to
+            // `.tearOff`) but bail safely rather than firing the
+            // bridge without a placement.
+            guard let dropScreen = delegate?.groupDragControllerCurrentScreenPoint() else {
+                AppLogWarn(
+                    "[TabGroupDrag] endDragging tear-off but no screen " +
+                    "point; cancelling instead of committing"
+                )
+                context = nil
+                delegate?.groupDragControllerDidCancel()
+                return false
+            }
+            AppLogDebug(
+                "[TabGroupDrag] endDragging commit tear-off " +
+                "members=\(ctx.memberTabIds) dropScreen=\(dropScreen)"
+            )
+            delegate?.groupDragControllerCommitTearOff(
+                memberTabIds: ctx.memberTabIds,
+                dropScreenLocation: dropScreen
+            )
+            context = nil
+            delegate?.groupDragControllerDidUpdate()
+            return true
+
+        case .local:
+            break  // fall through to existing same-window commit
+        }
 
         let committed: Bool
         if ctx.hasPositionChanged {

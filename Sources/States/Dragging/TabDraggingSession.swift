@@ -383,6 +383,30 @@ final class TabDraggingSession {
             requestedAt: Date()
         )
     }
+
+    /// Public entry point used by whole-group cross-window tear-off
+    /// (`BrowserState.moveGroupSliceToNewWindow`). The group drag path
+    /// does NOT route through this session for its drag lifecycle
+    /// (see Task 4 §Step 4.4), so `sourceWindow` is unset — caller
+    /// supplies the source window explicitly so the matcher in
+    /// `handleMainBrowserWindowCreated` can skip it.
+    ///
+    /// The `.mainBrowserWindowCreated` observer is already registered
+    /// at session init via `registerMainWindowCreatedObserver()`, so
+    /// the next new-window notification will be picked up and the
+    /// frame set accordingly. Times out per
+    /// `tearOffPlacementTimeout` (4s) so a Chromium-side tear-off
+    /// failure doesn't leak a stale pending entry.
+    func recordPendingTearOffWindowPlacement(
+        screenLocation: CGPoint,
+        sourceWindow: NSWindow?
+    ) {
+        pendingTearOffWindowPlacement = PendingTearOffWindowPlacement(
+            dropScreenLocation: screenLocation,
+            sourceWindowNumber: sourceWindow?.windowNumber,
+            requestedAt: Date()
+        )
+    }
     
     private func handleMainBrowserWindowCreated(_ notification: Notification) {
         guard let request = pendingTearOffWindowPlacement else { return }

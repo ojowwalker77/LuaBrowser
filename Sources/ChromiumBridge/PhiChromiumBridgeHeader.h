@@ -318,6 +318,37 @@ typedef NS_ENUM(NSUInteger, DownloadEventType) {
                      tokenHex:(NSString *)tokenHex
                    afterTabId:(int64_t)anchorTabId;
 
+/// Cross-window: move the group identified by `tokenHex` from
+/// `sourceWindowId` to `targetWindowId`, landing **before** the tab
+/// identified by `anchorTabId` in the target strip. Group identity
+/// (TabGroupId/token), active member, and member order are preserved
+/// via Chromium's atomic `DetachTabGroupForInsertion` +
+/// `InsertDetachedTabGroupAt`. Index falling inside another group on
+/// the target is clamped to the nearest boundary. Failure paths
+/// (window/group/anchor lookup miss, same source/target window) log
+/// WARNING and no-op.
+- (void)moveGroupWithWindowId:(int64_t)sourceWindowId
+                     tokenHex:(NSString *)tokenHex
+                   toWindowId:(int64_t)targetWindowId
+                  beforeTabId:(int64_t)anchorTabId;
+
+/// Cross-window: same constraints as the beforeTabId variant; lands
+/// **after** the anchor in the target strip.
+- (void)moveGroupWithWindowId:(int64_t)sourceWindowId
+                     tokenHex:(NSString *)tokenHex
+                   toWindowId:(int64_t)targetWindowId
+                   afterTabId:(int64_t)anchorTabId;
+
+/// Tear-off: move the group identified by `tokenHex` into a new Browser
+/// window. Group identity, active member, and member order are preserved
+/// (Chromium creates the new Browser atomically + reattaches the
+/// detached group). New window inherits the source profile; placement
+/// is handled by `TabDraggingSession.recordPendingTearOffWindowPlacement`
+/// + `.mainBrowserWindowCreated` notification, same as single-tab
+/// tear-off.
+- (void)moveGroupToNewWindowWithWindowId:(int64_t)sourceWindowId
+                                tokenHex:(NSString *)tokenHex;
+
 /// Update the group's display title (empty string clears to Chromium auto).
 - (void)updateTabGroupTitleWithWindowId:(int64_t)windowId
                                 tokenHex:(NSString *)tokenHex
