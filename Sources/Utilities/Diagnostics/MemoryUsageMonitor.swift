@@ -99,7 +99,7 @@ final class MemoryUsageMonitor {
             return
         }
 
-        AppLogMemoryWarning(
+        AppLogWarn(
             "[MemoryMonitor] Memory threshold exceeded: totalResidentBytes=\(snapshot.totalResidentBytes), thresholdBytes=\(snapshot.thresholdBytes)"
         )
         reporter.reportMemoryThresholdExceeded(snapshot: snapshot)

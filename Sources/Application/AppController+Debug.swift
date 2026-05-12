@@ -805,23 +805,26 @@ extension AppController {
     }
 
     private static func relaunchPhiApplication() {
-        let appURL = Bundle.main.bundleURL
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.createsNewApplicationInstance = true
-
-        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
-            if let error {
-                AppLogError("[Debug] Relaunch after user data import failed: \(error.localizedDescription)")
-            } else {
-                AppLogInfo("[Debug] Requested new Phi instance after user data import")
-            }
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
+        let bundlePath = Bundle.main.bundleURL.path
+        let quoted = shellSingleQuotedForSh(bundlePath)
+        let relaunch = Process()
+        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunch.arguments = ["-c", "( sleep 0.5; /usr/bin/open -n \(quoted) ) &"]
+        do {
+            try relaunch.run()
+            relaunch.waitUntilExit()
+        } catch {
+            AppLogWarn("[Debug] Failed to schedule relaunch after quit: \(error.localizedDescription)")
+        }
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
         }
     }
-    
+
+    private static func shellSingleQuotedForSh(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     private func _clearUserData() {
         let appDir = FileSystemUtils.applicationSupportDirctory()
         let cachDir = FileSystemUtils.cacheDirctory()
