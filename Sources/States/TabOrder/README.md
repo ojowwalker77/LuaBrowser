@@ -180,7 +180,7 @@ The method is a **pure graph operation** — it does not modify `locallyFixedOpe
 
 | Call site | After fix: add children to `locallyFixedOpenerTabIds`? | Reason |
 |-----------|-------------------------------------------------------|--------|
-| `moveNormalTabLocally` (drag reorder) | **Yes** | Chromium unaware of the move; protect from snapshot |
+| `moveNormalTabLocally` (drag reorder) | **Yes** | Phi mirrors relative normal-tab order to Chromium, but keeps local opener protection for snapshot races |
 | `closeTab` | **Yes** | Protect prior drag fixes from being reverted by stale snapshots |
 | `moveNormalTab(toPinnd:)` | **Yes** | Chromium unaware of Phi's pin operation |
 | `moveNormalTab(toBookmark:)` | **Yes** | Chromium unaware of Phi's bookmark operation |
@@ -193,16 +193,19 @@ When the active tab changes, if the previously active tab has `resetOnActiveChan
 
 Cleans up all graph state for a removed tab: `knownTabIds`, `openerByTabId`, `resetOnActiveChangeTabIds`, `locallyFixedOpenerTabIds`.
 
-### 4.5 Drag Reorder Handling
+### 4.5 Normal-Order Sync
 
 When a tab is drag-reordered in the native UI (`moveNormalTabLocally`):
 
 1. Capture `directChildren(of: movedTabId)` **before** the fix
 2. Call `fixOpenersAfterMovingTab(movedTabId)` — re-parents children to moved tab's opener
 3. Add affected children to `locallyFixedOpenerTabIds`
-4. Reorder `normalTabOrder` — this is purely a Mac-side operation; Chromium is not notified
+4. Reorder `normalTabOrder`
+5. Notify Chromium of the moved tab's relative normal-tab anchor so restore sees the same normal-tab order
 
-This ensures that subsequent Chromium snapshots (which still contain the pre-drag opener relationships) will not overwrite the Mac-side corrections.
+When an existing pinned/bookmark-backed tab is moved into normal tabs, or a closed pinned/bookmark item creates a new Chromium tab for the normal list, Phi inserts the tab into `normalTabOrder` and uses the same relative-anchor notification path.
+
+This ensures that subsequent Chromium snapshots will not overwrite the Mac-side corrections, while Chromium still receives enough ordering information for normal-tab restore.
 
 ## 5. Chromium Opener Change Scenarios
 
@@ -270,7 +273,8 @@ All native tab order logs use the `[NativeTab]` prefix. Key log points:
 | `handleChromiumActiveTabChanged` | Override state, chromium choice, final decision |
 | `apply(snapshot:)` | Snapshot version, merge decisions |
 | `fixOpenersAfterMovingTab` | Affected children, new openers |
-| `moveNormalTabLocally` | Children added to `locallyFixedOpenerTabIds` |
+| `moveNormalTabLocally` | Children added to `locallyFixedOpenerTabIds`; Chromium normal-order sync |
+| `insertIntoNormalTabOrder` | Optional Chromium normal-order sync for pinned/bookmark/cross-window insertions |
 | `closeTab` | Children state, graph before/after |
 
 Filter logs with:

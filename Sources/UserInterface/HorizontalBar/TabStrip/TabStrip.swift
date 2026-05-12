@@ -57,6 +57,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     private let containerMaskLayer = CAShapeLayer()
 
+    /// Notifies the parent (TabStripBarController) whenever the strip relayouts
+    /// so the content border outline can recompute its active-tab gap.
+    var onLayoutChanged: (() -> Void)?
+
     // MARK: - View Pools
     private var pinnedTabViews: [String: TabItemView] = [:]
     private var normalTabViews: [String: TabItemView] = [:]
@@ -227,6 +231,46 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             gapIndex: normalGap,
             gapWidth: normalGapW
         )
+
+        onLayoutChanged?()
+    }
+
+    /// Returns the given tab's frame in `coordView`'s coordinate space, or nil
+    /// if the tab should not contribute an active-tab gap (pinned, not shown,
+    /// or being dragged over the pinned zone). The caller picks which tab to
+    /// query — the content border passes the *visible* controller's tab,
+    /// which can lag behind `browserState.focusingTab` during the
+    /// deferred-first-paint switch path.
+    ///
+    /// During this tab's own drag the source view is hidden in favor of a drag
+    /// proxy in `dragOverlay`, and the proxy gets restyled to match whichever
+    /// zone it currently hovers over. The gap follows the same rule: it tracks
+    /// the proxy's live frame while the proxy is over the normal zone, and
+    /// disappears while the proxy crosses into the pinned zone — regardless
+    /// of which zone the drag started from. Pinned tabs in their resting
+    /// position never get a gap.
+    func tabFrame(for tab: Tab?, in coordView: NSView) -> CGRect? {
+        guard let tab else { return nil }
+        // Match by uniqueId, not reference: WebContentViewController.associatedTab
+        // can hold a different Tab instance than browserState.pinnedTabs /
+        // dragController.context.draggingTab while representing the same
+        // logical tab (different objects, same guidInLocalDB / guid).
+        let id = tabId(for: tab)
+        if let context = dragController.context, tabId(for: context.draggingTab) == id {
+            guard context.targetContainerType != .pinned,
+                  let proxy = draggingProxyView,
+                  proxy.superview != nil else {
+                return nil
+            }
+            return proxy.convert(proxy.bounds, to: coordView)
+        }
+        let isPinned = browserState.pinnedTabs.contains(where: { tabId(for: $0) == id })
+        guard !isPinned,
+              let view = normalTabViews[id],
+              view.superview != nil else {
+            return nil
+        }
+        return view.convert(view.bounds, to: coordView)
     }
 
     // MARK: - Mouse Tracking
@@ -327,6 +371,11 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             activeTab: activeTab,
             isPinned: false
         )
+
+        // scroll-driven and animation-driven repositioning enters here without
+        // going through layout(); fire the same notification so the content
+        // outer border tracks the active tab's new x.
+        onLayoutChanged?()
     }
 
     // MARK: - Data Binding
@@ -1356,6 +1405,10 @@ extension TabStrip: TabStripDragDelegate {
         }
 
         updateDraggingViewPosition()
+        // Drag relayout reflows the non-dragged tabs (including the active tab
+        // when a sibling is dragged past it); recompute the content border so
+        // its gap follows.
+        onLayoutChanged?()
     }
 
     func dragControllerDidEndDrag(tab: Tab, toZone: TabContainerType, toIndex: Int) {
@@ -1512,6 +1565,10 @@ extension TabStrip: TabStripDragDelegate {
         CATransaction.setDisableActions(true)
         draggingView.frame = newFrame
         CATransaction.commit()
+
+        // Keep the content-border active-tab gap in sync with the proxy on
+        // plain drag-move ticks (when no sibling reflow fires onLayoutChanged).
+        onLayoutChanged?()
     }
 
     private func updateDraggingPresentationIfNeeded(for zone: TabContainerType, tab: Tab) {

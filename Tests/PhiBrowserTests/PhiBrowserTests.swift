@@ -8,6 +8,32 @@ import AppKit
 @testable import Phi
 
 final class PhiBrowserTests: XCTestCase {
+    func testBookmarkMainMenuItemRoutingKeepsChromiumBookmarksItemUntouched() {
+        let action = BookmarkMainMenuItemRouting.action(
+            title: "Bookmarks",
+            tag: 40029
+        )
+
+        XCTAssertEqual(
+            action,
+            .hideSystemItem,
+            "The Chromium-owned Bookmarks menu item must stay discoverable by IDC_BOOKMARKS_MENU so AppController should only hide it instead of repurposing it as the native custom Bookmarks menu."
+        )
+    }
+
+    func testBookmarkMainMenuItemRoutingRecognizesCustomBookmarksItem() {
+        let action = BookmarkMainMenuItemRouting.action(
+            title: "Bookmarks",
+            tag: AppController.bookmarksMenuItemTag
+        )
+
+        XCTAssertEqual(
+            action,
+            .configureCustomItem,
+            "The native Phi Bookmarks item should be the only menu item that gets reconfigured and rebuilt."
+        )
+    }
+
     func testBookmarkMenuContentBuilderAddsBookmarkThisTabAndRecursiveBookmarks() {
         let rootBookmark = Bookmark(title: "Phi", url: "https://phibrowser.com")
         let folder = Bookmark(folderTitle: "Favorites")

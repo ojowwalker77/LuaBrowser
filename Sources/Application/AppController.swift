@@ -58,10 +58,9 @@ import Countly
         if let account = AccountController.shared.account {
             SentryService.configureUser(account)
         }
+        MemoryUsageMonitor.shared.start()
         
         DefaultExtensionManifestWriter.start()
-        
-        BrowserRestoreManager.shared.startObserving()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
@@ -93,6 +92,7 @@ import Countly
     
     func applicationWillTerminate(_ notification: Notification) {
         AppLogInfo("-------applicationWillTerminate----")
+        MemoryUsageMonitor.shared.stop()
         ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
     }
     
@@ -164,7 +164,6 @@ import Countly
     
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
-        BrowserRestoreManager.shared.saveSnapshotIfNeeded()
     }
 }
 

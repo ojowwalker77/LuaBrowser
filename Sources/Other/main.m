@@ -13,6 +13,7 @@
 
 int main(int argc, const char * argv[]) {
     @try {
+        [PhiLoggingRuntime installSharedLogging];
         AppLogInfo(@"PhiBrowser starting with main entry point...");
         AppLogInfo(@"Command line arguments: argc=%d", argc);
         
@@ -36,7 +37,7 @@ int main(int argc, const char * argv[]) {
         }
         
         AppLogInfo(@"ChromiumLauncher singleton created (Chromium will initialize after app launch)");
-        [launcher launchChromium];
+        [launcher launchChromiumWithArgc:argc argv:(const char **)argv];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     } @catch (NSException *exception) {
         AppLogError(@"Exception in main: %@ - %@", exception.name, exception.reason);

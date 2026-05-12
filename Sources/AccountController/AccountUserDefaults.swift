@@ -147,6 +147,8 @@ extension AccountUserDefaults {
         /// Controls whether notification cards auto-popup. Default is popup enabled.
         case notificationPopupMode
         case lastKnownSidebarWidth
+        case authReauthenticationReason
+        case authReauthenticationFirstDetectedAt
     }
     
     /// Notification popup behavior mode.

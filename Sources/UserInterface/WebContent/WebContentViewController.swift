@@ -659,6 +659,12 @@ class WebContentViewController: NSViewController {
         self.aiChatSplitViewItem = aiChatSplitViewItem
     }
     
+    /// Returns the splitView container's frame in the given coordinate space —
+    /// used by the outer-border coordinator on the parent controller.
+    func splitViewContainerFrame(in coordView: NSView) -> CGRect {
+        splitViewContainer.convert(splitViewContainer.bounds, to: coordView)
+    }
+
     /// Toggles the AI Chat panel when the associated tab allows it.
     func toggleAIChatInTraditionalLayout() {
         guard associatedTab?.aiChatEnabled == true else { return }
@@ -1149,13 +1155,16 @@ class WebContentViewController: NSViewController {
     }
 
     /// Detach the currently attached bookmark bar, if any.
+    /// The shared bar's active state is driven by updateBookmarkBarVisibility
+    /// based on layout/preferences; we must not deactivate here, otherwise
+    /// every tab switch would tear down and rebuild BookmarkItemViews and
+    /// reload favicons, producing a visible flicker.
     func detachBookmarkBarIfAttached() {
         guard let attachedBookmarkBar else {
             updateBookmarkBarVisibility(bookmarkCount: 0)
             return
         }
 
-        attachedBookmarkBar.setActive(false)
         if attachedBookmarkBar.superview === bookmarkBarSlotView {
             attachedBookmarkBar.removeFromSuperview()
         }
@@ -1429,41 +1438,89 @@ class WebContentViewController: NSViewController {
 /// Apple provides no opt-out API; their guidance is "don't place non-vibrant
 /// content inside NSVisualEffectView."  Short of a full view-hierarchy
 /// restructure, KVO on each subview layer's `compositingFilter` is the only
-/// mechanism that catches every re-application (layout, subview mutation,
-/// CA transaction commit from Chromium frame push).
-/// Host view for Chromium-rendered content (webContentView, devToolsView).
+/// mechanism that catches every re-application — appearance changes can
+/// trigger backdrop re-renders across multiple CA commits, and post-commit
+/// `DispatchQueue.main.async` clears empirically miss some of them.
 ///
-/// **Vibrancy suppression**: Our ancestor `ColoredVisualEffectView`
-/// (`NSVisualEffectView`) causes AppKit to auto-apply `kCAFilterPlusL` on
-/// layer-backed descendants.  The filter is written during the CA
-/// transaction commit that follows subview mutations, *after* our
-/// synchronous `layout()` has already run.  Callers must therefore ask
-/// hostView to re-clear on the next run loop iteration (post-commit) via
-/// `scheduleVibrancyClear()`.
+/// The observer matches **only** `kCAFilterPlusL` ("plusL"). Any other
+/// `compositingFilter` value — `nil`, a `CIFilter`, or another CA filter
+/// name — is left alone, so legitimate filters set by Chromium or other UI
+/// code survive untouched. The value-equality check also self-coalesces:
+/// once we write `nil` the observer fires again with `nil`, fails the
+/// PlusL match, and exits without further work.
 class WebContentHostView: NSView {
     var isFrameSyncPaused = false
 
-    /// Clears `compositingFilter` on all subview backing layers both
-    /// synchronously and on the next run loop pass (after the current CA
-    /// transaction commits, which is when AppKit re-applies `kCAFilterPlusL`).
-    /// Call after any subview mutation (attach/detach DevTools, restore on
-    /// tab switch).
-    func scheduleVibrancyClear() {
-        clearCompositingFilters()
-        DispatchQueue.main.async { [weak self] in
-            self?.clearCompositingFilters()
+    /// Underlying string value of Apple's `kCAFilterPlusL` (Plus Lighter
+    /// additive blend, declared in `<QuartzCore/CALayer.h>`). The constant
+    /// itself is not bridged to Swift — `CA_EXTERN NSString * const` doesn't
+    /// surface as a Swift symbol — so we match its raw filter name directly.
+    /// The value is documented and ABI-stable since macOS 10.4.
+    private static let vibrancyFilterName = "plusL"
+
+    /// Per-subview KVO tokens on `layer.compositingFilter`.
+    private var filterObservers: [ObjectIdentifier: NSKeyValueObservation] = [:]
+
+    deinit {
+        filterObservers.values.forEach { $0.invalidate() }
+    }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        installFilterObserver(on: subview)
+    }
+
+    override func willRemoveSubview(_ subview: NSView) {
+        removeFilterObserver(from: subview)
+        super.willRemoveSubview(subview)
+    }
+
+    private func installFilterObserver(on subview: NSView) {
+        let key = ObjectIdentifier(subview)
+        guard filterObservers[key] == nil else { return }
+        subview.wantsLayer = true
+        guard let layer = subview.layer else { return }
+        Self.stripVibrancyFilter(on: layer)
+        filterObservers[key] = layer.observe(\.compositingFilter, options: [.new]) { observedLayer, _ in
+            Self.stripVibrancyFilter(on: observedLayer)
         }
     }
 
-    private func clearCompositingFilters() {
+    private func removeFilterObserver(from subview: NSView) {
+        let key = ObjectIdentifier(subview)
+        filterObservers[key]?.invalidate()
+        filterObservers.removeValue(forKey: key)
+    }
+
+    /// Strip only AppKit's vibrancy filter (`kCAFilterPlusL`).  No-op for
+    /// every other value (`nil`, `CIFilter`, unrelated CA filter name), so
+    /// legitimate filters survive and the call is free when nothing is set.
+    /// On a future macOS where AppKit ships PlusL in a non-`String`
+    /// representation this matcher silently stops working — the debug log
+    /// below makes that change discoverable instead of mysterious.
+    private static func stripVibrancyFilter(on layer: CALayer) {
+        guard let filter = layer.compositingFilter else { return }
+        if let name = filter as? String, name == Self.vibrancyFilterName {
+            layer.compositingFilter = nil
+            return
+        }
+        AppLogDebug("[PHI_DEBUG][Vibrancy] unrecognized compositingFilter type=\(type(of: filter)) value=\(filter) — left untouched")
+    }
+
+    /// Sync sweep over all subview layers. KVO catches subsequent
+    /// re-applications; this exists for the moment right after a subview
+    /// mutation when AppKit's first apply may already be queued in the same
+    /// CA transaction. Cheap thanks to `stripVibrancyFilter`'s early-out.
+    func scheduleVibrancyClear() {
         for subview in subviews {
-            subview.layer?.compositingFilter = nil
+            if let layer = subview.layer {
+                Self.stripVibrancyFilter(on: layer)
+            }
         }
     }
 
     override func layout() {
         super.layout()
-        clearCompositingFilters()
         guard !isFrameSyncPaused else { return }
         let target = bounds
         for subview in subviews where subview.translatesAutoresizingMaskIntoConstraints {

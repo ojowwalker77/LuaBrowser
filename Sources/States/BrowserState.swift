@@ -19,17 +19,12 @@ class BrowserState {
     
     /// Pending requests to mark the next created tab as a native NTP (incognito only).
     private var pendingNativeNtpCount: Int = 0
-    
-    /// Tracks tabs replayed during restore so we can close Chromium's startup NTP
-    /// after real restored tabs begin arriving.
-    private var pendingRestoreExpectedTabCount: Int?
-    private var pendingRestoreReceivedTabIds: Set<Int> = []
-    private var pendingRestorePlaceholderTabId: Int?
 
     private struct PendingNormalTabInsertion {
         let url: String?
         let guid: Int?
         let index: Int
+        let syncChromiumOrder: Bool
         
         func matches(tab: Tab) -> Bool {
             if let guid { return tab.guid == guid }
@@ -541,57 +536,7 @@ class BrowserState {
         tab.close()
     }
     
-    /// Prepares this window to drop Chromium's auto-created placeholder tab while replaying restore tabs.
-    func prepareForRestoredTabs(expectedCount: Int) {
-        pendingRestoreExpectedTabCount = nil
-        pendingRestoreReceivedTabIds.removeAll()
-        pendingRestorePlaceholderTabId = nil
-
-        guard expectedCount > 0 else {
-            return
-        }
-        
-        pendingRestoreExpectedTabCount = expectedCount
-        let placeholderCandidates = tabs.filter { tab in
-            guard tab.guidInLocalDB?.isEmpty ?? true else { return false }
-            if tab.isNTP {
-                return true
-            }
-            return tab.url == nil
-        }
-        if placeholderCandidates.count == 1, let placeholder = placeholderCandidates.first {
-            pendingRestorePlaceholderTabId = placeholder.guid
-            AppLogInfo("🪟 [Restore] tracked placeholder tab windowId=\(windowId) tabId=\(placeholder.guid) url=\(placeholder.url ?? "nil")")
-        }
-    }
-
-    private func registerRestoredTabArrivalIfNeeded(_ tab: Tab) {
-        guard let expectedCount = pendingRestoreExpectedTabCount, expectedCount > 0 else { return }
-
-        if let placeholderTabId = pendingRestorePlaceholderTabId, tab.guid == placeholderTabId {
-            return
-        }
-
-        pendingRestoreReceivedTabIds.insert(tab.guid)
-        AppLogInfo("🪟 [Restore] observed restored tab windowId=\(windowId) tabId=\(tab.guid) received=\(pendingRestoreReceivedTabIds.count)/\(expectedCount)")
-
-        if let placeholderTabId = pendingRestorePlaceholderTabId,
-           let placeholderTab = tabs.first(where: { $0.guid == placeholderTabId }) {
-            AppLogInfo("🪟 [Restore] closing tracked placeholder tab windowId=\(windowId) tabId=\(placeholderTab.guid)")
-            // should not use .close() here, which will cause a crash
-            placeholderTab.webContentWrapper?.close()
-            pendingRestorePlaceholderTabId = nil
-        }
-
-        if pendingRestoreReceivedTabIds.count >= expectedCount {
-            pendingRestoreExpectedTabCount = nil
-            pendingRestoreReceivedTabIds.removeAll()
-            pendingRestorePlaceholderTabId = nil
-        }
-    }
-    
     func handleNewTabFromChromium(_ tab: Tab, context: NativeTabCreationContext? = nil) {
-        registerRestoredTabArrivalIfNeeded(tab)
         // Check if this is an AI Chat Tab
         if let customGuid = tab.guidInLocalDB,
            Self.isAIChatId(customGuid),
@@ -646,7 +591,9 @@ class BrowserState {
         // Honor any pending insertion target for tabs promoted into the normal tab list.
         if let pending = pendingNormalTabInsertion {
             if pending.matches(tab: tab) {
-                insertIntoNormalTabOrder(tabGuid: tab.guid, at: pending.index)
+                insertIntoNormalTabOrder(tabGuid: tab.guid,
+                                         at: pending.index,
+                                         syncChromiumOrder: pending.syncChromiumOrder)
                 pendingNormalTabInsertion = nil
                 let elapsed = (CFAbsoluteTimeGetCurrent() - t0) * 1000
                 AppLogDebug("[NativeTab] ⏱ handleNewTabFromChromium tabId=\(tab.guid) took \(String(format: "%.2f", elapsed))ms")
@@ -967,7 +914,7 @@ class BrowserState {
         wrapper.moveSelf(to: newIndex, selectAfterMove: selectAfterMove)
     }
     
-    /// Reorders normal tabs locally without notifying Chromium.
+    /// Reorders normal tabs locally and mirrors their relative order to Chromium.
     /// - Parameters:
     ///   - fromIndex: Source index inside `normalTabs`.
     ///   - toIndex: Destination insertion index inside `normalTabs`.
@@ -1003,23 +950,53 @@ class BrowserState {
         normalTabs = normalTabOrder.compactMap { guid in
             tabs.first { $0.guid == guid }
         }
+
+        syncNormalTabRelativeOrderToChromium(tabId: guid)
+    }
+
+    private func syncNormalTabRelativeOrderToChromium(tabId: Int) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+            return
+        }
+
+        if movedIndex + 1 < normalTabOrder.count {
+            let anchorTabId = normalTabOrder[movedIndex + 1]
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+            return
+        }
+
+        if movedIndex > 0 {
+            let anchorTabId = normalTabOrder[movedIndex - 1]
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
     }
     
     func scheduleNormalTabInsertion(tabGuid: Int, at index: Int) {
-        pendingNormalTabInsertion = PendingNormalTabInsertion(url: nil, guid: tabGuid, index: index)
+        pendingNormalTabInsertion = PendingNormalTabInsertion(url: nil,
+                                                              guid: tabGuid,
+                                                              index: index,
+                                                              syncChromiumOrder: true)
     }
     
     /// Inserts a tab guid into `normalTabOrder` at the requested index.
     /// - Parameters:
     ///   - tabGuid: Chromium tab guid.
     ///   - index: Destination index relative to `normalTabs`.
-    private func insertIntoNormalTabOrder(tabGuid: Int, at index: Int) {
+    private func insertIntoNormalTabOrder(tabGuid: Int, at index: Int, syncChromiumOrder: Bool = false) {
         normalTabOrder.removeAll { $0 == tabGuid }
         
         let insertIndex = min(max(0, index), normalTabOrder.count)
         normalTabOrder.insert(tabGuid, at: insertIndex)
         
         updateNormalTabs()
+        if syncChromiumOrder {
+            syncNormalTabRelativeOrderToChromium(tabId: tabGuid)
+        }
     }
     
     /// Reorder pinned  tab
@@ -1082,10 +1059,15 @@ class BrowserState {
             }
             pinnedTab.webContentWrapper?.updateTabCustomValue("")
             
-            insertIntoNormalTabOrder(tabGuid: normalTab.guid, at: normalIndex)
+            insertIntoNormalTabOrder(tabGuid: normalTab.guid,
+                                     at: normalIndex,
+                                     syncChromiumOrder: true)
         } else {
             // New tabs are appended first, so record the intended insertion index up front.
-            pendingNormalTabInsertion = PendingNormalTabInsertion(url: pinnedTab.url ?? "", guid: nil, index: normalIndex)
+            pendingNormalTabInsertion = PendingNormalTabInsertion(url: pinnedTab.url ?? "",
+                                                                  guid: nil,
+                                                                  index: normalIndex,
+                                                                  syncChromiumOrder: true)
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: pinnedTab.url ?? "", at: -1, windowId: windowId, customGuid: nil)
         }
       
@@ -1256,10 +1238,15 @@ class BrowserState {
             }
             
             // Insert the existing tab into the desired normal-tab position.
-            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid, at: index)
+            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
+                                     at: index,
+                                     syncChromiumOrder: true)
         } else {
             // Create a new Chromium tab and let `newTab()` apply the pending insertion point.
-            pendingNormalTabInsertion = PendingNormalTabInsertion(url: url, guid: nil, index: index)
+            pendingNormalTabInsertion = PendingNormalTabInsertion(url: url,
+                                                                  guid: nil,
+                                                                  index: index,
+                                                                  syncChromiumOrder: true)
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url,
                                                                    at: -1,
                                                                    windowId: windowId,
