@@ -37,6 +37,34 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let windowController: MainBrowserWindowController
         let zone: TabContainerType
         let index: Int
+        /// Non-nil when the resolved intent is JOIN. Identifies the
+        /// target group. Nil = OUTSIDE (no auto-join on commit).
+        let targetGroupToken: String?
+        /// Which side of the anchor tab to insert on (selects the
+        /// before-vs-after Chromium bridge). Meaningless when
+        /// `targetGroupToken` is nil.
+        let joinAnchorIsBefore: Bool
+    }
+
+    /// Resolved cross-window single-tab drop intent. Produced by
+    /// `resolveSingleTabDropIntent(forScreenPoint:)` and consumed by
+    /// BOTH the preview path (`updateExternalDragPreview`) and the
+    /// commit path (`resolveExternalDropTarget`). Both call sites
+    /// route through the same resolver — that's how visual/commit
+    /// agreement is guaranteed.
+    private struct SingleTabDropIntent {
+        /// Resolved zone (pinned vs normal). JOIN only fires in
+        /// normal; pinned passes through with `joinGroupToken == nil`.
+        let zone: TabContainerType
+        /// Final commit index. For JOIN this lives inside the target
+        /// run; for OUTSIDE this is a run boundary or unconstrained
+        /// raw index.
+        let index: Int
+        /// Non-nil = JOIN target group token. Nil = OUTSIDE.
+        let joinGroupToken: String?
+        /// true = before-tab bridge; false = after-tab. Meaningless
+        /// when `joinGroupToken` is nil.
+        let joinAnchorIsBefore: Bool
     }
 
     private enum PendingDropAction {
@@ -108,6 +136,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let zone: TabContainerType
         let index: Int
         let gapWidth: CGFloat?
+        /// Non-nil means "JOIN this specific run". Nil means OUTSIDE.
+        /// Drives the gap-side gating (Task B7) and the underline
+        /// rightX extension for trailingJoin (Task B8).
+        let joinRunToken: String?
     }
 
     // Overlay used to display the dragged tab outside container clipping.
@@ -131,6 +163,21 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     private var cachedPageDragImage: NSImage?
     private var externalDragPreview: ExternalDragPreview?
     private weak var externalPreviewTargetStrip: TabStrip?
+    /// Per-chip "was gap-before-chip" hysteresis flag for the cross-window
+    /// resolver. Stores the token of the chip currently in
+    /// "gap-before-chip" state on THIS strip; nil = no chip currently in
+    /// that state. Same-window keeps the analog (`gapBeforeRunStartChipToken`)
+    /// on `TabDragContext`; cross-window has no such context on the target
+    /// strip, so the state lives here. Reset by the resolver itself when
+    /// the cursor no longer hits any chip, and defensively by
+    /// `clearExternalDragPreview`.
+    private var externalHoverGapBeforeChipToken: String?
+    /// 300ms hover-to-expand timer for a collapsed target chip during
+    /// external single-tab drag. See spec §6 (Edge cases — collapsed
+    /// chip). Token of the chip the timer is currently armed for;
+    /// nil = no timer running.
+    private var collapsedChipExpandTimer: Timer?
+    private var collapsedChipExpandToken: String?
     private var lastDragScreenPoint: CGPoint?
     private var pendingDropAction: PendingDropAction?
 
@@ -564,7 +611,17 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // tab's drag-state minX (= drop slot's right edge);
             // when the run sits at the strip's tail, fall back to
             // `lastFrame.maxX + idealTabWidth` as the slot width.
-            let trailingJoinPending = (dragCtx?.targetGroupForTrailingJoin == run.token)
+            //
+            // Sources: same-window drag (dragCtx.targetGroupForTrailingJoin)
+            // OR cross-window external preview whose resolved intent
+            // is trailingJoin on this run (joinRunToken matches AND
+            // index == run.upperBound + 1). See spec §4.2.
+            let externalTrailingJoinPending =
+                (externalDragPreview?.joinRunToken == run.token)
+                && (externalDragPreview?.index == run.range.upperBound + 1)
+            let trailingJoinPending =
+                (dragCtx?.targetGroupForTrailingJoin == run.token)
+                || externalTrailingJoinPending
             let rightX: CGFloat = {
                 guard trailingJoinPending else { return lastFrame.maxX }
                 let nextIdx = run.range.upperBound + 1
@@ -1145,17 +1202,17 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // lowerBound. Sources that should force before-chip:
             //   • THIS strip is itself running a whole-group drag (same-
             //     window slice slots in front of foreign chip).
-            //   • THIS strip has an external drop preview (cross-window
-            //     drop, group OR single-tab). Cross-window drops never
-            //     auto-join target's groups (plan §不在范围内(v2)) —
-            //     so the dropped item should visually slot *outside*
-            //     any target group, not wedge between chip and first
-            //     member.
+            //   • THIS strip has an external drop preview AND the
+            //     resolved intent is OUTSIDE (joinRunToken == nil).
+            //     JOIN intent (joinRunToken != nil) wants the gap on
+            //     the OTHER side of chip (inside the group), so the
+            //     flag must stay false. See spec §4.1.
             //   • Single-tab same-window drag's cursor-half heuristic.
-            let hasExternalPreview = (externalDragPreview != nil)
+            let externalIsOutsideIntent = (externalDragPreview != nil)
+                && (externalDragPreview?.joinRunToken == nil)
             let gapBeforeRunStartChip = !isPinned && (
                 (groupDragController.context != nil)
-                || hasExternalPreview
+                || externalIsOutsideIntent
                 || (dragController.context?.gapBeforeRunStartChip ?? false)
             )
             let input = TabStripLayoutInput(
@@ -1721,51 +1778,113 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         guard let (targetWindowController, targetStrip) = visibleExternalTabStripTarget(for: screenPoint) else {
             return nil
         }
-        let target = targetStrip.dropTarget(forScreenPoint: screenPoint)
-        // Cross-window single-tab drop into a foreign group's interior
-        // would otherwise land at a raw index between two members of the
-        // target's group — splitting the group visually for one frame
-        // and then snapping out via `relocateInterloperOutOfGroupRun`,
-        // or worse, would lie about its destination (preview shows
-        // interior gap, commit lands elsewhere). Snap to the nearest
-        // group boundary upfront so visual + commit agree. Same-window
-        // single-tab still uses its auto-join path (sandwich /
-        // leadingEdge / trailingEdge in `dragControllerDidEndDrag`).
-        let snappedIndex = (target.zone == .normal)
-            ? targetStrip.snapDropIndexOutsideGroupRun(target.index)
-            : target.index
+        // Both preview and commit go through the same resolver on the
+        // target strip — that's how visual/commit agreement is
+        // guaranteed (spec §5.4). The resolver handles run-boundary
+        // snap and JOIN detection intrinsically.
+        guard let intent = targetStrip.resolveSingleTabDropIntent(forScreenPoint: screenPoint) else {
+            return nil
+        }
         return ExternalDropTarget(
             windowController: targetWindowController,
-            zone: target.zone,
-            index: snappedIndex
+            zone: intent.zone,
+            index: intent.index,
+            targetGroupToken: intent.joinGroupToken,
+            joinAnchorIsBefore: intent.joinAnchorIsBefore
         )
     }
 
     func updateExternalDragPreview(screenPoint: CGPoint) {
         guard dragController.context == nil else { return }
-        let target = dropTarget(forScreenPoint: screenPoint)
-        let gapWidth = (target.zone == .normal) ? currentAverageNormalTabWidth() : nil
-        // Mirror the boundary snap done in resolveExternalDropTarget so
-        // the visual gap and the actual landing index agree. Without
-        // this, dropping a single tab on a foreign group shows let-way
-        // INSIDE the group but the tab commits at the group's edge.
-        let snappedIndex = (target.zone == .normal)
-            ? snapDropIndexOutsideGroupRun(target.index)
-            : target.index
+
+        // Collapsed-chip hover-expand timer: independent of preview
+        // resolution because the resolver currently treats collapsed
+        // chips as see-through. See spec §6.
+        if let collapsedToken = hoveredCollapsedChipToken(forScreenPoint: screenPoint) {
+            armCollapsedChipExpandTimer(token: collapsedToken)
+        } else {
+            cancelCollapsedChipExpandTimer()
+        }
+
+        guard let intent = resolveSingleTabDropIntent(forScreenPoint: screenPoint) else {
+            clearExternalDragPreview()
+            return
+        }
+        let gapWidth: CGFloat? = (intent.zone == .normal)
+            ? currentAverageNormalTabWidth()
+            : nil
         let nextPreview = ExternalDragPreview(
-            zone: target.zone,
-            index: snappedIndex,
-            gapWidth: gapWidth
+            zone: intent.zone,
+            index: intent.index,
+            gapWidth: gapWidth,
+            joinRunToken: intent.joinGroupToken
         )
         if let existing = externalDragPreview,
            existing.zone == nextPreview.zone,
            existing.index == nextPreview.index,
-           existing.gapWidth == nextPreview.gapWidth {
+           existing.gapWidth == nextPreview.gapWidth,
+           existing.joinRunToken == nextPreview.joinRunToken {
             return
         }
         externalDragPreview = nextPreview
         needsLayout = true
         layoutSubtreeIfNeeded()
+    }
+
+    /// Returns the token of the collapsed chip currently under
+    /// `screenPoint`, or nil if no collapsed chip is hit. Used by
+    /// `updateExternalDragPreview` to manage the 300ms hover-expand
+    /// timer (spec §6). Stays separate from `resolveSingleTabDropIntent`
+    /// so the resolver remains a pure function of (cursor, strip state).
+    private func hoveredCollapsedChipToken(forScreenPoint screenPoint: CGPoint) -> String? {
+        guard let window else { return nil }
+        let windowPoint = window.convertPoint(fromScreen: NSPoint(x: screenPoint.x, y: screenPoint.y))
+        let localPoint = convert(windowPoint, from: nil)
+        let metrics = dragControllerRequestMetrics()
+        guard metrics.normalContainerFrame.contains(localPoint) else { return nil }
+        let normalX = localPoint.x - metrics.normalContainerFrame.minX + metrics.normalScrollOffset
+        let collapsedTokens = Set(currentGroupRuns().filter { $0.isCollapsed }.map { $0.token })
+        for cf in metrics.chipFrames {
+            guard collapsedTokens.contains(cf.token) else { continue }
+            if normalX >= cf.frame.minX, normalX < cf.frame.maxX {
+                return cf.token
+            }
+        }
+        return nil
+    }
+
+    private func armCollapsedChipExpandTimer(token: String) {
+        if collapsedChipExpandToken == token, collapsedChipExpandTimer != nil {
+            // Same chip, timer already armed — let it run.
+            return
+        }
+        cancelCollapsedChipExpandTimer()
+        collapsedChipExpandToken = token
+        collapsedChipExpandTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.3,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            guard self.collapsedChipExpandToken == token else { return }
+            self.collapsedChipExpandToken = nil
+            self.collapsedChipExpandTimer = nil
+            guard let group = self.browserState.groups[token], group.isCollapsed else { return }
+            AppLogDebug(
+                "[TabStrip][ExternalDrag] auto-expand collapsed chip " +
+                "windowId=\(self.browserState.windowId) token=\(token)"
+            )
+            ChromiumLauncher.sharedInstance().bridge?.updateTabGroupCollapsed(
+                withWindowId: Int64(self.browserState.windowId),
+                tokenHex: token,
+                isCollapsed: false
+            )
+        }
+    }
+
+    private func cancelCollapsedChipExpandTimer() {
+        collapsedChipExpandTimer?.invalidate()
+        collapsedChipExpandTimer = nil
+        collapsedChipExpandToken = nil
     }
 
     /// Target-side receiver for whole-group drag previews. Called by
@@ -1791,12 +1910,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let nextPreview = ExternalDragPreview(
             zone: target.zone,
             index: target.index,
-            gapWidth: sliceWidth
+            gapWidth: sliceWidth,
+            joinRunToken: nil
         )
         if let existing = externalDragPreview,
            existing.zone == nextPreview.zone,
            existing.index == nextPreview.index,
-           existing.gapWidth == nextPreview.gapWidth {
+           existing.gapWidth == nextPreview.gapWidth,
+           existing.joinRunToken == nextPreview.joinRunToken {
             return
         }
         externalDragPreview = nextPreview
@@ -1804,32 +1925,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         layoutSubtreeIfNeeded()
     }
 
-    /// If `rawIndex` lands strictly inside a group's run (between two
-    /// members of the same group), snap to the nearest boundary
-    /// (`lowerBound` or `upperBound + 1`). Otherwise return as-is.
-    ///
-    /// Used by the cross-window single-tab path (both visual preview
-    /// and commit) so a dropped foreign tab never lands inside an
-    /// existing group's slot — keeps visual and commit in agreement
-    /// without introducing auto-join semantics (which would change
-    /// behavior; see plan §不在范围内(v2)).
-    ///
-    /// Same-window single-tab drag does NOT call this — the same-
-    /// window path uses `dragControllerDidEndDrag`'s auto-join /
-    /// auto-leave heuristics for in-group landings instead.
-    func snapDropIndexOutsideGroupRun(_ rawIndex: Int) -> Int {
-        let runs = currentGroupRuns()
-        guard let run = runs.first(where: {
-            rawIndex > $0.range.lowerBound && rawIndex <= $0.range.upperBound
-        }) else {
-            return rawIndex
-        }
-        let distToStart = rawIndex - run.range.lowerBound
-        let distToEnd = run.range.upperBound + 1 - rawIndex
-        return distToStart <= distToEnd ? run.range.lowerBound : run.range.upperBound + 1
-    }
-
     func clearExternalDragPreview() {
+        // Always reset cross-window per-chip hysteresis + cancel the
+        // collapsed-chip expand timer (both cheap, no layout cost).
+        // The resolver self-resets the token when the cursor misses
+        // all chips, but this is defensive for the path where the
+        // cursor exits the strip entirely.
+        externalHoverGapBeforeChipToken = nil
+        cancelCollapsedChipExpandTimer()
         guard externalDragPreview != nil else { return }
         externalDragPreview = nil
         needsLayout = true
@@ -2101,6 +2204,60 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         }
         let insertIndex = max(0, targetState.tabs.count)
         wrapper.moveSelf(toWindow: targetState.windowId.int64Value, at: insertIndex)
+        return true
+    }
+
+    /// Cross-window single-tab move that ALSO joins a target group on
+    /// arrival. Resolves the anchor `Tab` from `targetState.normalTabs`
+    /// at `atIndex` (± `anchorIsBefore`), reads its `guid.int64Value`
+    /// for the bridge's `anchorTabId:` parameter (Mac-side `Tab.guid`
+    /// IS the Chromium int64 tab id — see `BrowserState.swift:1727`
+    /// for the established conversion pattern), pre-schedules the slot,
+    /// then fires the wrapper's group-aware cross-window move. See
+    /// spec §5.4.
+    ///
+    /// Falls back to ordinary cross-window move (ungrouped on arrival)
+    /// when the anchor index is out of bounds — defensive guard so a
+    /// resolver edge case can never produce a no-op.
+    private func moveTabToWindowJoiningGroup(
+        _ tab: Tab,
+        targetState: BrowserState,
+        atIndex: Int,
+        joinToken: String,
+        anchorIsBefore: Bool
+    ) -> Bool {
+        guard let wrapper = tab.webContentWrapper else { return false }
+        let clampedIndex = min(max(0, atIndex), targetState.normalTabs.count)
+
+        // anchorIsBefore == true  → anchor = tab AT clampedIndex (insert before it)
+        // anchorIsBefore == false → anchor = tab BEFORE clampedIndex (insert after it)
+        let anchorIdx = anchorIsBefore ? clampedIndex : clampedIndex - 1
+        guard anchorIdx >= 0, anchorIdx < targetState.normalTabs.count else {
+            return moveTabToWindow(
+                tab,
+                targetState: targetState,
+                scheduleNormalInsertion: true,
+                index: clampedIndex
+            )
+        }
+        let anchorTabId = Int64(targetState.normalTabs[anchorIdx].guid)
+
+        targetState.scheduleNormalTabInsertion(tabGuid: tab.guid, at: clampedIndex)
+
+        let targetWindowId = targetState.windowId.int64Value
+        if anchorIsBefore {
+            wrapper.moveSelf(
+                toWindow: targetWindowId,
+                andAddToGroupTokenHex: joinToken,
+                beforeTabId: anchorTabId
+            )
+        } else {
+            wrapper.moveSelf(
+                toWindow: targetWindowId,
+                andAddToGroupTokenHex: joinToken,
+                afterTabId: anchorTabId
+            )
+        }
         return true
     }
 
@@ -2577,6 +2734,17 @@ extension TabStrip: TabStripDragDelegate {
         case .normal:
             if context.sourceContainerType == .pinned, let guid = tab.guidInLocalDB {
                 browserState.movePinnedTabOut(pinnedGuid: guid, to: clampedNormalIndex, selectAfterMove: tab.isActive)
+            }
+            // JOIN intent — route through the group-aware bridge.
+            // OUTSIDE intent (targetGroupToken == nil) — ordinary path.
+            if let joinToken = target.targetGroupToken {
+                return moveTabToWindowJoiningGroup(
+                    tab,
+                    targetState: targetState,
+                    atIndex: clampedNormalIndex,
+                    joinToken: joinToken,
+                    anchorIsBefore: target.joinAnchorIsBefore
+                )
             }
             return moveTabToWindow(tab, targetState: targetState, scheduleNormalInsertion: true, index: clampedNormalIndex)
         }
@@ -3113,6 +3281,153 @@ extension TabStrip: TabGroupDragDelegate {
         }
 
         return (.normal, rawIndex)
+    }
+
+    // MARK: - Single-tab cross-window resolver
+
+    /// Resolves a screen point to a cross-window single-tab drop intent
+    /// in THIS strip's coordinate space. Cross-window analog of
+    /// `TabStripDragController`'s same-window heuristics
+    /// (TabStripDragController.swift:220-485), using a "virtual D"
+    /// (cursor-centered frame of idealTabWidth) instead of the live
+    /// dragged proxy — so the JOIN/OUTSIDE flip happens on D-edge
+    /// crossings, not cursor center. See spec §3.2-§3.3.
+    ///
+    /// Per-chip prev-state hysteresis is anchored on this strip's
+    /// `externalHoverGapBeforeChipToken`. Cross-window cannot reuse
+    /// `TabDragContext.gapBeforeRunStartChipToken` because that lives
+    /// on the source-side context; the target strip has no such
+    /// context.
+    ///
+    /// Returns nil when the cursor falls outside both pinned and normal
+    /// containers (caller routes to tear-off).
+    private func resolveSingleTabDropIntent(forScreenPoint screenPoint: CGPoint) -> SingleTabDropIntent? {
+        guard let window else { return nil }
+        let windowPoint = window.convertPoint(fromScreen: NSPoint(x: screenPoint.x, y: screenPoint.y))
+        let localPoint = convert(windowPoint, from: nil)
+        let metrics = dragControllerRequestMetrics()
+
+        // Pinned region: never a JOIN (groups don't live in pinned).
+        if metrics.pinnedContainerFrame.contains(localPoint) {
+            let localX = localPoint.x - metrics.pinnedContainerFrame.minX
+            let idx = calculateGapIndex(localX: localX,
+                                        tabFrames: metrics.pinnedTabFrames,
+                                        excludedIndex: nil)
+            externalHoverGapBeforeChipToken = nil
+            return SingleTabDropIntent(zone: .pinned,
+                                       index: idx,
+                                       joinGroupToken: nil,
+                                       joinAnchorIsBefore: true)
+        }
+
+        guard metrics.normalContainerFrame.contains(localPoint) else {
+            externalHoverGapBeforeChipToken = nil
+            return nil
+        }
+
+        // Project to normalContainer + scroll coords (same space as
+        // metrics.chipFrames and metrics.normalTabFrames).
+        let normalX = localPoint.x - metrics.normalContainerFrame.minX + metrics.normalScrollOffset
+        let tabW = TabStripMetrics.Tab.idealWidth
+        let virtualDMinX = normalX - tabW / 2
+        let virtualDMaxX = normalX + tabW / 2
+
+        let runs = currentGroupRuns()
+
+        // Pass 1: chip overlap + per-chip prev-state hysteresis.
+        // Mirrors TabStripDragController:241-293 (foreign-chip path).
+        // Cross-window only ever sees foreign chips — the dragged tab
+        // lives in another strip, so no own-chip branch needed.
+        //
+        // Collapsed chips are SKIPPED here — dropping into a collapsed
+        // group's interior makes no UX sense (no visible run). The
+        // hover-expand timer in `updateExternalDragPreview` detects
+        // collapsed-chip hover separately and expands after 300ms;
+        // the next resolver call (post-expand) treats the chip as
+        // expanded and resolves normally. See spec §6.
+        let collapsedTokens = Set(runs.filter { $0.isCollapsed }.map { $0.token })
+        var hitChip: TabStripChipFrame? = nil
+        var hitGapBeforeChip = false
+        for cf in metrics.chipFrames {
+            if collapsedTokens.contains(cf.token) { continue }
+            let overlapsChip = virtualDMaxX > cf.frame.minX && virtualDMinX < cf.frame.maxX
+            guard overlapsChip else { continue }
+            let prevForThisChip = (externalHoverGapBeforeChipToken == cf.token)
+            let gapBeforeChipNow: Bool
+            if prevForThisChip {
+                // Was "before chip" — chip slid right. Flip OFF when
+                // D's right edge moves past the (slid) chip.midX.
+                gapBeforeChipNow = virtualDMaxX < cf.frame.midX
+            } else {
+                // Was "after chip" / first frame on this chip. Flip
+                // ON when D's left edge meets the (natural) chip.midX.
+                gapBeforeChipNow = virtualDMinX <= cf.frame.midX
+            }
+            hitChip = cf
+            hitGapBeforeChip = gapBeforeChipNow
+            break
+        }
+
+        if let cf = hitChip {
+            externalHoverGapBeforeChipToken = hitGapBeforeChip ? cf.token : nil
+            if hitGapBeforeChip {
+                // OUTSIDE: snap to run.lowerBound; no JOIN.
+                return SingleTabDropIntent(zone: .normal,
+                                           index: cf.firstMemberIndex,
+                                           joinGroupToken: nil,
+                                           joinAnchorIsBefore: true)
+            } else {
+                // leadingJoin: become new first member.
+                return SingleTabDropIntent(zone: .normal,
+                                           index: cf.firstMemberIndex,
+                                           joinGroupToken: cf.token,
+                                           joinAnchorIsBefore: true)
+            }
+        }
+        externalHoverGapBeforeChipToken = nil
+
+        // Pass 2: raw-index resolution for sandwich + trailingJoin.
+        let rawIndex = calculateGapIndex(
+            localX: normalX,
+            tabFrames: metrics.normalTabFrames,
+            excludedIndex: nil
+        )
+
+        // 2a. Sandwich: rawIndex strictly inside some run's interior
+        // (lowerBound < idx <= upperBound). Anchor = tab at rawIndex
+        // (insert BEFORE it).
+        if let run = runs.first(where: {
+            rawIndex > $0.range.lowerBound && rawIndex <= $0.range.upperBound
+        }) {
+            return SingleTabDropIntent(zone: .normal,
+                                       index: rawIndex,
+                                       joinGroupToken: run.token,
+                                       joinAnchorIsBefore: true)
+        }
+
+        // 2b. trailingJoin: rawIndex == run.upperBound + 1 AND virtual D
+        // covers run's last member z by at least 1/3. Mirrors
+        // TabStripDragController:462-485. Anchor = run's last member
+        // (insert AFTER it).
+        for run in runs {
+            guard rawIndex == run.range.upperBound + 1 else { continue }
+            guard run.range.upperBound < metrics.normalTabFrames.count else { continue }
+            let zFrame = metrics.normalTabFrames[run.range.upperBound]
+            guard zFrame != .zero, zFrame.width > 0 else { continue }
+            let third = zFrame.width / 3
+            guard virtualDMaxX >= zFrame.minX + third,
+                  virtualDMinX <= zFrame.maxX - third else { continue }
+            return SingleTabDropIntent(zone: .normal,
+                                       index: rawIndex,
+                                       joinGroupToken: run.token,
+                                       joinAnchorIsBefore: false)
+        }
+
+        // OUTSIDE: rawIndex unchanged, no JOIN.
+        return SingleTabDropIntent(zone: .normal,
+                                   index: rawIndex,
+                                   joinGroupToken: nil,
+                                   joinAnchorIsBefore: true)
     }
 
     // MARK: - Esc cancel (group drag only)
