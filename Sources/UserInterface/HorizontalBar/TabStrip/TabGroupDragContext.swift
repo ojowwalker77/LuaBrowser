@@ -5,6 +5,42 @@
 
 import AppKit
 
+/// Pending end-of-drag action for a whole-group drag. Computed each
+/// frame by `TabGroupDragController.continueDragging` based on
+/// cursor position; consumed by `endDragging` to dispatch the
+/// correct commit path. Mirrors the same-window vs cross-window vs
+/// tear-off split in single-tab drag (`TabStrip.PendingDropAction`).
+enum PendingGroupDropAction {
+    /// Cursor stayed inside the source tab strip. Commits via
+    /// `BrowserState.moveNormalTabSlice` (existing path).
+    case local
+    /// Cursor entered another browser window's tab strip at a valid
+    /// drop slot. Commits via `BrowserState.moveGroupSliceToWindow`.
+    case external(ExternalGroupDropTarget)
+    /// Cursor is over another browser window's tab strip BUT the
+    /// resolved zone refuses the group (e.g., pinned region — groups
+    /// can't be pinned). On release: cancel the drag, slice stays
+    /// in the source window. Distinct from `.tearOff` so an
+    /// accidental wander through the pinned zone doesn't spawn a
+    /// new window.
+    case rejected
+    /// Cursor left all browser windows entirely. Commits via
+    /// `BrowserState.moveGroupSliceToNewWindow` (creates a new
+    /// browser window with the group).
+    case tearOff
+}
+
+/// Resolved cross-window drop target for a whole-group drag. Built by
+/// the source `TabStrip` from the target window's group-aware
+/// `groupDropTarget(forScreenPoint:)`. `zone` is always `.normal`
+/// (groups cannot land in the pinned region; pinned hits return nil
+/// upstream); `index` is in target's `normalTabs` coordinate space.
+struct ExternalGroupDropTarget {
+    let windowController: MainBrowserWindowController
+    let zone: TabContainerType
+    let index: Int
+}
+
 /// Drag state for a whole tab-group drag. Parallel to `TabDragContext`
 /// but slice-shaped — sources and target are slice boundaries, not a
 /// single tab. Group membership is invariant during the drag; the
@@ -40,6 +76,19 @@ final class TabGroupDragContext {
     var targetIndex: Int
     /// Current mouse location in tab-strip coordinates.
     var currentMouseLocation: CGPoint
+    /// Pending end-of-drag action; refreshed each frame by
+    /// `TabGroupDragController.continueDragging`. Defaults to
+    /// `.local` so a synchronous abort before the first
+    /// `continueDragging` tick still routes through the same-window
+    /// commit path (no-op when `hasPositionChanged == false`).
+    var pendingDropAction: PendingGroupDropAction = .local
+
+    /// Cached chip snapshot for the floating drag preview shown when
+    /// the cursor leaves the source strip. Populated lazily at drag
+    /// start by `TabStrip.applyChipPlacements`'s `onDragStart` callback
+    /// (the chip view is the source for the image). Chip-only (no
+    /// member tabs); per 2026-05-12 plan §Design Decision 1.
+    var cachedChipDragImage: NSImage?
 
     /// Snap candidates computed once at drag-start from the natural
     /// pre-drag layout, with after-source positions pre-shifted left
