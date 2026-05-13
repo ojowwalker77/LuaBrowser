@@ -13,6 +13,7 @@ import Sparkle
 import WebKit
 import Settings
 import Countly
+import PostHog
 
 @objc class AppController: NSObject, NSApplicationDelegate {
     @IBOutlet var window: NSWindow!
@@ -103,6 +104,28 @@ import Countly
         SharedAuthTokenStore.shared.logDelegate = SharedAuthTokenStoreLogBridge.shared
         AppLogInfo("------------------------------  Starting: \(Self.makeClientString())  ------------------------------")
         recordLaunchVersion()
+
+        // Set up PostHog before `didFinishLaunchingNotification` fires so the
+        // SDK can observe the app-opened lifecycle event. If either value is
+        // missing the app runs without analytics.
+        if let token = PostHogEnv.projectToken.value,
+           let host = PostHogEnv.host.value {
+            let postHogConfig = PostHogConfig(apiKey: token, host: host)
+            postHogConfig.captureApplicationLifecycleEvents = true
+            #if DEBUG
+            postHogConfig.debug = true
+            #endif
+            postHogConfig.setBeforeSend { event in
+                guard event.event == "$app_opened" else { return event }
+                event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
+                event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
+                return event
+            }
+            PostHogSDK.shared.setup(postHogConfig)
+        } else {
+            AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
+        }
+
         ChromiumLauncher.sharedInstance().bridge?.applicationWillFinishLaunching(notification)
     }
     

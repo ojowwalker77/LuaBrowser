@@ -1290,6 +1290,8 @@
 				CCCD5E352EB1C36300E78FC1 /* DefaultExtensionManifestWriter.swift */,
 				3764F7382F1628DA00C1F4E3 /* FaviconProvider.swift */,
 				376193522F4EB8630094A78E /* SystemUtils.swift */,
+				7B00AAAA000000040000A4B4 /* PostHogEnv.swift */,
+				7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -1894,6 +1896,8 @@
 				897C09F82F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */,
 				CC8B74C02EA8BF490075F58C /* CrashSample.swift in Sources */,
 				37289F122EFE602F0003624E /* EventTracker.swift in Sources */,
+				7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */,
+				7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */,
 				B025870E2E430305001B08FC /* MainSplitViewController.swift in Sources */,
 				3769C2E82EF9437A00A94DE0 /* ArcDataParser.swift in Sources */,
 				CCBF8F422E653D9600B9A99E /* SidebarBottomBar.swift in Sources */,

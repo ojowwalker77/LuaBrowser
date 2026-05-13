@@ -7,6 +7,7 @@ import Foundation
 import Auth0
 import WebKit
 import JWTDecode
+import PostHog
 
 final class AuthFailureTraceBuffer {
     private struct Entry {
@@ -263,6 +264,9 @@ class AuthManager {
             await stopRenewTimer()
             stopHeartbeat()
             recordTrace("user-logout-succeeded")
+            // PostHog: Capture logout event and reset analytics identity
+            PostHogSDK.shared.capture("user_logged_out")
+            PostHogSDK.shared.reset()
             return true
         } catch {
             recordTrace("user-logout-failed", details: ["error": error.localizedDescription])
