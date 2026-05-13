@@ -83,6 +83,13 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// `info.objectWillChange.send()`, so we mirror the sidebar's
     /// approach and re-subscribe whenever the dictionary changes.
     private var groupChangeCancellables: [String: AnyCancellable] = [:]
+
+    /// Combine subscriptions for collapsed-group member favicons.
+    /// Keyed by group token; each value's `Set<AnyCancellable>`
+    /// holds one subscription per observed member (≤4 per group).
+    /// Reconciled by `rebuildCollapsedGroupFaviconSubscriptions()`
+    /// whenever groups or tab membership change.
+    private var collapsedGroupFaviconCancellables: [String: Set<AnyCancellable>] = [:]
     private let dragController = TabStripDragController()
     private let groupDragController = TabGroupDragController()
     private var isActive = false
@@ -943,6 +950,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         isActive = false
         cancellables.removeAll()
         groupChangeCancellables.removeAll()
+        collapsedGroupFaviconCancellables.removeAll()
         clearInactiveContent()
     }
 
@@ -980,6 +988,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         chipViews.values.forEach { $0.removeFromSuperview() }
         chipViews.removeAll()
         chipFullWidths.removeAll()
+        collapsedGroupFaviconCancellables.removeAll()
 
         hoveredTabIndex = nil
         currentScrollOffset = 0
@@ -1026,6 +1035,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 for token in self.browserState.groups.keys {
                     self.refreshChipWidth(for: token)
                 }
+                self.rebuildCollapsedGroupFaviconSubscriptions()
 
                 self.performLayout(context: .dataChanged) {
                     if let activeTab = activeTab {
@@ -1049,6 +1059,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 for token in groups.keys {
                     self.refreshChipWidth(for: token)
                 }
+                self.rebuildCollapsedGroupFaviconSubscriptions()
                 self.rebuildGroupChangeSubscriptions(groups: groups)
                 self.performLayout(context: .dataChanged)
             }
@@ -1069,8 +1080,88 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         ) { [weak self] token in
             guard let self = self, self.isActive else { return }
             self.refreshChipWidth(for: token)
+            self.rebuildCollapsedGroupFaviconSubscriptions()
             self.performLayout(context: .dataChanged)
         }
+    }
+
+    /// Reconciles the per-collapsed-group favicon subscription set
+    /// so the mosaic refreshes when any of the first ≤4 members'
+    /// `liveFaviconData` / `cachedFaviconData` / `url` changes.
+    ///
+    /// Called whenever the set of collapsed groups or their first-
+    /// ≤4 members can change: from `bindData`'s tab-list sink and
+    /// from the `$groups` sink. Idempotent; safe to call on every
+    /// data event.
+    ///
+    /// Subscriptions are torn down when:
+    ///   • the group is expanded (drops from the collapsed set),
+    ///   • the group is destroyed (drops from `groups`),
+    ///   • the membership change reduces the observed members.
+    ///
+    /// Why `$url` is observed alongside the favicon publishers:
+    /// when a member navigates from a real site to NTP (or vice
+    /// versa) Chromium may keep the previous page's favicon bytes
+    /// in `liveFaviconData` momentarily, so the favicon publisher
+    /// alone wouldn't fire. The mosaic relies on
+    /// `collectMosaicFaviconData` to re-evaluate the URL through
+    /// `FaviconConfiguration.shouldUseDefaultFavicon`, so we must
+    /// trigger that re-evaluation whenever `tab.url` changes.
+    ///
+    /// Tradeoff: observing `$url` fires `refreshChipMosaic` on
+    /// every navigation in a member tab (anchor jumps, pushState,
+    /// redirects), not only when the NTP boundary is crossed. The
+    /// refresh is cheap — `[Data: CGImage]` cache hits on stable
+    /// favicon bytes — so we accept the spurious fires rather than
+    /// add per-tab "previous shouldUseDefaultFavicon state"
+    /// bookkeeping. Revisit if profiling shows hotness.
+    private func rebuildCollapsedGroupFaviconSubscriptions() {
+        // Snapshot the current "collapsed + first ≤4 members" view.
+        var desired: [String: [Tab]] = [:]
+        for (token, info) in browserState.groups where info.isCollapsed {
+            let members = browserState.normalTabs
+                .filter { $0.groupToken == token }
+                .prefix(4)
+            desired[token] = Array(members)
+        }
+
+        // Drop subscriptions for groups no longer in the desired set.
+        let liveTokens = Set(desired.keys)
+        collapsedGroupFaviconCancellables = collapsedGroupFaviconCancellables
+            .filter { liveTokens.contains($0.key) }
+
+        // Replace subscription sets wholesale per token. We don't
+        // try to diff member-by-member: the cost of a fresh
+        // subscribe-on-publisher is negligible vs. the bookkeeping
+        // complexity of preserving partial sets across membership
+        // shuffles.
+        for (token, tabs) in desired {
+            var subs = Set<AnyCancellable>()
+            for tab in tabs {
+                tab.$liveFaviconData
+                    .combineLatest(tab.$cachedFaviconData, tab.$url)
+                    .dropFirst()  // chip already has the current values
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] _, _, _ in
+                        self?.refreshChipMosaic(for: token)
+                    }
+                    .store(in: &subs)
+            }
+            collapsedGroupFaviconCancellables[token] = subs
+        }
+    }
+
+    /// Pushes the current member favicons into the chip's mosaic
+    /// without going through the full configure path. Called by
+    /// the favicon-data subscription sink (Step 6.1) when a
+    /// member's `liveFaviconData` / `cachedFaviconData` / `url`
+    /// changes.
+    private func refreshChipMosaic(for token: String) {
+        guard let chip = chipViews[token],
+              chip.superview != nil,
+              let group = browserState.groups[token],
+              group.isCollapsed else { return }
+        chip.updateMosaic(memberFavicons: collectMosaicFaviconData(for: token))
     }
 
     private func isMouseInside() -> Bool {
@@ -1578,7 +1669,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 memberCount: memberCount,
                 hasUserSetTitle: group.hasUserSetTitle,
                 mode: placement.mode,
-                isCollapsed: group.isCollapsed
+                isCollapsed: group.isCollapsed,
+                memberFavicons: collectMosaicFaviconData(for: token)
             )
             // The chip of the actively-dragged group keeps its
             // drag-start frame; `applyGroupDragTransforms` handles
@@ -1725,6 +1817,56 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         return runs
     }
 
+    /// TIFF-encoded bytes of `NSImage.phiDefaultFavicon`, used to
+    /// represent NTP / internal `phi://` / `chrome://` pages in the
+    /// mosaic. Computed once on first access and reused for every
+    /// such tab — the mosaic's `[Data: CGImage]` cache hits on the
+    /// shared bytes so each unique mosaic still pays only one decode.
+    private static let phiDefaultFaviconMosaicData: Data? =
+        NSImage.phiDefaultFavicon.tiffRepresentation
+
+    /// Returns the favicon `Data?` for the first `min(memberCount, 4)`
+    /// members of group `token`, in tab-strip order.
+    ///
+    /// The returned array is always `min(memberCount, 4)` long. The
+    /// chip's `TabGroupChipMosaicView.fillCells` decides what to do
+    /// with each entry:
+    ///   • `memberCount <= 4`: entry `i` is drawn in slot `i`.
+    ///   • `memberCount >= 5`: entries 0..2 are drawn in slots 0..2;
+    ///     slot 3 is replaced by the overflow count cell and the 4th
+    ///     entry, while collected, is not rendered as a favicon.
+    ///
+    /// Favicon source per tab:
+    ///   1. NTP and internal `phi://` / `chrome://` pages — return
+    ///      `phiDefaultFaviconMosaicData` (mirrors `TabItemView`'s
+    ///      regular favicon path via `FaviconConfiguration`'s
+    ///      classifier, so the mosaic doesn't duplicate the URL
+    ///      classification rules).
+    ///   2. Otherwise — prefer `liveFaviconData` (current page),
+    ///      fall back to `cachedFaviconData` (DB persistence), nil
+    ///      when neither exists.
+    ///
+    /// The lazy chain short-circuits at the 4th match, so a 100-tab
+    /// strip with a 5-tab group only walks until 4 group members are
+    /// found. `Array(...)` materializes the result so the return
+    /// type is a concrete `[Data?]`.
+    private func collectMosaicFaviconData(for token: String) -> [Data?] {
+        return Array(
+            browserState.normalTabs
+                .lazy
+                .filter { $0.groupToken == token }
+                .prefix(4)
+                .map { tab -> Data? in
+                    if let urlString = tab.url,
+                       let url = URL(string: urlString),
+                       FaviconConfiguration.shouldUseDefaultFavicon(for: url) {
+                        return Self.phiDefaultFaviconMosaicData
+                    }
+                    return tab.liveFaviconData ?? tab.cachedFaviconData
+                }
+        )
+    }
+
     /// Re-measures the full-mode chip width for `token`. Called on group
     /// creation and whenever the group's title / color / member count
     /// changes (or when the tab list changes for an auto-named group).
@@ -1739,7 +1881,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let width = TabGroupChipView.fullModeWidth(
             forTitle: title,
             hasUserSetTitle: group.hasUserSetTitle,
-            memberCount: memberCount
+            memberCount: memberCount,
+            isCollapsed: group.isCollapsed
         )
         chipFullWidths[token] = width
     }
@@ -2292,6 +2435,18 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let anchorTabId = Int64(targetState.normalTabs[anchorIdx].guid)
 
         targetState.scheduleNormalTabInsertion(tabGuid: tab.guid, at: clampedIndex)
+
+        // Park the tab's favicon in the shared cross-window stash so
+        // the destination's `handleNewTabFromChromium` seeds the
+        // fresh Tab's `cachedFaviconData` before any chip-mosaic
+        // read. The collapsed-chip hover-expand timer means the join
+        // commit lands while the target group is expanded (no mosaic
+        // rendered at that instant), but the user can later collapse
+        // the group manually — that's when the mosaic first reads
+        // this member's favicon. Without the stash, the destination
+        // wrapper has nil `favIconData` and the slot stays blank.
+        // See `BrowserState.crossWindowFaviconStash` for the why.
+        BrowserState.stashCrossWindowFavicons(forMemberIds: [tab.guid], in: [tab])
 
         let targetWindowId = targetState.windowId.int64Value
         if anchorIsBefore {
