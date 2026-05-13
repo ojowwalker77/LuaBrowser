@@ -388,6 +388,11 @@ extension Tab: ContextMenuRepresentable {
                                                title: nil,
                                                color: nil)
         AppLogDebug("[TAB_GROUPS] addToNewTabGroup: windowId=\(windowId) tabId=\(guid) returned token=\(token)")
+        if !token.isEmpty {
+            MainBrowserWindowControllersManager.shared
+                .getBrowserState(for: windowId)?
+                .applyOptimisticGroupMembership(tabId: guid, newToken: token)
+        }
     }
 
     /// Move this (already-grouped) tab into a newly created group.
@@ -407,6 +412,11 @@ extension Tab: ContextMenuRepresentable {
                                                title: nil,
                                                color: nil)
         AppLogDebug("[TAB_GROUPS] moveToNewTabGroup: windowId=\(windowId) tabId=\(guid) returned token=\(token)")
+        if !token.isEmpty {
+            MainBrowserWindowControllersManager.shared
+                .getBrowserState(for: windowId)?
+                .applyOptimisticGroupMembership(tabId: guid, newToken: token)
+        }
     }
 
     @MainActor
@@ -421,6 +431,9 @@ extension Tab: ContextMenuRepresentable {
                               tabIds: tabIds,
                               tokenHex: token)
         AppLogDebug("[TAB_GROUPS] addToExistingTabGroup windowId=\(windowId) tabId=\(guid) token=\(token)")
+        MainBrowserWindowControllersManager.shared
+            .getBrowserState(for: windowId)?
+            .applyOptimisticGroupMembership(tabId: guid, newToken: token)
     }
 
     @MainActor
@@ -433,5 +446,8 @@ extension Tab: ContextMenuRepresentable {
         bridge.removeTabsFromGroup(withWindowId: Int64(windowId),
                                    tabIds: tabIds)
         AppLogDebug("[TAB_GROUPS] removeFromTabGroup windowId=\(windowId) tabId=\(guid)")
+        MainBrowserWindowControllersManager.shared
+            .getBrowserState(for: windowId)?
+            .applyOptimisticGroupMembership(tabId: guid, newToken: nil)
     }
 }
