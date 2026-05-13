@@ -162,6 +162,7 @@
 		8E8008DA2FA1A69600EB24C5 /* GroupColor+NSColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008D92FA1A69600EB24C5 /* GroupColor+NSColor.swift */; };
 		8E8008F52FA1A72E00EB24C5 /* TabGroupHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008F42FA1A72E00EB24C5 /* TabGroupHeaderView.swift */; };
 		8E8008F82FA1A73A00EB24C5 /* TabGroupSidebarItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008F72FA1A73A00EB24C5 /* TabGroupSidebarItem.swift */; };
+		8E9024952FB4446100852B00 /* TabGroupChipMosaicView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9024942FB4446100852B00 /* TabGroupChipMosaicView.swift */; };
 		8E9DAF422F765E83004EA160 /* PasswordManagerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9DAF402F765E83004EA160 /* PasswordManagerViewController.swift */; };
 		8E9E96AC2F0F6E64002D0D21 /* TabItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96A82F0F6E64002D0D21 /* TabItemView.swift */; };
 		8E9E96AD2F0F6E64002D0D21 /* TabStripState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96A62F0F6E64002D0D21 /* TabStripState.swift */; };
@@ -537,6 +538,7 @@
 		8E8008D92FA1A69600EB24C5 /* GroupColor+NSColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GroupColor+NSColor.swift"; sourceTree = "<group>"; };
 		8E8008F42FA1A72E00EB24C5 /* TabGroupHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupHeaderView.swift; sourceTree = "<group>"; };
 		8E8008F72FA1A73A00EB24C5 /* TabGroupSidebarItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupSidebarItem.swift; sourceTree = "<group>"; };
+		8E9024942FB4446100852B00 /* TabGroupChipMosaicView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupChipMosaicView.swift; sourceTree = "<group>"; };
 		8E9DAF402F765E83004EA160 /* PasswordManagerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordManagerViewController.swift; sourceTree = "<group>"; };
 		8E9E96A52F0F6E64002D0D21 /* TabStripMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripMetrics.swift; sourceTree = "<group>"; };
 		8E9E96A62F0F6E64002D0D21 /* TabStripState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripState.swift; sourceTree = "<group>"; };
@@ -1119,6 +1121,7 @@
 		8E9E96A92F0F6E64002D0D21 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				8E9024942FB4446100852B00 /* TabGroupChipMosaicView.swift */,
 				8EEBD76A2FAB1731008CBD9A /* TabGroupChipView.swift */,
 				8EE5BEEB2F14FF9800698D7D /* TabCloseButton.swift */,
 				8E4C949B2F10DA5800B09A80 /* NewTabButton.swift */,
@@ -2080,6 +2083,7 @@
 				8EEBD76C2FAB1731008CBD9A /* TabGroupChipView.swift in Sources */,
 				374BCE992F7157FD0043C656 /* TabAreaContextMenuHelper.swift in Sources */,
 				37604F632F14C52300B9FB37 /* DefaultColors.swift in Sources */,
+				8E9024952FB4446100852B00 /* TabGroupChipMosaicView.swift in Sources */,
 				37B978102EF403AB007E0568 /* GradientBorderButton.swift in Sources */,
 				CC376D272EC6D5EE00270B93 /* DynamicColor+RGBA.swift in Sources */,
 				CC376D282EC6D5EE00270B93 /* DynamicColor+Deriving.swift in Sources */,

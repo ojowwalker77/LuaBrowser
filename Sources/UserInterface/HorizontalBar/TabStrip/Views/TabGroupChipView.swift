@@ -115,6 +115,7 @@ final class TabGroupChipView: NSView {
     private(set) var hasUserSetTitle: Bool = false
     private(set) var mode: ChipMode = .full
     private(set) var isCollapsed: Bool = false
+    private(set) var memberFavicons: [Data?] = []
 
     // MARK: - Subviews / sublayers
 
@@ -152,6 +153,7 @@ final class TabGroupChipView: NSView {
         iv.translatesAutoresizingMaskIntoConstraints = true
         return iv
     }()
+    private let mosaicView = TabGroupChipMosaicView()
 
     // MARK: - Init
 
@@ -176,6 +178,8 @@ final class TabGroupChipView: NSView {
         addSubview(labelField)
         addSubview(countField)
         addSubview(chevronImageView)
+        addSubview(mosaicView)
+        mosaicView.isHidden = true
 
         toolTip = NSLocalizedString(
             "Click to collapse or expand group",
@@ -197,7 +201,8 @@ final class TabGroupChipView: NSView {
         memberCount: Int,
         hasUserSetTitle: Bool,
         mode: ChipMode,
-        isCollapsed: Bool
+        isCollapsed: Bool,
+        memberFavicons: [Data?]
     ) {
         self.token = token
         self.color = color
@@ -206,12 +211,30 @@ final class TabGroupChipView: NSView {
         self.hasUserSetTitle = hasUserSetTitle
         self.mode = mode
         self.isCollapsed = isCollapsed
+        self.memberFavicons = memberFavicons
 
         labelField.stringValue = displayTitle
         countField.stringValue = "\(memberCount)"
+        mosaicView.configure(memberFavicons: memberFavicons, memberCount: memberCount)
 
         applyAppearance()
         needsLayout = true
+    }
+
+    /// Lightweight update used by `TabStrip` when a member's
+    /// favicon data changes while the group is collapsed. Avoids
+    /// the full configure (which would force a chip-width refresh
+    /// and a strip relayout) — only the mosaic's cell contents
+    /// change.
+    ///
+    /// Precondition: caller must have already invoked `configure(...)`
+    /// with `isCollapsed: true` at least once, so `mosaicView.frame`
+    /// is set by a prior `layoutFullMode()` pass. Calling this
+    /// before the first collapsed layout would leave the mosaic at
+    /// `.zero` until the next layout pass.
+    func updateMosaic(memberFavicons: [Data?]) {
+        self.memberFavicons = memberFavicons
+        mosaicView.configure(memberFavicons: memberFavicons, memberCount: memberCount)
     }
 
     // MARK: - Appearance
@@ -244,16 +267,20 @@ final class TabGroupChipView: NSView {
             : .secondaryLabelColor
 
         let showLabel = (mode == .full)
-        let showCount = (mode == .full) && hasUserSetTitle
+        let showMosaic = (mode == .full) && isCollapsed
+        // Count badge only when expanded + user-named (existing
+        // behavior). When the mosaic shows, the count is suppressed
+        // because the mosaic carries the count via the overflow cell.
+        let showCount = (mode == .full) && hasUserSetTitle && !isCollapsed
         // Compact mode: the chevron stands in for the swatch as the
-        // single visible symbol next to the bar. Hiding the swatch
-        // keeps the 24pt width unchanged.
+        // single visible symbol next to the bar.
         let showCompactSwatch = false
 
         labelField.isHidden = !showLabel
         countField.isHidden = !showCount
         countBackgroundLayer.isHidden = !showCount
         compactSwatchLayer.isHidden = !showCompactSwatch
+        mosaicView.isHidden = !showMosaic
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -287,14 +314,24 @@ final class TabGroupChipView: NSView {
         let labelX = Self.barWidth + Self.labelLeftPadding
         let labelHeight = ceil(Self.labelFont.ascender - Self.labelFont.descender + Self.labelFont.leading)
 
-        // Chevron pinned to the trailing edge of the chip.
         let chevronX = bounds.width - Self.labelRightPadding - Self.chevronSize
         let chevronY = (bounds.height - Self.chevronSize) / 2
         chevronImageView.frame = CGRect(x: chevronX, y: chevronY,
                                          width: Self.chevronSize, height: Self.chevronSize)
 
-        if hasUserSetTitle {
-            // Count badge sits between the label and the chevron.
+        if isCollapsed {
+            // Mosaic occupies the space between label and chevron.
+            let mosaicW = TabGroupChipMosaicView.mosaicSize
+            let mosaicX = chevronX - Self.chevronToContentGap - mosaicW
+            let mosaicY = (bounds.height - mosaicW) / 2
+            mosaicView.frame = CGRect(x: mosaicX, y: mosaicY,
+                                       width: mosaicW, height: mosaicW)
+
+            let labelMaxX = mosaicX - Self.countToLabelGap
+            labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
+                                       width: max(0, labelMaxX - labelX), height: labelHeight)
+        } else if hasUserSetTitle {
+            // Count badge sits between label and chevron.
             let countString = countField.stringValue as NSString
             let countTextWidth = countString.size(withAttributes: [.font: Self.countFont]).width
             let countWidth = ceil(countTextWidth) + Self.countHorizontalPadding * 2
@@ -303,13 +340,6 @@ final class TabGroupChipView: NSView {
             let countY = (bounds.height - countHeight) / 2
 
             countBackgroundLayer.frame = CGRect(x: countX, y: countY, width: countWidth, height: countHeight)
-            // Match the field to the capsule's full height. Insetting
-            // by countVerticalPadding shrinks the cell below the
-            // font's ascender + |descender| (~12pt for 10pt SF Bold),
-            // and NSTextField responds by clipping the glyph's top —
-            // leaving the digit visually low in the capsule. Letting
-            // the cell own the full 12pt lets NSTextField place the
-            // baseline correctly.
             countField.frame = CGRect(x: countX, y: countY,
                                        width: countWidth, height: countHeight)
 
@@ -317,7 +347,7 @@ final class TabGroupChipView: NSView {
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
         } else {
-            // No badge — label fills up to the chevron's left edge.
+            // No badge, no mosaic — label fills up to the chevron's left edge.
             let labelMaxX = chevronX - Self.chevronToContentGap
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
@@ -338,31 +368,41 @@ final class TabGroupChipView: NSView {
     // MARK: - Width measurement
 
     /// Pure measurement helper. Called by `TabStrip.refreshChipWidth(for:)`
-    /// once per chip when the title / color / member count changes; the
-    /// result is cached in `TabStrip.chipFullWidths` and fed to the
-    /// layout engine via `TabStripLayoutInput.chipFullWidths`.
+    /// once per chip when the title / color / member count / collapsed
+    /// flag changes; the result is cached in `TabStrip.chipFullWidths`
+    /// and fed to the layout engine via `TabStripLayoutInput.chipFullWidths`.
+    ///
+    /// - Parameters:
+    ///   - title: rendered group title (`group.displayTitle(memberCount:)`).
+    ///   - hasUserSetTitle: drives count-badge visibility in expanded state.
+    ///     Ignored when `isCollapsed` is true — the mosaic always wins over
+    ///     both the badge and the bare-label paths.
+    ///   - memberCount: drives count-badge digit width in expanded state.
+    ///   - isCollapsed: when true, reserves mosaic (`TabGroupChipMosaicView.mosaicSize`)
+    ///     in place of the count badge — even for unnamed groups, since
+    ///     the mosaic is the preview signal.
     static func fullModeWidth(forTitle title: String,
                               hasUserSetTitle: Bool,
-                              memberCount: Int) -> CGFloat {
+                              memberCount: Int,
+                              isCollapsed: Bool) -> CGFloat {
         let labelWidth = (title as NSString)
             .size(withAttributes: [.font: labelFont])
             .width
-        // Trailing edge reserves space for the chevron with the same
-        // labelRightPadding gap to the chip's right border.
         let chevronOverhead = chevronToContentGap + chevronSize + labelRightPadding
         var width = barWidth + labelLeftPadding
                   + ceil(labelWidth) + labelSafetyMargin
                   + chevronOverhead
 
-        if hasUserSetTitle {
+        if isCollapsed {
+            // Mosaic always reserves space when collapsed,
+            // independent of hasUserSetTitle.
+            width += countToLabelGap + TabGroupChipMosaicView.mosaicSize
+        } else if hasUserSetTitle {
             let countString = "\(memberCount)" as NSString
             let countTextWidth = countString
                 .size(withAttributes: [.font: countFont])
                 .width
             let countWidth = ceil(countTextWidth) + countHorizontalPadding * 2
-            // With badge: + countToLabelGap + countW (count sits
-            // between label and the chevron overhead already
-            // accounted for above).
             width += countToLabelGap + countWidth
         }
 

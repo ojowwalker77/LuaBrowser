@@ -596,7 +596,19 @@ class BrowserState {
         if consumePendingNativeNTP() {
             tab.usesNativeNTP = true
         }
-        
+
+        // Seed `cachedFaviconData` for cross-window / tear-off
+        // arrivals from the shared cross-window favicon stash. Runs
+        // BEFORE `tabs.append(tab)` so the first chip-mosaic layout
+        // triggered by the `@Published tabs` sink reads populated
+        // bytes instead of nil; otherwise the mosaic stays blank for
+        // normal sites (NTP slots are unaffected — they go through
+        // the URL classifier in `collectMosaicFaviconData`). See
+        // `crossWindowFaviconStash` for the why.
+        if let stashedFavicon = Self.consumeCrossWindowFavicon(for: tab.guid) {
+            tab.updateCachedFaviconData(stashedFavicon)
+        }
+
         tabs.append(tab)
         // If Chromium emitted a kCreated/kJoined for this tab while it was
         // still in flight, restore the group membership now that the Tab
@@ -1562,6 +1574,14 @@ class BrowserState {
             nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
         }
 
+        // Park source-side favicon bytes in the shared cross-window
+        // stash so target's `handleNewTabFromChromium` can seed the
+        // freshly-constructed Tab's `cachedFaviconData` before its
+        // first chip-mosaic layout. See `crossWindowFaviconStash`
+        // for the rationale; this call site handles the cross-window-
+        // into-existing-window variant.
+        Self.stashCrossWindowFavicons(forMemberIds: memberIds, in: tabs)
+
         // Schedule target-side insertion. The batched kInserted event
         // observed by `targetState`'s observer matches against this
         // pending entry and lands the members at `clampedAtIndex` in
@@ -1700,6 +1720,15 @@ class BrowserState {
             sourceWindow: sourceWindow
         )
 
+        // Park source-side favicon bytes in the shared cross-window
+        // stash so the new window's `handleNewTabFromChromium` can
+        // seed each freshly-constructed Tab's `cachedFaviconData`
+        // before its first chip-mosaic layout. The new BrowserState
+        // doesn't exist yet at this call site, so the per-pending-
+        // insertion dict used by `moveGroupSliceToWindow` isn't an
+        // option here; the global guid-keyed stash works for both.
+        Self.stashCrossWindowFavicons(forMemberIds: memberIds, in: tabs)
+
         // Fire Chromium-side atomic "create new Browser + detach group +
         // insert at index 0 + show window". The new Browser inherits
         // this profile; window placement is applied by the session
@@ -1772,6 +1801,83 @@ class BrowserState {
             AppLogDebug("[TabGroupDrag] cancelPendingGroupInsertion windowId=\(windowId)")
             pendingGroupInsertion = nil
         }
+    }
+
+    // MARK: - Cross-window favicon stash
+
+    /// Shared cross-window favicon stash, keyed by Chromium tab guid.
+    /// Written by the source-side cross-window / tear-off paths just
+    /// before firing the Chromium bridge call; read and consumed by
+    /// ANY BrowserState's `handleNewTabFromChromium` when the
+    /// corresponding kInserted lands the tab on the destination side.
+    ///
+    /// Why a global static rather than per-BrowserState state: the
+    /// tear-off path creates a brand-new BrowserState that doesn't
+    /// exist when the source fires the bridge, so the per-target
+    /// `pendingGroupInsertion` channel isn't reachable. Tab guids are
+    /// stable across cross-window moves (WebContents identity, not
+    /// TabStripModel slot), so a guid-keyed global lookup serves both
+    /// cross-window-into-existing AND tear-off without forking the
+    /// mechanism.
+    ///
+    /// Why the destination wrapper can't supply the favicon itself:
+    /// the bridge wrapper on the destination side is a fresh ObjC
+    /// instance whose `favIconData` starts at nil, and Chromium fires
+    /// favicon KVO only on actual favicon changes — cross-window
+    /// WebContents transfer is not such a change. Without this seed
+    /// the chip mosaic stays blank for normal sites until the user
+    /// re-navigates a member. NTP / `phi://` / `chrome://` slots are
+    /// unaffected because their URL classifier in
+    /// `collectMosaicFaviconData` returns the shared default bytes
+    /// regardless of Tab favicon state.
+    ///
+    /// Stale entries (>`crossWindowFaviconStashTimeoutSeconds`) are
+    /// evicted lazily on the next consume — defensive against drag
+    /// paths where Chromium rejects or never fires the move.
+    ///
+    /// Concurrency: all callers (drag-end on the source strip, EventBus
+    /// dispatch on the destination) run on the main thread by the
+    /// project-wide convention shared with the rest of `BrowserState`.
+    /// We don't mark these `@MainActor` because peer instance methods
+    /// (`handleNewTabFromChromium`, `moveGroupSliceToWindow`,
+    /// `moveTabToWindowJoiningGroup`) are nonisolated and would
+    /// otherwise need to await, which the existing call chains don't
+    /// support.
+    private static var crossWindowFaviconStash: [Int: (data: Data, requestedAt: Date)] = [:]
+    private static let crossWindowFaviconStashTimeoutSeconds: TimeInterval = 4.0
+
+    /// Capture `liveFaviconData ?? cachedFaviconData` for each of
+    /// `memberIds` from `sourceTabs` and write the non-nil bytes into
+    /// the shared cross-window favicon stash. Called by both
+    /// `moveGroupSliceToWindow` and `moveGroupSliceToNewWindow`
+    /// immediately before firing their respective bridge calls.
+    static func stashCrossWindowFavicons(forMemberIds memberIds: [Int], in sourceTabs: [Tab]) {
+        let now = Date()
+        var stashed = 0
+        for memberId in memberIds {
+            guard let member = sourceTabs.first(where: { $0.guid == memberId }),
+                  let data = member.liveFaviconData ?? member.cachedFaviconData else {
+                continue
+            }
+            crossWindowFaviconStash[memberId] = (data, now)
+            stashed += 1
+        }
+        AppLogDebug(
+            "[TabGroupDrag] stashCrossWindowFavicons captured=\(stashed)/\(memberIds.count)"
+        )
+    }
+
+    /// Consume the stashed favicon bytes for `tabGuid`, if any.
+    /// Returns nil when no entry exists or the entry is stale (older
+    /// than `crossWindowFaviconStashTimeoutSeconds`). Stale entries
+    /// are evicted opportunistically on every consume to keep the
+    /// dict from leaking in pathological drag paths.
+    static func consumeCrossWindowFavicon(for tabGuid: Int) -> Data? {
+        let now = Date()
+        crossWindowFaviconStash = crossWindowFaviconStash.filter { _, entry in
+            now.timeIntervalSince(entry.requestedAt) <= crossWindowFaviconStashTimeoutSeconds
+        }
+        return crossWindowFaviconStash.removeValue(forKey: tabGuid)?.data
     }
     
     /// Inserts a tab guid into `normalTabOrder` at the requested index.
