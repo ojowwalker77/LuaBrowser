@@ -1151,6 +1151,9 @@
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
     },
+    "Your Phi session has expired. Please sign in again, then retry Phi Link." : {
+      "comment" : "Phi Link - Message shown when phi-agent returns 401 unauthorized"
+    },
     "Zoom in" : {
       "comment" : "Image preview: accessibility label for zoom in control"
     },

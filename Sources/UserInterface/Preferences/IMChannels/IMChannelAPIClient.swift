@@ -260,6 +260,9 @@ final class IMChannelAPIClient {
         guard let http = response as? HTTPURLResponse else {
             throw IMChannelAPIError.invalidResponse
         }
+        if http.statusCode == 401 {
+            throw IMChannelAPIError.unauthorized
+        }
         guard (200...299).contains(http.statusCode) else {
             throw IMChannelAPIError.httpError(statusCode: http.statusCode)
         }
@@ -302,11 +305,13 @@ final class IMChannelAPIClient {
 
 enum IMChannelAPIError: LocalizedError {
     case invalidResponse
+    case unauthorized
     case httpError(statusCode: Int)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "Invalid response from phi-agent"
+        case .unauthorized: return "Phi session expired"
         case .httpError(let code): return "phi-agent returned HTTP \(code)"
         }
     }
