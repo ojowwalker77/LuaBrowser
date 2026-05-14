@@ -5,29 +5,30 @@
 
 import AppKit
 
-/// "Flag"-shaped chip rendered to the left of each visible group's first
-/// member tab on the horizontal strip. Renders one of two modes
+/// Chip rendered to the left of each visible group's first member tab on
+/// the horizontal strip. Renders one of two modes
 /// (`ChipMode.full` / `.compact`) — the mode is decided by
 /// `TabStripLayoutEngine`, not by the chip itself, so chip width is
 /// consistent with the engine's tab-width allocation in the same pass.
 ///
 /// Visual structure:
 ///   ┌─────────────────────────────────┐
-///   │ ▌ Work · 3 tabs           [3]   │  full
+///   │ ● Work · 3 tabs            [3]  │  full
 ///   └─────────────────────────────────┘
-///   ▌▒▒  (compact: 4pt bar + 16pt color swatch + 4pt right pad = 24pt)
+///       (compact: 24pt empty chip — visuals pending design decision)
 ///
 /// Click + right-click + hover handling lives in a separate task; this
 /// task is rendering-only.
 final class TabGroupChipView: NSView {
     // MARK: - Metrics
 
-    static let height: CGFloat = 22
-    static let cornerRadius: CGFloat = 4
-    static let barWidth: CGFloat = 4
-    static let labelLeftPadding: CGFloat = 7
-    static let labelRightPadding: CGFloat = 6  // tightened to leave room for chevron
-    static let labelFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    static let height: CGFloat = 32
+    static let cornerRadius: CGFloat = 5
+    static let leadingPadding: CGFloat = 6
+    static let dotSize: CGFloat = 16
+    static let dotToLabelGap: CGFloat = 6
+    static let labelRightPadding: CGFloat = 6
+    static let labelFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
     static let countFont = NSFont.systemFont(ofSize: 10, weight: .bold)
     static let countHorizontalPadding: CGFloat = 6
     static let countVerticalPadding: CGFloat = 1
@@ -42,17 +43,10 @@ final class TabGroupChipView: NSView {
     /// and gets aggressively truncated to "h…" even for short
     /// titles like "hello".
     static let labelSafetyMargin: CGFloat = 4
-    /// Compact mode: bar + swatch + 4pt right pad.
+    /// Compact mode: 16pt swatch + 4pt right pad + 4pt slack = 24pt.
     static let compactWidth: CGFloat = 24
     static let compactSwatchWidth: CGFloat = 16
     static let compactRightPad: CGFloat = 4
-
-    // Chevron — collapse/expand state indicator. Shown in full mode at
-    // the trailing edge (after label / count), and overlaid on the
-    // color swatch in compact mode (replacing it visually) so the
-    // collapsed/expanded state is visible regardless of chip width.
-    static let chevronSize: CGFloat = 9
-    static let chevronToContentGap: CGFloat = 4
 
     // MARK: - Callbacks (set by TabStrip)
 
@@ -119,8 +113,7 @@ final class TabGroupChipView: NSView {
 
     // MARK: - Subviews / sublayers
 
-    private let backgroundLayer = CALayer()
-    private let barLayer = CALayer()
+    private let colorDotLayer = CALayer()
     private let compactSwatchLayer = CALayer()
     private let labelField: NSTextField = {
         let tf = NSTextField(labelWithString: "")
@@ -129,6 +122,9 @@ final class TabGroupChipView: NSView {
         tf.isBezeled = false
         tf.drawsBackground = false
         tf.font = TabGroupChipView.labelFont
+        // Match the regular tab title color. `UnifiedTabTitleView` uses
+        // SwiftUI's default `.primary` (system-adaptive label color);
+        // `.labelColor` is the AppKit equivalent.
         tf.textColor = .labelColor
         tf.lineBreakMode = .byTruncatingTail
         tf.maximumNumberOfLines = 1
@@ -147,12 +143,6 @@ final class TabGroupChipView: NSView {
         return tf
     }()
     private let countBackgroundLayer = CALayer()
-    private let chevronImageView: NSImageView = {
-        let iv = NSImageView()
-        iv.imageScaling = .scaleProportionallyDown
-        iv.translatesAutoresizingMaskIntoConstraints = true
-        return iv
-    }()
     private let mosaicView = TabGroupChipMosaicView()
 
     // MARK: - Init
@@ -163,21 +153,21 @@ final class TabGroupChipView: NSView {
         layer?.masksToBounds = true
         layer?.cornerRadius = Self.cornerRadius
 
-        layer?.addSublayer(backgroundLayer)
-        layer?.addSublayer(barLayer)
+        layer?.addSublayer(colorDotLayer)
         layer?.addSublayer(compactSwatchLayer)
         layer?.addSublayer(countBackgroundLayer)
 
+        colorDotLayer.cornerRadius = Self.dotSize / 2.0
+        colorDotLayer.masksToBounds = true
+
         // Suppress implicit animations for layers we manage explicitly.
-        backgroundLayer.actions = ["backgroundColor": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        barLayer.actions         = ["backgroundColor": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        colorDotLayer.actions = ["backgroundColor": NSNull(), "bounds": NSNull(), "position": NSNull()]
         compactSwatchLayer.actions = ["backgroundColor": NSNull(), "bounds": NSNull(), "position": NSNull()]
         countBackgroundLayer.actions = ["backgroundColor": NSNull(), "bounds": NSNull(), "position": NSNull(),
                                         "cornerRadius": NSNull()]
 
         addSubview(labelField)
         addSubview(countField)
-        addSubview(chevronImageView)
         addSubview(mosaicView)
         mosaicView.isHidden = true
 
@@ -240,45 +230,25 @@ final class TabGroupChipView: NSView {
     // MARK: - Appearance
 
     private func applyAppearance() {
-        backgroundLayer.backgroundColor = (isHovered
-            ? color.chipHoverTintColor
-            : color.chipTintColor).cgColor
-        barLayer.backgroundColor = color.nsColor.cgColor
+        colorDotLayer.backgroundColor = color.nsColor.cgColor
         compactSwatchLayer.backgroundColor = color.chipCompactSwatchColor.cgColor
         countBackgroundLayer.backgroundColor = color.chipHoverTintColor.cgColor
         countBackgroundLayer.cornerRadius = (TabGroupChipView.countFont.pointSize +
                                               Self.countVerticalPadding * 2) / 2.0
 
-        // Chevron points right when collapsed (suggests "click to
-        // expand"), down when expanded (suggests "tabs are below /
-        // click to collapse"). In full mode the chevron uses
-        // secondaryLabelColor so it doesn't compete with the title;
-        // in compact mode it uses the saturated group color so the
-        // 24pt-wide chip still carries a strong color presence (it
-        // replaces the swatch — see layoutCompactMode).
-        let symbolName = isCollapsed ? "chevron.right" : "chevron.down"
-        let config = NSImage.SymbolConfiguration(pointSize: Self.chevronSize, weight: .semibold)
-        chevronImageView.image = NSImage(
-            systemSymbolName: symbolName,
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(config)
-        chevronImageView.contentTintColor = (mode == .compact)
-            ? color.nsColor
-            : .secondaryLabelColor
-
         let showLabel = (mode == .full)
+        let showDot = (mode == .full)
         let showMosaic = (mode == .full) && isCollapsed
         // Count badge only when expanded + user-named (existing
         // behavior). When the mosaic shows, the count is suppressed
         // because the mosaic carries the count via the overflow cell.
         let showCount = (mode == .full) && hasUserSetTitle && !isCollapsed
-        // Compact mode: the chevron stands in for the swatch as the
-        // single visible symbol next to the bar.
         let showCompactSwatch = false
 
         labelField.isHidden = !showLabel
         countField.isHidden = !showCount
         countBackgroundLayer.isHidden = !showCount
+        colorDotLayer.isHidden = !showDot
         compactSwatchLayer.isHidden = !showCompactSwatch
         mosaicView.isHidden = !showMosaic
     }
@@ -297,9 +267,6 @@ final class TabGroupChipView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
 
-        backgroundLayer.frame = bounds
-        barLayer.frame = CGRect(x: 0, y: 0, width: Self.barWidth, height: bounds.height)
-
         switch mode {
         case .full:
             layoutFullMode()
@@ -311,18 +278,20 @@ final class TabGroupChipView: NSView {
     }
 
     private func layoutFullMode() {
-        let labelX = Self.barWidth + Self.labelLeftPadding
+        // Color dot sits at the leading edge, vertically centered.
+        let dotY = (bounds.height - Self.dotSize) / 2
+        colorDotLayer.frame = CGRect(x: Self.leadingPadding, y: dotY,
+                                      width: Self.dotSize, height: Self.dotSize)
+
+        let labelX = Self.leadingPadding + Self.dotSize + Self.dotToLabelGap
         let labelHeight = ceil(Self.labelFont.ascender - Self.labelFont.descender + Self.labelFont.leading)
 
-        let chevronX = bounds.width - Self.labelRightPadding - Self.chevronSize
-        let chevronY = (bounds.height - Self.chevronSize) / 2
-        chevronImageView.frame = CGRect(x: chevronX, y: chevronY,
-                                         width: Self.chevronSize, height: Self.chevronSize)
+        let trailingX = bounds.width - Self.labelRightPadding
 
         if isCollapsed {
-            // Mosaic occupies the space between label and chevron.
+            // Mosaic anchored to the trailing edge.
             let mosaicW = TabGroupChipMosaicView.mosaicSize
-            let mosaicX = chevronX - Self.chevronToContentGap - mosaicW
+            let mosaicX = trailingX - mosaicW
             let mosaicY = (bounds.height - mosaicW) / 2
             mosaicView.frame = CGRect(x: mosaicX, y: mosaicY,
                                        width: mosaicW, height: mosaicW)
@@ -331,12 +300,12 @@ final class TabGroupChipView: NSView {
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
         } else if hasUserSetTitle {
-            // Count badge sits between label and chevron.
+            // Count badge anchored to the trailing edge.
             let countString = countField.stringValue as NSString
             let countTextWidth = countString.size(withAttributes: [.font: Self.countFont]).width
             let countWidth = ceil(countTextWidth) + Self.countHorizontalPadding * 2
             let countHeight = Self.countFont.pointSize + Self.countVerticalPadding * 2
-            let countX = chevronX - Self.chevronToContentGap - countWidth
+            let countX = trailingX - countWidth
             let countY = (bounds.height - countHeight) / 2
 
             countBackgroundLayer.frame = CGRect(x: countX, y: countY, width: countWidth, height: countHeight)
@@ -347,22 +316,17 @@ final class TabGroupChipView: NSView {
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
         } else {
-            // No badge, no mosaic — label fills up to the chevron's left edge.
-            let labelMaxX = chevronX - Self.chevronToContentGap
+            // No badge, no mosaic — label fills the full trailing range.
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
-                                       width: max(0, labelMaxX - labelX), height: labelHeight)
+                                       width: max(0, trailingX - labelX), height: labelHeight)
         }
     }
 
     private func layoutCompactMode() {
-        // Chevron centered in the swatch region (replaces the swatch
-        // visually so chip width stays at compactWidth = 24pt).
-        let chevronAreaX = Self.barWidth
-        let chevronX = chevronAreaX + (Self.compactSwatchWidth - Self.chevronSize) / 2
-        let chevronY = (bounds.height - Self.chevronSize) / 2
-        chevronImageView.frame = CGRect(x: chevronX, y: chevronY,
-                                         width: Self.chevronSize, height: Self.chevronSize)
-        // labelField / countField hidden via applyAppearance().
+        // Compact mode currently has no rendered content beyond the
+        // 24pt chip frame itself — labelField / countField / dot all
+        // hidden via applyAppearance(). Compact-mode visuals are a
+        // pending design decision; see Slice D follow-up.
     }
 
     // MARK: - Width measurement
@@ -388,10 +352,10 @@ final class TabGroupChipView: NSView {
         let labelWidth = (title as NSString)
             .size(withAttributes: [.font: labelFont])
             .width
-        let chevronOverhead = chevronToContentGap + chevronSize + labelRightPadding
-        var width = barWidth + labelLeftPadding
+        let leadingOverhead = leadingPadding + dotSize + dotToLabelGap
+        var width = leadingOverhead
                   + ceil(labelWidth) + labelSafetyMargin
-                  + chevronOverhead
+                  + labelRightPadding
 
         if isCollapsed {
             // Mosaic always reserves space when collapsed,
