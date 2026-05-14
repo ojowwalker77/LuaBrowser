@@ -15,11 +15,11 @@ final class TabGroupChipWidthTests: XCTestCase {
             memberCount: 5,
             isCollapsed: false
         )
-        // bar(4) + leftPad(7) + label("Work"~32) + safety(4)
-        //   + countToLabelGap(6) + countBadge(~22) + chevronGap(4) + chevron(9) + rightPad(6)
-        // ≈ 94. Allow ±2pt for font measurement variance.
-        XCTAssertGreaterThan(width, 80)
-        XCTAssertLessThan(width, 110)
+        // leadingPad(6) + dot(16) + dotGap(6) + label("Work"@13pt~38) + safety(4)
+        //   + countToLabelGap(6) + countBadge(~22) + rightPad(6)
+        // ≈ 104. Allow ±20pt range for font measurement variance.
+        XCTAssertGreaterThan(width, 84)
+        XCTAssertLessThan(width, 125)
     }
 
     func test_named_collapsed_includesMosaicInsteadOfCount() {
