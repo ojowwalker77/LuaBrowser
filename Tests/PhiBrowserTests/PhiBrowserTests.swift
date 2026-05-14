@@ -8,6 +8,113 @@ import AppKit
 @testable import Phi
 
 final class PhiBrowserTests: XCTestCase {
+    func testThemeSnapshotRoundTripPreservesEditableColorsAndOverlayOpacity() {
+        let theme = Theme(id: "theme-snapshot-round-trip", name: "Snapshot")
+        theme.setColor(
+            light: NSColor(calibratedRed: 0.10, green: 0.20, blue: 0.30, alpha: 0.45),
+            dark: NSColor(calibratedRed: 0.70, green: 0.60, blue: 0.50, alpha: 0.85),
+            for: .windowOverlayBackground
+        )
+        theme.setColor(
+            light: NSColor(calibratedRed: 0.15, green: 0.25, blue: 0.35, alpha: 1.0),
+            dark: NSColor(calibratedRed: 0.65, green: 0.55, blue: 0.45, alpha: 1.0),
+            for: .windowBackground
+        )
+        theme.setColor(
+            light: NSColor(calibratedRed: 0.20, green: 0.40, blue: 0.60, alpha: 1.0),
+            dark: NSColor(calibratedRed: 0.60, green: 0.40, blue: 0.20, alpha: 1.0),
+            for: .themeColor
+        )
+        theme.setColor(
+            light: NSColor(calibratedRed: 0.30, green: 0.50, blue: 0.70, alpha: 1.0),
+            dark: NSColor(calibratedRed: 0.70, green: 0.50, blue: 0.30, alpha: 1.0),
+            for: .extensionActonColor
+        )
+
+        let restoredTheme = theme.makeSnapshot().makeTheme()
+
+        assertColor(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
+            equals: theme.color(for: .windowOverlayBackground, appearance: .light)
+        )
+        assertColor(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            equals: theme.color(for: .windowOverlayBackground, appearance: .dark)
+        )
+        assertColor(
+            restoredTheme.color(for: .windowBackground, appearance: .light),
+            equals: theme.color(for: .windowBackground, appearance: .light)
+        )
+        assertColor(
+            restoredTheme.color(for: .themeColor, appearance: .dark),
+            equals: theme.color(for: .themeColor, appearance: .dark)
+        )
+        assertColor(
+            restoredTheme.color(for: .extensionActonColor, appearance: .light),
+            equals: theme.color(for: .extensionActonColor, appearance: .light)
+        )
+        XCTAssertEqual(
+            restoredTheme.windowOverlayOpacity(for: .light),
+            0.45,
+            accuracy: 0.001,
+            "Theme snapshots should preserve the customized light overlay alpha."
+        )
+        XCTAssertEqual(
+            restoredTheme.windowOverlayOpacity(for: .dark),
+            0.85,
+            accuracy: 0.001,
+            "Theme snapshots should preserve the customized dark overlay alpha."
+        )
+    }
+
+    func testNormalizedThemeSliderTrackColorKeepsRgbAndForcesFullOpacity() {
+        let sourceColor = NSColor(calibratedRed: 0.21, green: 0.42, blue: 0.63, alpha: 0.37)
+
+        let normalizedColor = normalizedThemeSliderTrackColor(from: sourceColor)
+
+        assertColor(
+            normalizedColor,
+            equals: NSColor(calibratedRed: 0.21, green: 0.42, blue: 0.63, alpha: 1.0)
+        )
+    }
+
+    @MainActor
+    func testBrowserThemeContextPublishesThemeChangesForSameThemeIdentifier() {
+        let initialTheme = Theme(id: "browser-context-same-id", name: "Context")
+        initialTheme.setColor(
+            light: NSColor(hex: 0x445566, alpha: 0.40),
+            dark: NSColor(hex: 0x112233, alpha: 0.80),
+            for: .windowOverlayBackground
+        )
+
+        let context = BrowserThemeContext(
+            configuration: BrowserThemeConfiguration(
+                currentTheme: initialTheme,
+                userAppearanceChoice: .light,
+                mirrorsSharedTheme: false,
+                mirrorsSharedAppearance: false
+            )
+        )
+
+        var observedLightOverlayOpacity: [CGFloat] = []
+        let subscription = context.subscribe { theme, appearance in
+            observedLightOverlayOpacity.append(theme.windowOverlayOpacity(for: appearance))
+        }
+
+        let updatedTheme = initialTheme.makeSnapshot()
+            .updatingOverlayOpacity(0.72, for: .light)
+            .makeTheme()
+        context.setTheme(updatedTheme)
+
+        _ = subscription
+
+        XCTAssertEqual(
+            observedLightOverlayOpacity,
+            [0.40, 0.72],
+            "Replacing a window theme with a new instance that keeps the same theme identifier should still notify subscribers so overlay alpha changes hot-update active UI."
+        )
+    }
+
     func testBookmarkMainMenuItemRoutingKeepsChromiumBookmarksItemUntouched() {
         let action = BookmarkMainMenuItemRouting.action(
             title: "Bookmarks",
@@ -446,6 +553,21 @@ final class PhiBrowserTests: XCTestCase {
 
     private func renewTimer(in authManager: AuthManager) -> Timer? {
         Mirror(reflecting: authManager).descendant("renewTimer") as? Timer
+    }
+
+    private func assertColor(
+        _ actual: NSColor,
+        equals expected: NSColor,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let actualColor = actual.usingColorSpace(.extendedSRGB) ?? actual
+        let expectedColor = expected.usingColorSpace(.extendedSRGB) ?? expected
+
+        XCTAssertEqual(actualColor.redComponent, expectedColor.redComponent, accuracy: 0.001, file: file, line: line)
+        XCTAssertEqual(actualColor.greenComponent, expectedColor.greenComponent, accuracy: 0.001, file: file, line: line)
+        XCTAssertEqual(actualColor.blueComponent, expectedColor.blueComponent, accuracy: 0.001, file: file, line: line)
+        XCTAssertEqual(actualColor.alphaComponent, expectedColor.alphaComponent, accuracy: 0.001, file: file, line: line)
     }
 }
 

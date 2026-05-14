@@ -42,7 +42,7 @@ public final class ThemeManager: NSObject, ThemeSource {
     /// Currently selected theme.
     @objc dynamic public var currentTheme: Theme {
         didSet {
-            if currentTheme != oldValue {
+            if currentTheme !== oldValue {
                 UserDefaults.standard.set(currentTheme.id, forKey: PhiPreferences.ThemeSettings.currentThemeId.rawValue)
                 notifyThemeChange()
             }
@@ -84,6 +84,9 @@ public final class ThemeManager: NSObject, ThemeSource {
     
     /// Theme ID to restore once that theme is registered.
     private var pendingThemeId: String?
+
+    /// Theme identifiers that should be archived and restored from local storage.
+    private var persistedThemeIDs = Set<String>()
     
     /// Observation token for system appearance changes.
     private var appearanceObservation: NSKeyValueObservation?
@@ -106,6 +109,7 @@ public final class ThemeManager: NSObject, ThemeSource {
         super.init()
         
         Theme.builtInThemes.forEach(registerTheme)
+        restorePersistedThemes()
         
         restoreUserPreferences()
         
@@ -130,6 +134,32 @@ public final class ThemeManager: NSObject, ThemeSource {
                 pendingThemeId = themeId
             }
         }
+    }
+
+    private func restorePersistedThemes() {
+        guard let data = UserDefaults.standard.data(forKey: PhiPreferences.ThemeSettings.themeSnapshots.rawValue) else {
+            return
+        }
+
+        let decoder = JSONDecoder()
+        guard let snapshots = try? decoder.decode([ThemeSnapshot].self, from: data) else {
+            return
+        }
+
+        for snapshot in snapshots {
+            persistedThemeIDs.insert(snapshot.id)
+            registeredThemes[snapshot.id] = snapshot.makeTheme()
+        }
+    }
+
+    private func persistThemeSnapshots() {
+        let snapshots = persistedThemeIDs
+            .sorted()
+            .compactMap { registeredThemes[$0]?.makeSnapshot() }
+
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(snapshots) else { return }
+        UserDefaults.standard.set(data, forKey: PhiPreferences.ThemeSettings.themeSnapshots.rawValue)
     }
     
     /// Updates the active appearance mode from the user preference.
@@ -169,6 +199,24 @@ public final class ThemeManager: NSObject, ThemeSource {
     public func switchTheme(to themeId: String) {
         guard let theme = registeredThemes[themeId] else { return }
         currentTheme = theme
+    }
+
+    @MainActor
+    func applyThemeSnapshot(_ snapshot: ThemeSnapshot) {
+        let theme = snapshot.makeTheme()
+        registeredThemes[theme.id] = theme
+        persistedThemeIDs.insert(theme.id)
+        persistThemeSnapshots()
+        currentTheme = theme
+    }
+
+    @MainActor
+    public func updateCurrentThemeOverlayOpacity(_ opacity: CGFloat, for appearance: Appearance? = nil) {
+        let targetAppearance = appearance ?? currentAppearance
+        let updatedSnapshot = currentTheme
+            .makeSnapshot()
+            .updatingOverlayOpacity(opacity, for: targetAppearance)
+        applyThemeSnapshot(updatedSnapshot)
     }
     
     // MARK: - Appearance

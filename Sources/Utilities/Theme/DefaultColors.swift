@@ -42,8 +42,8 @@ public enum DefaultColors {
     )
     
     public static let windowOverlayBackground = ColorPair(
-        light: NSColor(hex: 0xCCCCCC, alpha: 0.4),
-        dark:  NSColor(hex: 0x0B2938, alpha: 0.6)
+        light: NSColor(hex: 0xCCCCCC, alpha: ThemeDefaults.overlayLightOpacity),
+        dark:  NSColor(hex: 0x0B2938, alpha: ThemeDefaults.overlayDarkOpacity)
     )
     
     public static let windowBackground = ColorPair(

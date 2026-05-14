@@ -3,7 +3,13 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import AppKit
 import SwiftUI
+
+func normalizedThemeSliderTrackColor(from color: NSColor) -> NSColor {
+    let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
+    return resolvedColor.withAlphaComponent(1)
+}
 
 enum NewTabBehaviour: String, CaseIterable, Identifiable {
     case newTabPage
@@ -40,35 +46,79 @@ struct GeneralSettingView: View {
 
 private struct ThemeSectionView: View {
     @State private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
+    @State private var opacityValue: Double = ThemeManager.shared.currentTheme.windowOverlayOpacity(for: ThemeManager.shared.currentAppearance) * 100
+    
+    @Environment(\.phiAppearance) private var appearance
 
-    private let themes = Theme.builtInThemes
+    private var themes: [Theme] {
+        Theme.builtInThemes.map { builtInTheme in
+            ThemeManager.shared.registeredThemes[builtInTheme.id] ?? builtInTheme
+        }
+    }
+    
+    private var selectedTheme: Theme {
+        themes.first(where: { $0.id == selectedThemeId }) ?? ThemeManager.shared.currentTheme
+    }
+    
+    private var sliderTrackColor: NSColor {
+        selectedTheme.color(for: .windowOverlayBackground, appearance: appearance)
+    }
+    
+    private var sliderBorderColor: NSColor {
+        ThemedColor.border.resolve(theme: selectedTheme, appearance: appearance)
+    }
 
     var body: some View {
         GeneralSectionView(title: NSLocalizedString("Theme", comment: "General settings - Theme section title")) {
             GeneralContainerView {
-                HStack(alignment: .top, spacing: 12) {
-                    Text(NSLocalizedString("Color", comment: "General settings - Theme color row title"))
-                        .font(.system(size: 13))
-                        .themedForeground(.textPrimary)
-
-                    Spacer(minLength: 12)
-
-                    HStack(alignment: .top, spacing: 13) {
-                        ForEach(themes, id: \.id) { theme in
-                            ThemeColorItemView(
-                                theme: theme,
-                                selected: selectedThemeId == theme.id,
-                                action: { selectTheme(theme) }
-                            )
+                VStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(NSLocalizedString("Color", comment: "General settings - Theme color row title"))
+                            .font(.system(size: 13))
+                            .themedForeground(.textPrimary)
+                        
+                        Spacer(minLength: 12)
+                        
+                        HStack(alignment: .top, spacing: 13) {
+                            ForEach(themes, id: \.id) { theme in
+                                ThemeColorItemView(
+                                    theme: theme,
+                                    selected: selectedThemeId == theme.id,
+                                    action: { selectTheme(theme) }
+                                )
+                            }
                         }
                     }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Divider()
+                    
+                    GeneralRowView(title: NSLocalizedString("Opacity", comment: "General settings - Theme opacity row title for adjusting the selected theme overlay transparency")) {
+                        ThemeOpacitySliderView(
+                            value: Binding(
+                                get: { opacityValue },
+                                set: { newValue in
+                                    opacityValue = newValue
+                                    handleOpacityValueChanged(newValue)
+                                }
+                            ),
+                            trackColor: sliderTrackColor,
+                            borderColor: sliderBorderColor
+                        )
+                        .frame(width: 324, height: 20)
+                    }
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
-            selectedThemeId = ThemeManager.shared.currentTheme.id
+            syncThemeControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
+            syncOpacityValue()
+        }
+        .onAppear {
+            syncThemeControls()
         }
     }
 
@@ -77,6 +127,20 @@ private struct ThemeSectionView: View {
 
         selectedThemeId = theme.id
         ThemeManager.shared.switchTheme(to: theme.id)
+        syncOpacityValue()
+    }
+    
+    private func handleOpacityValueChanged(_ value: Double) {
+        ThemeManager.shared.updateCurrentThemeOverlayOpacity(CGFloat(value / 100), for: appearance)
+    }
+
+    private func syncThemeControls() {
+        selectedThemeId = ThemeManager.shared.currentTheme.id
+        syncOpacityValue()
+    }
+
+    private func syncOpacityValue() {
+        opacityValue = ThemeManager.shared.currentTheme.windowOverlayOpacity(for: appearance) * 100
     }
 }
 
@@ -348,6 +412,126 @@ private struct ThemeColorItemView: View {
             .frame(width: 30)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct ThemeOpacitySliderView: NSViewRepresentable {
+    @Binding var value: Double
+    let trackColor: NSColor
+    let borderColor: NSColor
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(value: $value)
+    }
+    
+    func makeNSView(context: Context) -> CustomSlider {
+        let slider = CustomSlider(frame: NSRect(origin: .zero, size: NSSize(width: 324, height: 20)))
+        slider.minValue = 20
+        slider.maxValue = 80
+        slider.doubleValue = value
+        slider.isContinuous = true
+        slider.barSize = NSSize(width: 324, height: 10)
+        slider.knobSize = NSSize(width: 16, height: 16)
+        slider.knobView = ThemeOpacitySliderKnobView(
+            frame: NSRect(origin: .zero, size: NSSize(width: 16, height: 16)),
+            borderColor: borderColor
+        )
+        slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
+        slider.target = context.coordinator
+        slider.action = #selector(Coordinator.sliderValueChanged(_:))
+        return slider
+    }
+    
+    func updateNSView(_ slider: CustomSlider, context: Context) {
+        slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
+        if let knobView = slider.knobView as? ThemeOpacitySliderKnobView {
+            knobView.borderColor = borderColor
+        }
+        if slider.doubleValue != value {
+            slider.doubleValue = value
+        }
+    }
+    
+    private func makeTrackImage(color: NSColor, borderColor: NSColor) -> NSImage {
+        let size = NSSize(width: 324, height: 10)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        
+        let rect = NSRect(origin: .zero, size: size)
+        let path = NSBezierPath(roundedRect: rect, xRadius: size.height / 2, yRadius: size.height / 2)
+        path.addClip()
+        
+        let baseColor = normalizedThemeSliderTrackColor(from: color)
+        let startColor = baseColor.withAlphaComponent(0)
+        let gradient = NSGradient(starting: startColor, ending: baseColor)
+        gradient?.draw(in: path, angle: 0)
+        
+        borderColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        
+        image.unlockFocus()
+        return image
+    }
+    
+    final class Coordinator: NSObject {
+        @Binding private var value: Double
+        
+        init(value: Binding<Double>) {
+            self._value = value
+        }
+        
+        @objc func sliderValueChanged(_ sender: NSSlider) {
+            value = sender.doubleValue
+        }
+    }
+}
+
+private final class ThemeOpacitySliderKnobView: NSView {
+    var borderColor: NSColor {
+        didSet {
+            needsDisplay = true
+        }
+    }
+    
+    override init(frame frameRect: NSRect) {
+        self.borderColor = ThemedColor.border.resolved()
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+    
+    init(frame frameRect: NSRect, borderColor: NSColor) {
+        self.borderColor = borderColor
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+    
+    required init?(coder: NSCoder) {
+        self.borderColor = ThemedColor.border.resolved()
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        
+        let circleRect = bounds.insetBy(dx: 1, dy: 1)
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 2
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
+        shadow.set()
+        
+        let fillPath = NSBezierPath(ovalIn: circleRect)
+        NSColor.white.setFill()
+        fillPath.fill()
+        
+        NSGraphicsContext.current?.saveGraphicsState()
+        NSShadow().set()
+        borderColor.setStroke()
+        fillPath.lineWidth = 1
+        fillPath.stroke()
+        NSGraphicsContext.current?.restoreGraphicsState()
     }
 }
 

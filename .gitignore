@@ -28,6 +28,7 @@ my-chroma
 Sparkle-bin
 .claude
 .vscode
+.derivedData
 .worktrees
 .cursor
 .AGENTS.md

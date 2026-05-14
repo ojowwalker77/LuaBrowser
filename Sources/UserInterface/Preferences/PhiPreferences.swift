@@ -152,6 +152,8 @@ extension PhiPreferences {
         case userAppearanceChoice = "PhiUserAppearanceChoice"
         /// Current theme identifier.
         case currentThemeId = "PhiCurrentThemeId"
+        /// Archived snapshots for themes customized by the user.
+        case themeSnapshots = "PhiThemeSnapshots"
         
         var defaultValue: Any {
             switch self {
@@ -159,6 +161,8 @@ extension PhiPreferences {
                 return 0  // .system
             case .currentThemeId:
                 return "default"
+            case .themeSnapshots:
+                return Data()
             }
         }
         

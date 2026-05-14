@@ -74,7 +74,7 @@ enum BrowserThemeConfigurationResolver {
 public final class BrowserThemeContext: NSObject, ThemeStateProvider {
     public private(set) var currentTheme: Theme {
         didSet {
-            guard currentTheme != oldValue else { return }
+            guard currentTheme !== oldValue else { return }
             notifyThemeChange()
         }
     }

@@ -777,6 +777,9 @@
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
     },
+    "Opacity" : {
+      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency"
+    },
     "Open in New Tab" : {
       "comment" : "Open in New Tab menu item"
     },

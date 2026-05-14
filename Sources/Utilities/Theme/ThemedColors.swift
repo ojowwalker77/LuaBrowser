@@ -123,19 +123,6 @@ extension Theme {
     }()
 }
 
-private extension NSColor {
-    func adjustingBrightness(percent delta: CGFloat) -> NSColor {
-        let color = usingColorSpace(.extendedSRGB) ?? self
-        var hue: CGFloat = 0
-        var saturation: CGFloat = 0
-        var brightness: CGFloat = 0
-        var alpha: CGFloat = 0
-        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        let adjustedBrightness = min(max(brightness + (delta / 100), 0), 1)
-        return NSColor(calibratedHue: hue, saturation: saturation, brightness: adjustedBrightness, alpha: alpha)
-    }
-}
-
 private func makeDesignTheme(
     id: String,
     name: String,
@@ -153,8 +140,8 @@ private func makeDesignTheme(
     let darkTheme = NSColor(hex: darkThemeColor)
 
     theme.setColor(
-        light: NSColor(hex: lightOverlay, alpha: 0.4),
-        dark: NSColor(hex: darkOverlay, alpha: 0.8),
+        light: NSColor(hex: lightOverlay, alpha: ThemeDefaults.overlayLightOpacity),
+        dark: NSColor(hex: darkOverlay, alpha: ThemeDefaults.overlayDarkOpacity),
         for: .windowOverlayBackground
     )
     theme.setColor(
