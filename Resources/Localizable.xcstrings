@@ -715,7 +715,7 @@
       "comment" : "General settings - Row title for configuring new tab behavior"
     },
     "New Tab Page" : {
-      "comment" : "General settings - Option to open New Tab Page when pressing ⌘+T"
+      "comment" : "AI settings - Section title for new tab page options\nGeneral settings - Option to open New Tab Page when pressing ⌘+T"
     },
     "New Tab Page requires Phi AI to be enabled" : {
       "comment" : "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it"
