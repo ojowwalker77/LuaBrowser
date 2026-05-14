@@ -255,6 +255,11 @@ final class TabItemView: NSView {
     }
 
     private func layoutContent() {
+        guard !bounds.isEmpty else {
+            hideContentForEmptyBounds()
+            return
+        }
+
         let metrics = TabStripMetrics.Content.self
         let mode = layoutMode
         viewModel.isHorizontalCompactMode = (mode == .compact || mode == .pinned)
@@ -288,6 +293,19 @@ final class TabItemView: NSView {
                 width: max(0, titleMaxX - titleStartX),
                 height: metrics.titleHeight
             )
+        }
+    }
+
+    private func hideContentForEmptyBounds() {
+        for view in [
+            faviconHostingView,
+            muteButtonHostingView,
+            recordingIconHostingView,
+            titleHostingView,
+            closeButtonHostingView,
+        ] {
+            view.isHidden = true
+            view.frame = .zero
         }
     }
 

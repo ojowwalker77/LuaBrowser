@@ -387,10 +387,11 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             let translation = CATransform3DMakeTranslation(deltaX, 0, 0)
             let memberSet = Set(ctx.memberTabIds)
             let token = ctx.draggingChipToken
+            let shouldTransformMembers = !ctx.isCollapsedAtDragStart
 
             for tab in browserState.normalTabs {
                 guard let view = normalTabViews[tab.uniqueId] else { continue }
-                if memberSet.contains(tab.guid) {
+                if shouldTransformMembers && memberSet.contains(tab.guid) {
                     view.layer?.transform = translation
                     view.layer?.zPosition = 200
                 } else {
@@ -1497,13 +1498,18 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             }
         }
         let draggingTab = dragController.context?.draggingTab
-        // Members of the actively-dragged group keep their drag-start
-        // frames; `applyGroupDragTransforms` drives cursor follow via
-        // layer.transform. The layout engine emits .zero placeholders
-        // for these indices, which we MUST NOT apply (it would collapse
-        // the views to a point at the strip's origin).
-        let draggedGroupMemberIds: Set<Int> =
-            (!isPinned ? Set(groupDragController.context?.memberTabIds ?? []) : [])
+        // Expanded group members keep their drag-start frames while
+        // `applyGroupDragTransforms` drives cursor follow. Collapsed
+        // groups draw chip-only, so members should remain in the
+        // normal collapsed `.zero` layout.
+        let draggedGroupMemberIds: Set<Int> = {
+            guard !isPinned,
+                  let groupContext = groupDragController.context,
+                  !groupContext.isCollapsedAtDragStart else {
+                return []
+            }
+            return Set(groupContext.memberTabIds)
+        }()
 
         for (index, tab) in tabs.enumerated() {
             let id = tabId(for: tab)
