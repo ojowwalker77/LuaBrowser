@@ -97,19 +97,26 @@ struct TabGroupHeaderView: View {
     @State private var isCloseButtonHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                .frame(width: 24, height: 24)
+                .frame(width: 20, height: 20)
                 .rotationEffect(.degrees(viewModel.isCollapsed ? 0 : 90))
                 .animation(.easeInOut(duration: 0.15), value: viewModel.isCollapsed)
-            
-            Text(viewModel.displayTitle)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(nsColor: .labelColor))
-                .lineLimit(1)
-                .truncationMode(.tail)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color(nsColor: viewModel.color.nsColor))
+                    .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
+                    .frame(width: 10, height: 10)
+
+                Text(viewModel.displayTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
 
             Spacer(minLength: 0)
 
@@ -129,7 +136,7 @@ struct TabGroupHeaderView: View {
             }
         }
 //        .debugBorder()
-        .padding(.leading, 0)
+        .padding(.leading, 4)
         .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
