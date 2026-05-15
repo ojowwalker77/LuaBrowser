@@ -854,6 +854,8 @@ class AccountCardView: SettingItemBackgroundView {
         // Logout button (right side)
         logoutButton.target = self
         logoutButton.action = #selector(logoutTapped)
+        logoutButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        logoutButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(logoutButton)
         logoutButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
@@ -878,12 +880,14 @@ class AccountCardView: SettingItemBackgroundView {
 
         // Name label + edit icon
         nameHoverArea.addSubview(nameLabel)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameLabel.snp.makeConstraints { make in
             make.left.equalToSuperview().offset(12)
             make.bottom.equalToSuperview().offset(-2)
         }
 
         nameHoverArea.addSubview(nameEditIconButton)
+        nameEditIconButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         nameEditIconButton.target = self
         nameEditIconButton.action = #selector(nameEditTapped)
         nameEditIconButton.snp.makeConstraints { make in
@@ -895,6 +899,7 @@ class AccountCardView: SettingItemBackgroundView {
 
         // Email label
         addSubview(emailLabel)
+        emailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         emailLabel.snp.makeConstraints { make in
             make.left.equalTo(avatarContainerView.snp.right).offset(12)
             make.top.equalTo(snp.centerY).offset(2)
@@ -902,6 +907,7 @@ class AccountCardView: SettingItemBackgroundView {
         }
 
         addSubview(reauthenticationWarningLabel)
+        reauthenticationWarningLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         reauthenticationWarningLabel.snp.makeConstraints { make in
             make.left.equalTo(emailLabel)
             make.top.equalTo(emailLabel.snp.bottom).offset(2)
