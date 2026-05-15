@@ -52,8 +52,9 @@ class BookmarkCellView: SidebarCellView {
         // Background view drives hover and selection styling.
         addSubview(backgoundView)
         backgoundView.snp.makeConstraints { make in
-            make.left.equalToSuperview().inset(10)
-            make.top.bottom.trailing.equalToSuperview().inset(2)
+            make.left.equalToSuperview().inset(WebContentConstant.edgesSpacing)
+            make.top.bottom.equalToSuperview().inset(2)
+            make.trailing.equalToSuperview()
         }
         backgoundView.layer?.cornerRadius = 8
         backgoundView.layer?.cornerCurve = .continuous
