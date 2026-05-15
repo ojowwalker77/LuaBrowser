@@ -122,12 +122,16 @@ class WebContentContainerViewController: NSViewController {
     private let outerBorderLayer = CAShapeLayer()
     private var outerBorderThemeObservation: AnyObject?
 
-    private enum LayerZIndex {
+    enum LayerZIndex {
         /// Stacks above every sibling sublayer in `view.layer` so the active
         /// tab's fill (in barController.view) and splitViewContainer's fill
         /// (in contentContainer → webContentVC.view) can't clip the stroke.
         /// Bump only if a higher-z layer is intentionally introduced.
         static let contentOuterBorder: CGFloat = 1000
+        /// Floating sidebar slides in above the content area; must sit above
+        /// `contentOuterBorder` so the outer-border stroke doesn't render on
+        /// top of the panel.
+        static let floatingSidebar: CGFloat = 1100
     }
     
     /// Titlebar aware area for handling double-click on titlebar
