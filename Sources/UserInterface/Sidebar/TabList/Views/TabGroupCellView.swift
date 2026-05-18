@@ -175,7 +175,7 @@ private final class TabGroupHeaderHostingView: NSHostingView<TabGroupHeaderView>
             at: pendingMouseDownPoint ?? .zero,
             in: bounds
         )
-        if pendingHitTarget == .closeGroup, rootView.viewModel.isHovered == false {
+        if pendingHitTarget == .closeGroup, rootView.viewModel.isHeaderHovered == false {
             pendingHitTarget = nil
         }
         manualDragInProgress = false
@@ -232,12 +232,17 @@ final class TabGroupCellView: SidebarCellView {
     static let containerTrailingInset: CGFloat = 0
     static let containerVerticalInset: CGFloat = 2
     static let headerHeight: CGFloat = 32
-    /// Collapsed row matches the height of an ungrouped tab row (`36`).
-    /// In this mode the container fills the row (no vertical inset) and
-    /// the header stretches to fill the container so the rounded card
-    /// stroke aligns flush with the row top/bottom.
+    /// Collapsed row height matches an ungrouped tab row (`36`). The
+    /// container keeps its `containerVerticalInset` on both top and
+    /// bottom across collapse states so the rounded card stays anchored
+    /// at the same row-relative position during the collapse animation
+    /// — the visible card height in collapsed state is therefore
+    /// `collapsedRowHeight - 2 * containerVerticalInset` (32pt), exactly
+    /// the header's natural height.
     static let collapsedRowHeight: CGFloat = 36
-    static let memberRowHeight: CGFloat = 32
+    /// Each member tab rendered by the inner table uses the same row
+    /// height as an ungrouped tab in the outer outline.
+    static let memberRowHeight: CGFloat = 36
     static let innerTableTopInset: CGFloat = 4
     static let innerTableBottomInset: CGFloat = 4
     static let innerTableLeadingInset: CGFloat = 0
@@ -258,9 +263,6 @@ final class TabGroupCellView: SidebarCellView {
     private(set) var innerTable: GroupTabsTableView!
     private let viewModel = TabGroupHeaderViewModel()
 
-    private var containerTopInsetConstraint: Constraint?
-    private var containerBottomInsetConstraint: Constraint?
-    private var hostingHeightConstraint: Constraint?
     private var innerTableBottomConstraint: Constraint?
     private var innerTableCollapsedHeightConstraint: Constraint?
 
@@ -303,7 +305,7 @@ final class TabGroupCellView: SidebarCellView {
         currentMemberOrder = []
         activeDragTabGuid = nil
         isHovered = false
-        viewModel.isHovered = false
+        viewModel.isHeaderHovered = false
         configuredGroup = nil
         configuredBrowserState = nil
 
@@ -351,10 +353,7 @@ final class TabGroupCellView: SidebarCellView {
         containerView.wantsLayer = true
         addSubview(containerView)
         containerView.snp.makeConstraints { make in
-            containerTopInsetConstraint = make.top.equalToSuperview()
-                .inset(Self.containerVerticalInset).constraint
-            containerBottomInsetConstraint = make.bottom.equalToSuperview()
-                .inset(Self.containerVerticalInset).constraint
+            make.top.bottom.equalToSuperview().inset(Self.containerVerticalInset)
             make.leading.equalToSuperview().inset(Self.containerLeadingInset)
             make.trailing.equalToSuperview().inset(Self.containerTrailingInset)
         }
@@ -365,7 +364,7 @@ final class TabGroupCellView: SidebarCellView {
         containerView.addSubview(hostingView)
         hostingView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            hostingHeightConstraint = make.height.equalTo(Self.headerHeight).constraint
+            make.height.equalTo(Self.headerHeight)
         }
 
         innerTable = GroupTabsTableView()
@@ -418,7 +417,7 @@ final class TabGroupCellView: SidebarCellView {
         containerBorderOverlayView = NSView()
         containerBorderOverlayView.wantsLayer = true
         containerBorderOverlayView.layer?.backgroundColor = NSColor.clear.cgColor
-        containerBorderOverlayView.layer?.cornerRadius = 12
+        containerBorderOverlayView.layer?.cornerRadius = 8
         containerBorderOverlayView.layer?.cornerCurve = .continuous
         containerBorderOverlayView.layer?.borderWidth = 1
         containerBorderOverlayView.layer?.borderColor = NSColor.clear.cgColor
@@ -508,17 +507,18 @@ final class TabGroupCellView: SidebarCellView {
             }
     }
 
+    /// Container and header keep the same constraints across collapse
+    /// states — the only thing that changes is the inner table's
+    /// vertical extent: pinned to `container.bottom - innerTableBottomInset`
+    /// when expanded, forced to `0` height when collapsed. Keeping the
+    /// container's inset constant is what makes the rounded card's top
+    /// and bottom edges stay anchored to the same row-relative positions
+    /// during the collapse animation.
     private func updateLayoutForCollapseState(_ isCollapsed: Bool) {
         if isCollapsed {
-            containerTopInsetConstraint?.update(inset: 0)
-            containerBottomInsetConstraint?.update(inset: 0)
-            hostingHeightConstraint?.update(offset: Self.collapsedRowHeight)
             innerTableBottomConstraint?.deactivate()
             innerTableCollapsedHeightConstraint?.activate()
         } else {
-            containerTopInsetConstraint?.update(inset: Self.containerVerticalInset)
-            containerBottomInsetConstraint?.update(inset: Self.containerVerticalInset)
-            hostingHeightConstraint?.update(offset: Self.headerHeight)
             innerTableCollapsedHeightConstraint?.deactivate()
             innerTableBottomConstraint?.activate()
         }
@@ -574,7 +574,7 @@ final class TabGroupCellView: SidebarCellView {
 
     private func applyHighlightVisuals() {
         containerView.wantsLayer = true
-        containerView.layer?.cornerRadius = 12
+        containerView.layer?.cornerRadius = 8
         containerView.layer?.cornerCurve = .continuous
         if isDropTargetHighlighted {
             let tint = lastGroupColor.nsColor
@@ -592,10 +592,15 @@ final class TabGroupCellView: SidebarCellView {
         }
     }
 
+    /// Cell-level hover tracked by an AppKit tracking area on the full
+    /// cell bounds — only drives the rounded border highlight. The
+    /// header-specific hover (which controls the close button's
+    /// visibility) lives on `viewModel.isHeaderHovered` and is written
+    /// from SwiftUI's `.onHover` inside `TabGroupHeaderView`, so the
+    /// two states stay scoped to their respective hit regions.
     private func setHovered(_ hovered: Bool) {
         guard isHovered != hovered else { return }
         isHovered = hovered
-        viewModel.isHovered = hovered
         applyHighlightVisuals()
     }
 }

@@ -18,7 +18,14 @@ final class TabGroupHeaderViewModel {
     var color: GroupColor = .grey
     var displayTitle: String = ""
     var tabCount: Int = 0
-    var isHovered: Bool = false
+    /// `true` when the pointer is over the header strip specifically
+    /// (not the full group cell). Drives the close button's visibility
+    /// — collapsed groups have header == cell so it's effectively
+    /// cell-level; expanded groups scope it to the top `headerHeight`pt.
+    /// Written by SwiftUI's `.onHover` on the header HStack; read by
+    /// `TabGroupHeaderHostingView`'s hit-test guard so a click in the
+    /// close zone is only counted when the button is visible.
+    var isHeaderHovered: Bool = false
     /// Mirrors `WebContentGroupInfo.isCollapsed` so the inline chevron
     /// in `TabGroupHeaderView` can rotate without driving the state.
     var isCollapsed: Bool = false
@@ -120,25 +127,39 @@ struct TabGroupHeaderView: View {
 
             Spacer(minLength: 0)
 
+            // Visual styling mirrors `UnifiedTabCloseButton`
+            // (Sources/UserInterface/Common/Tabs/TabContentView.swift)
+            // so grouped and ungrouped tab close affordances look
+            // identical. Click dispatch keeps using the host view's
+            // manual hit-test (`TabGroupHeaderHitTargetResolver`) so
+            // the surrounding header strip can remain a whole-group
+            // drag source.
             ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .themedFill(.hover)
                     .opacity(isCloseButtonHovered ? 1 : 0)
 
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                    .font(.system(size: 11, weight: .semibold))
             }
             .frame(width: 24, height: 24)
-            .opacity(viewModel.isHovered ? 1 : 0)
+            .opacity(viewModel.isHeaderHovered ? 1 : 0)
             .onHover { hovering in
-                isCloseButtonHovered = hovering && viewModel.isHovered
+                isCloseButtonHovered = hovering && viewModel.isHeaderHovered
             }
         }
 //        .debugBorder()
         .padding(.leading, 4)
         .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // `contentShape` makes the empty horizontal space between the
+        // chevron / title / close button hit-testable so `.onHover`
+        // fires across the entire header strip, not just on the
+        // individual visible subviews.
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            viewModel.isHeaderHovered = hovering
+        }
     }
 }
 
