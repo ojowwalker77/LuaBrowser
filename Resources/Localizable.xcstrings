@@ -810,9 +810,6 @@
     "Petal" : {
       "comment" : "Petal theme color name"
     },
-    "Phi" : {
-      "comment" : "Profile card - App name displayed on user profile card"
-    },
     "Phi & AI" : {
       "comment" : "Settings - Tab title for AI and Phi assistant settings"
     },

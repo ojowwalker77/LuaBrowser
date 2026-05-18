@@ -12,48 +12,13 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
 
     private static let maxNameDisplayLength = 20
     
-    // MARK: - Vertical Label Layout
-    /// Visual inset from the left edge for the rotated labels.
-    private let verticalLabelLeftInset: CGFloat = 17
-    /// Visual top offset for `colorLabel`.
-    private let colorLabelTopOffset: CGFloat = 60
-    /// Visual spacing between the two rotated labels.
-    private let verticalLabelSpacing: CGFloat = 6
-    /// Horizontal text padding inside each label container.
-    private let labelHorizontalPadding: CGFloat = 8
-    /// Vertical text padding inside each label container.
-    private let labelVerticalPadding: CGFloat = 0
-    
-    private let phiLabel: NSTextField = {
-        let label = NSTextField(labelWithString: NSLocalizedString("Phi", comment: "Profile card - App name displayed on user profile card"))
-        label.font = NSFont(name: "IvyPrestoHeadline-SemiBold", size: 16)
-        label.textColor = .white
+    private let dateLabel: WhiteAlphaGradientLabel = {
+        let label = WhiteAlphaGradientLabel(labelWithString: "")
+        label.font = NSFont(name: "Impact", size: 76)
         label.alignment = .center
         return label
     }()
-    
-    private let dateLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "")
-        let font = NSFont(name: "IvyEpic", size: 12) ?? .systemFont(ofSize: 12)
-        label.font = font
-        label.textColor = .white
-        label.alignment = .center
-        label.isBezeled = false
-        label.drawsBackground = false
-        label.isEditable = false
-        label.isSelectable = false
-        return label
-    }()
-    
-    private lazy var dateView: NSView = {
-        let view = NSView()
-        view.addSubview(dateLabel)
-        dateLabel.snp.makeConstraints { make in
-            make.center.equalToSuperview()
-        }
-        return view
-    }()
-    
+
     private let nameLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
         label.font = NSFont(name: "IvyPrestoHeadline-SemiBold", size: 16)
@@ -64,28 +29,11 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         return label
     }()
     
-    private lazy var colorSlider: CustomSlider = {
-        let slider = CustomSlider(frame: NSRect(origin: .zero, size: NSSize(width: 110, height: 20)))
-        slider.trackImage = sliderBg
-        slider.barSize = NSSize(width: 13, height: 13)
-        slider.knobSize = NSSize(width: 20, height: 20)
-        slider.minValue = 0
-        slider.maxValue = 359
-        slider.doubleValue = 180
-        slider.target = self
-        slider.action = #selector(sliderValueChanged(_:))
-        return slider
-    }()
-    
     private var coloredBgView: NSView = {
         let view = NSView()
         view.wantsLayer = true
         view.alphaValue = 0.1
         return view
-    }()
-    
-    private let sliderBg: NSImage = {
-        return .sliderBg
     }()
     
     private let dotBg: NSImage = {
@@ -98,27 +46,6 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         imageView.imageScaling = .scaleAxesIndependently
         imageView.alphaValue = 0.15
         return imageView
-    }()
-    
-    private let colorLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "#2D6F7D")
-        label.font = NSFont(name: "IvyEpic", size: 12) ?? .systemFont(ofSize: 12)
-        label.textColor = .white
-        label.alignment = .center
-        label.isBezeled = false
-        label.drawsBackground = false
-        label.isEditable = false
-        label.isSelectable = false
-        return label
-    }()
-    
-    private lazy var colorView: NSView = {
-        let view = NSView()
-        view.addSubview(colorLabel)
-        colorLabel.snp.makeConstraints { make in
-            make.center.equalToSuperview()
-        }
-        return view
     }()
     
     private let backgroundImageView: NSImageView = {
@@ -136,7 +63,7 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         didSet {
             nameLabel.stringValue = truncateName(profile?.name ?? "")
             dateLabel.stringValue = formatToLocalDate(profile?.created_at ?? "")
-            layoutVerticalLabels()
+            adjustDateLabelFontSize()
         }
     }
 
@@ -149,89 +76,9 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         return name
     }
     
-    // MARK: - Vertical Label Layout
-    
-    /// Returns the rendered text size for a label.
-    private func textSize(for label: NSTextField) -> CGSize {
-        let text = label.stringValue
-        let font = label.font ?? NSFont.systemFont(ofSize: 12)
-        return (text as NSString).size(withAttributes: [.font: font])
-    }
-    
-    /// Positions a view rotated 90 degrees counterclockwise.
-    /// 
-    /// Visual coordinate mapping after rotation in AppKit coordinates:
-    /// - visual width = original height
-    /// - visual height = original width
-    /// - visual left edge = centerX - originalHeight / 2
-    /// - visual top edge = centerY + originalWidth / 2
-    ///
-    /// - Parameters:
-    ///   - targetView: View to position.
-    ///   - visualLeft: Visual left edge after rotation.
-    ///   - visualTop: Visual top edge after rotation.
-    ///   - originalWidth: Width before rotation.
-    ///   - originalHeight: Height before rotation.
-    private func positionRotatedView(_ targetView: NSView,
-                                     visualLeft: CGFloat,
-                                     visualTop: CGFloat,
-                                     originalWidth: CGFloat,
-                                     originalHeight: CGFloat) {
-        // Convert visual edges back into the layer center point.
-        let centerX = visualLeft + originalHeight / 2
-        let centerY = visualTop - originalWidth / 2
-        
-        // The frame stays in the pre-rotation size space.
-        targetView.frame = NSRect(x: 0, y: 0, width: originalWidth, height: originalHeight)
-        
-        // Position through the layer so the rotation stays centered.
-        targetView.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        targetView.layer?.position = CGPoint(x: centerX, y: centerY)
-        targetView.layer?.setAffineTransform(CGAffineTransform(rotationAngle: .pi / 2))
-    }
-    
-    /// Recomputes the layout for both rotated labels.
-    private func layoutVerticalLabels() {
-        guard view.bounds.height > 0 else { return }
-        
-        let viewHeight = view.bounds.height
-        
-        // Measure the `colorLabel` container including padding.
-        let colorTextSize = textSize(for: colorLabel)
-        let colorWidth = colorTextSize.width + labelHorizontalPadding
-        let colorHeight = colorTextSize.height + labelVerticalPadding
-        
-        // Measure the `dateLabel` container including padding.
-        let dateTextSize = textSize(for: dateLabel)
-        let dateWidth = dateTextSize.width + labelHorizontalPadding
-        let dateHeight = dateTextSize.height + labelVerticalPadding
-        
-        // Visual top position for `colorLabel`.
-        let colorVisualTop = viewHeight - colorLabelTopOffset
-        
-        // Visual bottom equals top minus visual height.
-        let colorVisualBottom = colorVisualTop - colorWidth
-        
-        // Stack `dateLabel` below `colorLabel`.
-        let dateVisualTop = colorVisualBottom - verticalLabelSpacing
-        
-        // Position both rotated label containers.
-        positionRotatedView(colorView,
-                           visualLeft: verticalLabelLeftInset,
-                           visualTop: colorVisualTop,
-                           originalWidth: colorWidth,
-                           originalHeight: colorHeight)
-        
-        positionRotatedView(dateView,
-                           visualLeft: verticalLabelLeftInset,
-                           visualTop: dateVisualTop,
-                           originalWidth: dateWidth,
-                           originalHeight: dateHeight)
-    }
-    
     override func viewWillAppear() {
         super.viewWillAppear()
-        applyStoredThemeColor()
+        applyCurrentTheme()
         
         // Backfill from the cached profile if the network copy is not ready yet.
         if profile == nil {
@@ -252,11 +99,11 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
     
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        UserDefaults.standard.set(accentColor?.toHexString(), forKey: PhiPreferences.accentColor.rawValue)
         tearDown()
     }
     
     deinit {
+        NotificationCenter.default.removeObserver(self)
         AppLogDebug("\(self) - deinit")
     }
     
@@ -271,15 +118,11 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         view.addSubview(imageView)
         view.addSubview(coloredBgView)
         view.addSubview(dotBackgroundImageView)
-        view.addSubview(dateView)
-        view.addSubview(colorView)
-        view.addSubview(phiLabel)
         view.addSubview(nameLabel)
-        view.addSubview(colorSlider)
+        view.addSubview(dateLabel)
         
         imageView.snp.makeConstraints { make in
-            make.centerY.equalToSuperview()
-            make.centerX.equalToSuperview().offset(3)
+            make.center.equalToSuperview()
             make.size.equalTo(NSSize(width: 240, height: 380))
         }
         
@@ -291,79 +134,92 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
             make.edges.equalToSuperview()
         }
         
-        phiLabel.snp.makeConstraints { make in
-            make.leading.top.equalToSuperview().inset(16)
-        }
-        
         nameLabel.snp.makeConstraints { make in
-            make.trailing.top.equalToSuperview().inset(16)
-            make.width.lessThanOrEqualTo(150)  // Limit max width to prevent layout issues
-        }
-        
-        colorSlider.snp.makeConstraints { make in
+            make.bottom.equalToSuperview().inset(32)
             make.centerX.equalToSuperview()
-            make.size.equalTo(NSSize(width: 110, height: 20))
-            make.bottom.equalToSuperview().inset(39)
+            make.leading.trailing.lessThanOrEqualToSuperview().inset(24)
         }
         
-        // Enable manual frame layout for the rotated label containers.
-        dateView.translatesAutoresizingMaskIntoConstraints = true
-        dateView.wantsLayer = true
-        
-        colorView.translatesAutoresizingMaskIntoConstraints = true
-        colorView.wantsLayer = true
-        
-        // Perform the initial rotated-label layout.
-        layoutVerticalLabels()
-    }
-    
-    private func applyStoredThemeColor() {
-        if let hexStr = UserDefaults.standard.string(forKey: PhiPreferences.accentColor.rawValue),
-           !hexStr.isEmpty {
-            accentColor = NSColor(hexString: hexStr)
-            colorSlider.floatValue = Float(accentColor?.hueComponent ?? 180) * 360
-            sliderValueChanged(colorSlider)
-        } else {
-            sliderValueChanged(colorSlider)
+        dateLabel.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            make.top.equalToSuperview().offset(-12)
         }
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeOrAppearanceChanged),
+            name: .themeDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeOrAppearanceChanged),
+            name: .appearanceDidChange,
+            object: nil
+        )
+        
+        applyCurrentTheme()
     }
     
     override func loadView() {
         view = NSView()
     }
     
-    @objc private func sliderValueChanged(_ sender: NSSlider) {
-        let hue = CGFloat(sender.doubleValue / 360.0)
+    @objc private func themeOrAppearanceChanged() {
+        applyCurrentTheme()
+    }
+    
+    private func adjustDateLabelFontSize() {
+        let maxWidth = view.bounds.width
+        var fontSize: CGFloat = 70
         
-        let accentColor = NSColor(hue: hue, saturation: 1, brightness: 0.37, alpha: 1)
+        dateLabel.font = NSFont(name: "Impact", size: fontSize)
+        var textWidth = dateLabel.intrinsicContentSize.width
+        
+        while textWidth > maxWidth && fontSize > 20 {
+            fontSize -= 1
+            dateLabel.font = NSFont(name: "Impact", size: fontSize)
+            textWidth = dateLabel.intrinsicContentSize.width
+        }
+    }
+    
+    private func applyCurrentTheme() {
+        let theme = ThemeManager.shared.currentTheme
+        let appearance = ThemeManager.shared.currentAppearance
+        applyTheme(theme, appearance: appearance)
+    }
+    
+    private func applyTheme(_ theme: Theme, appearance: Appearance) {
+        let overlayColor = theme.color(for: .windowOverlayBackground, appearance: appearance).withAlphaComponent(1)
+        let resolvedOverlayColor = overlayColor.usingColorSpace(.deviceRGB)
+        let hue = resolvedOverlayColor?.hueComponent ?? 0
+        let overridedSaturation: CGFloat? = theme == .pure ? 0 : nil
+        let overridedBrightness: CGFloat? = theme == .pure ? 0.5 : nil
+        let accentColor = theme == .pure ?
+        NSColor.black :
+        NSColor(hue: hue,
+                saturation: 1,
+                brightness: 0.37,
+                alpha: 1)
+        
         self.accentColor = accentColor
-
-        colorLabel.stringValue = accentColor.toHexString()
-        
-        // Update title color
-        phiLabel.textColor = accentColor
         nameLabel.textColor = accentColor
         
-        colorView.layer?.backgroundColor = accentColor.cgColor
-        dateView.layer?.backgroundColor = accentColor.withAlphaComponent(0.3).cgColor
+        dotBackgroundImageView.image = dotBg.tinted(with: accentColor.withAlphaComponent(0.5))
         
-        dotBackgroundImageView.image = dotBg.tinted(with: accentColor)
-        colorSlider.trackImage = sliderBg.tinted(with: accentColor)
+        coloredBgView.layer?.backgroundColor = NSColor(hue: hue,
+                                                       saturation: overridedSaturation ?? 0.85,
+                                                       brightness: overridedBrightness ?? 0.75,
+                                                       alpha: 1).cgColor
         
-        coloredBgView.layer?.backgroundColor = NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 1).cgColor
-        colorSlider.knobColor = accentColor
-        colorSlider.knobFillColor =  NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 0.1)
-        // Relayout because the color text may have changed width.
-        layoutVerticalLabels()
-        
-        super.colorSliderChanged(CGFloat(colorSlider.floatValue))
+        super.themChanged(
+            h: hue,
+            s: overridedSaturation,
+            b: overridedBrightness
+        )
     }
     
     func snapshotAndExport() {
-        // Hide the slider so it does not appear in the export.
-        let previousHiddenState = colorSlider.isHidden
-        colorSlider.isHidden = true
-
         let targetView = self.view
         let bounds = targetView.bounds
 
@@ -408,13 +264,8 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
             let finalRep = NSBitmapImageRep(data: tiffData),
             let pngData = finalRep.representation(using: .png, properties: [:])
         else {
-            // Restore the slider before returning early.
-            colorSlider.isHidden = previousHiddenState
             return
         }
-
-        // Restore the slider after rendering.
-        colorSlider.isHidden = previousHiddenState
 
         // Write the PNG to the user-selected destination.
         let savePanel = NSSavePanel()
@@ -449,5 +300,50 @@ class ProfileCardViewController: ConchFrameAnimationBaseViewController {
         outputFormatter.dateFormat = "yyyy.M.d"
 
         return outputFormatter.string(from: date)
+    }
+}
+
+private final class WhiteAlphaGradientLabel: NSTextField {
+    private let startColor = NSColor.white.withAlphaComponent(0)
+    private let endColor = NSColor.white.withAlphaComponent(1)
+    private let endLocation: CGFloat = 0.4
+    
+    override var stringValue: String {
+        didSet {
+            updateGradientColor()
+        }
+    }
+    
+    override var font: NSFont? {
+        didSet {
+            updateGradientColor()
+        }
+    }
+    
+    override func layout() {
+        super.layout()
+        updateGradientColor()
+    }
+    
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateGradientColor()
+    }
+    
+    private func updateGradientColor() {
+        guard bounds.width > 0, bounds.height > 0 else {
+            textColor = startColor
+            return
+        }
+        
+        let image = NSImage(size: bounds.size)
+        image.lockFocus()
+        NSGradient(colors: [startColor, endColor],
+                   atLocations: [0, endLocation],
+                   colorSpace: .deviceRGB)?
+            .draw(in: NSRect(origin: .zero, size: bounds.size), angle: 90)
+        image.unlockFocus()
+        
+        textColor = NSColor(patternImage: image)
     }
 }
