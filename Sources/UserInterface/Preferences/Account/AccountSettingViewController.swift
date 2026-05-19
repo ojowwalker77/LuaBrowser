@@ -128,7 +128,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         // Profile card on the left
         view.addSubview(profileCardView)
         profileCardView.snp.makeConstraints { make in
-            make.left.equalToSuperview().offset(36)
+            make.left.equalToSuperview().offset(24)  // 36 - 12(inner padding for shadow)
             make.top.equalToSuperview().offset(36)
             make.width.equalTo(264)
         }
@@ -138,7 +138,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         view.addSubview(rightContainer)
 
         rightContainer.snp.makeConstraints { make in
-            make.left.equalTo(profileCardView.snp.right).offset(16)
+            make.left.equalTo(profileCardView.snp.right).offset(4)
             make.top.equalToSuperview().offset(36)
             make.right.equalToSuperview().offset(-36)
             make.bottom.lessThanOrEqualToSuperview().offset(-36)
@@ -587,7 +587,7 @@ class ProfileCardView: NSView {
         
         addSubview(cardContainerView)
         cardContainerView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(Metrics.shadowPadding)
+            make.top.equalToSuperview()
             make.centerX.equalToSuperview()
             make.width.equalTo(Metrics.cardWidth)
             make.height.equalTo(Metrics.cardHeight)
