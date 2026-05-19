@@ -393,7 +393,7 @@
     "Dismiss" : {
       "comment" : "Tooltip for button to dismiss living download item"
     },
-    "Download images" : {
+    "Download image" : {
       "comment" : "Account settings - Button to download profile card as image"
     },
     "Download Test Controls" : {

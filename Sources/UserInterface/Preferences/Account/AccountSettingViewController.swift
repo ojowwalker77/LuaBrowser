@@ -598,7 +598,7 @@ class ProfileCardView: NSView {
             make.edges.equalToSuperview()
         }
 
-        downloadButton.title = NSLocalizedString("Download images", comment: "Account settings - Button to download profile card as image")
+        downloadButton.title = NSLocalizedString("Download image", comment: "Account settings - Button to download profile card as image")
         downloadButton.bezelStyle = .rounded
         downloadButton.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
         downloadButton.imagePosition = .imageLeading
