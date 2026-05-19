@@ -242,6 +242,13 @@ final class TabDraggingSession {
         let isInside = !shouldUsePageSnapshotPreview(for: screenLocation)
         if lastIsInsideDragBoundary != isInside {
             lastIsInsideDragBoundary = isInside
+            // Whole-group drags skip drag-image swapping (`shouldSwitchDragImage` is
+            // false) but tear-off (`moveGroupSliceToNewWindow`) still relies on disabling
+            // this flag — otherwise AppKit waits for the drag image bounce-back animation
+            // before teardown, making the new window feel late vs TabStrip tear-off.
+            if draggingItem is TabGroupSidebarItem, nativeSession != nil {
+                nativeSession?.animatesToStartingPositionsOnCancelOrFail = isInside
+            }
             if shouldSwitchDragImage(for: draggingItem),
                nativeSession != nil,
                let sidebarItem = draggingItem as? SidebarItem {
