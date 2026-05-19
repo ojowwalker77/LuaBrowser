@@ -110,7 +110,15 @@ class SidebarTabListViewController: NSViewController {
     /// UI-only drag overlay for a whole group drag. This never changes
     /// Chromium's persisted collapsed state.
     private var temporarilyCollapsedGroupTokenForDrag: String?
-    
+
+    /// Tear-off Esc handling for whole-group pasteboard drags (mirrors
+    /// `TabStrip.installGroupDragEscMonitor`): suppresses `moveGroupSliceToNewWindow`
+    /// when the user presses Esc so cancel is not mistaken for desktop drop.
+    private var wholeGroupSidebarEscMonitor: Any?
+    private var activeWholeGroupSidebarDragSession: ObjectIdentifier?
+    private var wholeGroupSidebarEscSuppressedTearOff = false
+    private var wholeGroupSidebarEndFinalizeDone = false
+
     private var scrollAnimationGeneration: Int = 0
     private var scrollScheduleGeneration: Int = 0
     private var isActive = false
@@ -637,14 +645,49 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         }
 
         // Whole-group drag: validate before falling into the per-tab
-        // resolver. Allowed drop targets are root reordering and
-        // bookmark folders (convert-to-bookmarks). Cross-window group
-        // drags are unsupported (Chromium owns the group lifetime per
-        // window) — reject early.
+        // resolver. Same-window: root reorder (`moveNormalTabSlice`) or
+        // bookmark folder (convert-to-bookmarks). Cross-window onto
+        // this sidebar's tab strip: `sourceState.moveGroupSliceToWindow`
+        // mirrors `TabStrip.groupDragControllerCommitMoveCrossWindow`.
         if pasteboard.string(forType: .tabGroup) != nil {
             if isCrossWindowDrag(pasteboard) {
-                clearDropFeedback()
-                return []
+                guard let sourceState = sourceBrowserState(for: pasteboard),
+                      browserState.canAcceptCrossWindowDrag(from: sourceState),
+                      let draggedGroupToken = pasteboard.string(forType: .tabGroup),
+                      sourceState.normalTabs.contains(where: {
+                          $0.groupToken == draggedGroupToken
+                      }) else {
+                    clearDropFeedback()
+                    return []
+                }
+                if let targetBookmark = originalResolvedItem as? Bookmark,
+                   targetBookmark.isFolder {
+                    clearDropFeedback()
+                    return []
+                }
+                if originalResolvedItem is TabGroupSidebarItem {
+                    setDropFeedback(.none)
+                    return []
+                }
+                if let tab = originalResolvedItem as? Tab, tab.groupToken != nil {
+                    setDropFeedback(.none)
+                    return []
+                }
+                guard originalResolvedItem == nil else {
+                    setDropFeedback(.none)
+                    return []
+                }
+                let proposedRootRowCross = index == NSOutlineViewDropOnItemIndex ? outlineView.numberOfRows : index
+                if isRowInBookmarkSection(proposedRootRowCross) {
+                    clearDropFeedback()
+                    return []
+                }
+                guard !browserState.normalTabs.isEmpty else {
+                    clearDropFeedback()
+                    return []
+                }
+                setDropFeedback(.none)
+                return .move
             }
             if let targetBookmark = originalResolvedItem as? Bookmark,
                targetBookmark.isFolder {
@@ -876,7 +919,53 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         // as a whole.
         if let token = pasteboard.string(forType: .tabGroup) {
             if isCrossWindowDrag(pasteboard) {
-                return false
+                guard let sourceState = sourceBrowserState(for: pasteboard),
+                      browserState.canAcceptCrossWindowDrag(from: sourceState) else {
+                    return false
+                }
+                if let targetBookmark = resolvedItem as? Bookmark, targetBookmark.isFolder {
+                    return false
+                }
+                if resolvedItem is TabGroupSidebarItem {
+                    return false
+                }
+                if let tab = resolvedItem as? Tab, tab.groupToken != nil {
+                    return false
+                }
+                guard resolvedItem == nil else { return false }
+                let proposedRow = resolvedIndex == NSOutlineViewDropOnItemIndex
+                    ? outlineView.numberOfRows
+                    : resolvedIndex
+                if isRowInBookmarkSection(proposedRow) {
+                    return false
+                }
+                guard !browserState.normalTabs.isEmpty else {
+                    AppLogWarn(
+                        "[TAB_GROUPS][SIDEBAR_DRAG] cross-window group drop skipped: target has no normal tabs"
+                    )
+                    return false
+                }
+                let memberIds = sourceState.normalTabs
+                    .filter { $0.groupToken == token }
+                    .map(\.guid)
+                guard !memberIds.isEmpty else {
+                    AppLogWarn(
+                        "[TAB_GROUPS][SIDEBAR_DRAG] cross-window group drop skipped: empty members token=\(token)"
+                    )
+                    return false
+                }
+                let destination = calculateTabDestinationIndex(from: resolvedIndex)
+                AppLogDebug(
+                    "[TAB_GROUPS][SIDEBAR_DRAG] cross-window group→moveGroupSliceToWindow " +
+                    "srcWindow=\(sourceState.windowId) dstWindow=\(browserState.windowId) " +
+                    "token=\(token) destination=\(destination) members=\(memberIds)"
+                )
+                sourceState.moveGroupSliceToWindow(
+                    memberIds: memberIds,
+                    targetState: browserState,
+                    atIndex: destination
+                )
+                return true
             }
             if let targetFolder = resolvedItem as? Bookmark, targetFolder.isFolder {
                 let insertion = resolvedIndex == NSOutlineViewDropOnItemIndex
@@ -1139,6 +1228,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             temporarilyCollapseGroupForDragIfNeeded(
                 groupItem: groupItem,
                 cell: nil)
+            beginWholeGroupSidebarDragSessionRecording(session)
         }
         DispatchQueue.main.async { [weak self] in
             self?.expandFloatingBookmarkParentsIfNeeded()
@@ -1156,6 +1246,11 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                      draggingSession session: NSDraggingSession,
                      endedAt screenPoint: NSPoint,
                      operation: NSDragOperation) {
+        finalizeWholeGroupSidebarTearOffIfNeeded(
+            session: session,
+            screenPoint: screenPoint,
+            dragOperation: operation
+        )
         clearDropFeedback()
         restoreTemporarilyCollapsedGroupAfterDragIfNeeded()
         DispatchQueue.main.async { [weak self] in
@@ -1358,6 +1453,80 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         noteTabGroupRowHeightChanged(for: groupItem, animated: false)
         AppLogDebug(
             "[TAB_GROUPS][GROUP_DRAG] restoreTemporaryCollapse token=\(token)"
+        )
+    }
+
+    private func beginWholeGroupSidebarDragSessionRecording(_ session: NSDraggingSession) {
+        removeWholeGroupSidebarEscMonitorIfNeeded()
+        wholeGroupSidebarEscSuppressedTearOff = false
+        wholeGroupSidebarEndFinalizeDone = false
+        activeWholeGroupSidebarDragSession = ObjectIdentifier(session)
+        wholeGroupSidebarEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self else { return event }
+            guard event.keyCode == 53 else { return event }
+            self.wholeGroupSidebarEscSuppressedTearOff = true
+            AppLogDebug(
+                "[TAB_GROUPS][GROUP_DRAG] Esc → suppress whole-group sidebar tear-off"
+            )
+            return nil
+        }
+    }
+
+    private func removeWholeGroupSidebarEscMonitorIfNeeded() {
+        if let monitor = wholeGroupSidebarEscMonitor {
+            NSEvent.removeMonitor(monitor)
+            wholeGroupSidebarEscMonitor = nil
+        }
+        activeWholeGroupSidebarDragSession = nil
+    }
+
+    /// Runs before `tabDraggingSession.end(...)`. Uses the same coarse
+    /// boundary rubric as `TabDraggingSession.shouldUsePageSnapshotPreview`:
+    /// drop with no recipient **and** cursor not inside any Phi
+    /// `containsTabDragBoundary` region ⇒ tear-off to new window
+    /// (`BrowserState.moveGroupSliceToNewWindow`).
+    private func finalizeWholeGroupSidebarTearOffIfNeeded(
+        session: NSDraggingSession,
+        screenPoint: NSPoint,
+        dragOperation: NSDragOperation
+    ) {
+        guard activeWholeGroupSidebarDragSession == ObjectIdentifier(session) else {
+            return
+        }
+        guard !wholeGroupSidebarEndFinalizeDone else { return }
+        wholeGroupSidebarEndFinalizeDone = true
+
+        defer {
+            removeWholeGroupSidebarEscMonitorIfNeeded()
+        }
+
+        guard dragOperation.isEmpty else { return }
+        guard !wholeGroupSidebarEscSuppressedTearOff else { return }
+        guard let groupItem =
+            browserState.tabDraggingSession.snapshot.draggingItem as? TabGroupSidebarItem
+        else { return }
+
+        let pt = CGPoint(x: screenPoint.x, y: screenPoint.y)
+        let overPhiTabChrome = MainBrowserWindowControllersManager.shared.getAllWindows()
+            .contains { $0.containsTabDragBoundary(at: pt) }
+        guard !overPhiTabChrome else { return }
+
+        let token = groupItem.group.token
+        let memberIds = browserState.normalTabs
+            .filter { $0.groupToken == token }
+            .map(\.guid)
+        guard !memberIds.isEmpty else { return }
+
+        session.animatesToStartingPositionsOnCancelOrFail = false
+
+        AppLogDebug(
+            "[TAB_GROUPS][GROUP_DRAG] sidebar tear-off moveGroupSliceToNewWindow " +
+            "windowId=\(browserState.windowId) token=\(token) members=\(memberIds)"
+        )
+        browserState.moveGroupSliceToNewWindow(
+            memberIds: memberIds,
+            dropScreenLocation: pt
         )
     }
 
@@ -2650,6 +2819,7 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
             with: [draggingItem],
             event: mouseDownEvent,
             source: self)
+        beginWholeGroupSidebarDragSessionRecording(session)
 
         let screenPoint = mouseDownEvent.window?
             .convertPoint(toScreen: mouseDownEvent.locationInWindow) ?? NSEvent.mouseLocation
@@ -2849,6 +3019,11 @@ extension SidebarTabListViewController: NSDraggingSource {
         AppLogDebug(
             "[TAB_GROUPS][INNER_DRAG] controller.sourceEnded screen=\(screenPoint) " +
             "op=\(operation.rawValue)"
+        )
+        finalizeWholeGroupSidebarTearOffIfNeeded(
+            session: session,
+            screenPoint: screenPoint,
+            dragOperation: operation
         )
         clearDropFeedback()
         clearVisibleGroupInnerDropRows()
