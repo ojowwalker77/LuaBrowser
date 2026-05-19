@@ -34,7 +34,8 @@ struct UnifiedTabTitleView: View {
 
 struct UnifiedTabFaviconView: View {
     let viewModel: TabViewModel
-    
+    @Environment(\.phiAppearance) private var phiAppearance
+
     var body: some View {
         Group {
             if let liveFaviconImage = viewModel.liveFaviconImage {
