@@ -533,7 +533,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             
             if numberOfRows > 0 {
                 let lastRowRect = outlineView.rect(ofRow: numberOfRows - 1)
-                if dragLocationInOutline.y >= lastRowRect.minY {
+                if isDragLocationPastLastRow(in: outlineView, dragY: dragLocationInOutline.y, lastRowRect: lastRowRect) {
                     outlineView.setDropItem(nil, dropChildIndex: maxRootDropIndex)
                     return .move
                 }
@@ -851,6 +851,13 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
     /// UI-only focused bookmark proxy that may be present.
     private func maxRootDropChildIndex() -> Int {
         dataSourceChildren(of: nil).count
+    }
+
+    private func isDragLocationPastLastRow(in outlineView: NSOutlineView, dragY: CGFloat, lastRowRect: NSRect) -> Bool {
+        if outlineView.isFlipped {
+            return dragY > lastRowRect.maxY
+        }
+        return dragY < lastRowRect.minY
     }
     
     private func isRowInBookmarkSection(_ row: Int) -> Bool {
