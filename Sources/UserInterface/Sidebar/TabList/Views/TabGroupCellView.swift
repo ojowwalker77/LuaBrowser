@@ -305,6 +305,7 @@ final class TabGroupCellView: SidebarCellView {
         tabsByGuid = [:]
         currentMemberOrder = []
         activeDragTabGuid = nil
+        isDropTargetHighlighted = false
         isHovered = false
         viewModel.isHeaderHovered = false
         isTemporarilyCollapsedForDrag = false
@@ -346,6 +347,11 @@ final class TabGroupCellView: SidebarCellView {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         setHovered(false)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyHighlightVisuals()
     }
 
     // MARK: - Setup
@@ -593,18 +599,27 @@ final class TabGroupCellView: SidebarCellView {
         containerView.wantsLayer = true
         containerView.layer?.cornerRadius = 8
         containerView.layer?.cornerCurve = .continuous
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+
         if isDropTargetHighlighted {
-            let tint = lastGroupColor.nsColor
-            containerView.layer?.backgroundColor = tint.withAlphaComponent(0.12).cgColor
+            let groupColor = configuredGroup?.color ?? lastGroupColor
+            let tint = groupColor.nsColor
+            // Tint lives on the overlay (topmost subview). The header
+            // hosting view and inner table sit above `containerView.layer`,
+            // so a background on the container itself is never visible.
             containerBorderOverlayView.isHidden = false
-            containerBorderOverlayView.layer?.borderColor = tint.withAlphaComponent(0.36).cgColor
+            containerBorderOverlayView.layer?.backgroundColor =
+                groupColor.chipTintColor.cgColor
+            containerBorderOverlayView.layer?.borderColor =
+                tint.withAlphaComponent(0.36).cgColor
         } else if isHovered {
-            containerView.layer?.backgroundColor = NSColor.clear.cgColor
             containerBorderOverlayView.isHidden = false
-            containerBorderOverlayView.layer?.borderColor = ThemedColor.border.resolve(in: containerView).cgColor
+            containerBorderOverlayView.layer?.backgroundColor = NSColor.clear.cgColor
+            containerBorderOverlayView.layer?.borderColor =
+                ThemedColor.border.resolve(in: containerView).cgColor
         } else {
-            containerView.layer?.backgroundColor = NSColor.clear.cgColor
             containerBorderOverlayView.isHidden = true
+            containerBorderOverlayView.layer?.backgroundColor = NSColor.clear.cgColor
             containerBorderOverlayView.layer?.borderColor = NSColor.clear.cgColor
         }
     }
