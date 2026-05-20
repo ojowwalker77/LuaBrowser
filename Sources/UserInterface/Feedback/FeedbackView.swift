@@ -5,7 +5,6 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-import CoreGraphics
 
 struct FeedbackView: View {
     @State private var descriptionText: String = ""
@@ -14,12 +13,7 @@ struct FeedbackView: View {
     @State private var selectedFileURL: URL?
     @ObservedObject var viewModel: FeedbackViewModel
     @State private var isShowingFileImporter: Bool = false
-    @State private var includeScreenshot: Bool = false
     @State private var sendSystemInfo: Bool = true
-    @State private var snapshotImage: NSImage?
-    @State private var snapshotURL: URL?
-    @State private var isHoveringScreenshot: Bool = false
-    @State private var showPermissionAlert: Bool = false
     @State private var showFileSizeAlert: Bool = false
     private let maxDescriptionLength = 4096
     
@@ -142,27 +136,6 @@ struct FeedbackView: View {
                             }
                         }
                     }
-                    
-                    if let image = snapshotImage {
-                        HStack {
-                            Image(nsImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(height: 75)
-                                .scaleEffect(isHoveringScreenshot ? 1.1 : 1.0)
-                                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringScreenshot)
-                                .onHover { hovering in
-                                    isHoveringScreenshot = hovering
-                                }
-                                .onTapGesture {
-                                    if let url = snapshotURL {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                }
-                            Spacer()
-                        }
-                        .padding(.top, 4)
-                    }
                 }
                 .padding()
                 .background(Color(NSColor.black.withAlphaComponent(0.02)))
@@ -173,33 +146,6 @@ struct FeedbackView: View {
                 )
             }
             .padding(.top, 24)
-            
-            // Options Section
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle(NSLocalizedString("Include this screenshot and titles of open tabs", comment: "Feedback form - Checkbox option to include screenshot with feedback"), isOn: $includeScreenshot)
-                    .toggleStyle(.checkbox)
-                    .onChange(of: includeScreenshot, { oldValue, isOn in
-                        if isOn {
-                            captureScreenshot()
-                        } else {
-                            snapshotImage = nil
-                            snapshotURL = nil
-                        }
-                    })
-            }
-            .padding(.top, 24)
-            .alert(NSLocalizedString("Screen Recording Permission Required", comment: "Feedback form - Alert title when screen recording permission is needed"), isPresented: $showPermissionAlert) {
-                Button(NSLocalizedString("Open System Settings", comment: "Feedback form - Button to open system settings for screen recording permission")) {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                Button(NSLocalizedString("Cancel", comment: "Feedback form - Cancel button in permission alert"), role: .cancel) {
-                    includeScreenshot = false
-                }
-            } message: {
-                Text(NSLocalizedString("Please allow this app to record your screen to attach screenshots to feedback.", comment: "Feedback form - Alert message explaining why screen recording permission is needed"))
-            }
             
             VStack {
                 Spacer()
@@ -289,51 +235,6 @@ struct FeedbackView: View {
         onTermsOfServiceTap?()
     }
     
-    private func captureScreenshot() {
-        // Check for screen recording permission
-        if !CGPreflightScreenCaptureAccess() {
-            // Request permission if not granted
-            // Note: CGRequestScreenCaptureAccess returns false if permission is not yet granted or denied
-            // We trigger the system prompt here.
-            CGRequestScreenCaptureAccess()
-            // Since we can't wait for the user's action in a synchronous flow easily here,
-            // and if it returns false it might mean "prompting" or "denied",
-            // we show the alert to guide them if they have denied it or need to enable it.
-            // Ideally, we would only show this if we knew for sure it was denied.
-            // But for a simple implementation, we assume if preflight fails, we need user intervention.
-            showPermissionAlert = true
-            includeScreenshot = false
-            return
-        }
-        
-        // Capture the screen content below the current window to avoid capturing the feedback window itself
-        // This avoids the need to hide/show the window which causes flickering
-        guard let currentWindow = NSApp.keyWindow else { return }
-        let windowID = CGWindowID(currentWindow.windowNumber)
-        
-        guard let screen = currentWindow.screen ?? NSScreen.main else { return }
-        let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
-        let screenBounds = CGDisplayBounds(displayID)
-        
-        // Capture windows below the feedback window
-        if let cgImage = CGWindowListCreateImage(screenBounds, .optionOnScreenBelowWindow, windowID, .bestResolution) {
-            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            self.snapshotImage = nsImage
-            
-            // Save to temporary file for preview
-            let tempDir = FileManager.default.temporaryDirectory
-            let fileName = "feedback_screenshot_\(Int(Date().timeIntervalSince1970)).png"
-            let fileURL = tempDir.appendingPathComponent(fileName)
-            
-            if let tiffData = nsImage.tiffRepresentation,
-               let bitmapImage = NSBitmapImageRep(data: tiffData),
-               let pngData = bitmapImage.representation(using: .png, properties: [:]) {
-                try? pngData.write(to: fileURL)
-                self.snapshotURL = fileURL
-            }
-        }
-    }
-    
     private func buildPayload() -> [String: AnyHashable] {
         var payload: [String: AnyHashable] = [
             "description": descriptionText,
@@ -342,15 +243,6 @@ struct FeedbackView: View {
             "user_email": AccountController.shared.account?.userInfo?.email ?? "",
             "category_tag": "issue-report"
         ]
-        
-        if includeScreenshot, let image = snapshotImage {
-            if let tiffData = image.tiffRepresentation,
-               let bitmap = NSBitmapImageRep(data: tiffData),
-               let pngData = bitmap.representation(using: .png, properties: [:]) {
-                payload["screenshot_data"] = pngData
-                payload["screenshot_mime_type"] = "image/png"
-            }
-        }
         
         // Read attachment data
         if let fileURL = selectedFileURL,
@@ -402,6 +294,6 @@ struct SendButtonStyle: ButtonStyle {
     }
 }
 
-//#Preview {
-//    FeedbackView(viewModel: FeedbackViewModel())
-//}
+#Preview {
+    FeedbackView(viewModel: FeedbackViewModel())
+}
