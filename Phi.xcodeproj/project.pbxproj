@@ -12,6 +12,7 @@
 		3703C88C2F68F78500E7CF6D /* AISettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C88B2F68F78500E7CF6D /* AISettingView.swift */; };
 		3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */; };
 		3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9832F6956E600E7CF6D /* SentinelHelper.swift */; };
+		3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */; };
 		370D03AC2F0E463B0087A1C9 /* Mapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A32F0E463B0087A1C9 /* Mapper.swift */; };
 		370D03AD2F0E463B0087A1C9 /* ThemedColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A82F0E463B0087A1C9 /* ThemedColor.swift */; };
 		370D03AE2F0E463B0087A1C9 /* Key.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A22F0E463B0087A1C9 /* Key.swift */; };
@@ -109,7 +110,7 @@
 		37C1B3322EE691E700DD4496 /* LottieAnimationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B3312EE691E700DD4496 /* LottieAnimationView.swift */; };
 		37C1B4F72EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B4F32EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift */; };
 		37C1B4F82EE6CE8A00DD4496 /* GeneralSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B4F42EE6CE8A00DD4496 /* GeneralSettingViewController.swift */; };
-		37C1B4F92EE6CE8A00DD4496 /* GeneratlSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B4F52EE6CE8A00DD4496 /* GeneratlSettingView.swift */; };
+		37C1B4F92EE6CE8A00DD4496 /* GeneralSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B4F52EE6CE8A00DD4496 /* GeneralSettingView.swift */; };
 		37C76E162F8FAD510042FE45 /* SharedTokenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C76E152F8FAD510042FE45 /* SharedTokenLock.swift */; };
 		37C76E182F8FAD570042FE45 /* SharedHeartbeatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C76E172F8FAD570042FE45 /* SharedHeartbeatStore.swift */; };
 		37C76E1A2F8FAD730042FE45 /* SharedAuth0Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C76E192F8FAD730042FE45 /* SharedAuth0Config.swift */; };
@@ -183,6 +184,9 @@
 		AA10000000000000000000B3 /* TabSwitchCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F3 /* TabSwitchCellView.swift */; };
 		AA10000000000000000000B4 /* TabSwitchWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F4 /* TabSwitchWindowController.swift */; };
 		AA10000000000000000000B5 /* TabSwitchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F5 /* TabSwitchManager.swift */; };
+		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
+		AE00FFFE0000000000000003 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
+		AE00FFFE0000000000000004 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
 		B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */; };
 		B02586F62E42FD97001B08FC /* AppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02586F02E42FD97001B08FC /* AppController.swift */; };
@@ -237,6 +241,7 @@
 		CC450AE42EA74AD5004EE144 /* CommandDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC450AE32EA74AD5004EE144 /* CommandDispatcher.swift */; };
 		CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */ = {isa = PBXBuildFile; fileRef = CC4BFB922E9798ED00CC6162 /* Auth0.plist */; };
 		CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5025FB2E702603004223DC /* NSImage+Extension.swift */; };
+		CC5C51F62FB5C5560044D255 /* credits.html in Resources */ = {isa = PBXBuildFile; fileRef = CC5C51F52FB5C5560044D255 /* credits.html */; };
 		CC6335F72E4B29E000A176DA /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6335F62E4B29E000A176DA /* Logging.swift */; };
 		CC6335F92E4DF65700A176DA /* PhiLogFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6335F82E4DF65700A176DA /* PhiLogFormatter.swift */; };
 		CC6336032E4EE43200A176DA /* PhiLogging.m in Sources */ = {isa = PBXBuildFile; fileRef = CC6336022E4EE43200A176DA /* PhiLogging.m */; };
@@ -373,6 +378,7 @@
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
 		3703C9832F6956E600E7CF6D /* SentinelHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelHelper.swift; sourceTree = "<group>"; };
+		3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelVersionGuard.swift; sourceTree = "<group>"; };
 		370D039F2F0E463B0087A1C9 /* Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Appearance.swift; sourceTree = "<group>"; };
 		370D03A02F0E463B0087A1C9 /* Bags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bags.swift; sourceTree = "<group>"; };
 		370D03A12F0E463B0087A1C9 /* ColorRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorRole.swift; sourceTree = "<group>"; };
@@ -473,7 +479,7 @@
 		37C1B3312EE691E700DD4496 /* LottieAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LottieAnimationView.swift; sourceTree = "<group>"; };
 		37C1B4F32EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingHostingViewController.swift; sourceTree = "<group>"; };
 		37C1B4F42EE6CE8A00DD4496 /* GeneralSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingViewController.swift; sourceTree = "<group>"; };
-		37C1B4F52EE6CE8A00DD4496 /* GeneratlSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratlSettingView.swift; sourceTree = "<group>"; };
+		37C1B4F52EE6CE8A00DD4496 /* GeneralSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingView.swift; sourceTree = "<group>"; };
 		37C2A68A2F8E1585006E856E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		37C2A68B2F8E1585006E856E /* tab-order-spec.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tab-order-spec.md"; sourceTree = "<group>"; };
 		37C6AAD82F1F761D00C0A46E /* DraggingSession.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = DraggingSession.md; sourceTree = "<group>"; };
@@ -542,6 +548,7 @@
 		AA10000000000000000000F3 /* TabSwitchCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchCellView.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F4 /* TabSwitchWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchWindowController.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F5 /* TabSwitchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchManager.swift; sourceTree = "<group>"; };
+		AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAgentEndpointResolver.swift; sourceTree = "<group>"; };
 		B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiChromiumCoordinator.swift; sourceTree = "<group>"; };
 		B02586EC2E42FD97001B08FC /* PhiBrowser-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PhiBrowser-Bridging-Header.h"; sourceTree = "<group>"; };
 		B02586ED2E42FD97001B08FC /* ChromiumLauncher.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ChromiumLauncher.h; sourceTree = "<group>"; };
@@ -605,6 +612,7 @@
 		CC4BFB922E9798ED00CC6162 /* Auth0.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Auth0.plist; sourceTree = "<group>"; };
 		CC5025FB2E702603004223DC /* NSImage+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSImage+Extension.swift"; sourceTree = "<group>"; };
 		CC50262C2E716982004223DC /* OmniBoxViewController+Suggestion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OmniBoxViewController+Suggestion.swift"; sourceTree = "<group>"; };
+		CC5C51F52FB5C5560044D255 /* credits.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = credits.html; sourceTree = "<group>"; };
 		CC6335F62E4B29E000A176DA /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		CC6335F82E4DF65700A176DA /* PhiLogFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiLogFormatter.swift; sourceTree = "<group>"; };
 		CC6336012E4EE43200A176DA /* PhiLogging.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PhiLogging.h; sourceTree = "<group>"; };
@@ -855,6 +863,7 @@
 			children = (
 				376CE40F2F2897D30093D937 /* Models */,
 				376CE4102F2897D30093D937 /* APIClient.swift */,
+				AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -963,7 +972,7 @@
 			children = (
 				37C1B4F32EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift */,
 				37C1B4F42EE6CE8A00DD4496 /* GeneralSettingViewController.swift */,
-				37C1B4F52EE6CE8A00DD4496 /* GeneratlSettingView.swift */,
+				37C1B4F52EE6CE8A00DD4496 /* GeneralSettingView.swift */,
 				37FC8DA92F39B2DE004675B8 /* LayoutModeSettingView.swift */,
 			);
 			path = General;
@@ -1221,6 +1230,7 @@
 				CC99097B2EBC9F090046BC81 /* login-bg.mp4 */,
 				37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */,
 				37F574472F7A7C5D00879867 /* PhiIcon.icon */,
+				CC5C51F52FB5C5560044D255 /* credits.html */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1298,6 +1308,7 @@
 				CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */,
 				CCBF0F9F2ECEC1AE005E729B /* AppController+Deeplink.swift */,
 				3703C9832F6956E600E7CF6D /* SentinelHelper.swift */,
+				3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */,
 				37CC00012F9D000100000001 /* SentinelIPCClient.swift */,
 			);
 			path = Application;
@@ -1801,6 +1812,7 @@
 				3765817B2EE963AD00D3E031 /* Localizable.xcstrings in Resources */,
 				37B977D52EF3F62F007E0568 /* login-dot-bg.mp4 in Resources */,
 				CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */,
+				CC5C51F62FB5C5560044D255 /* credits.html in Resources */,
 				8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */,
 				CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */,
 			);
@@ -1855,6 +1867,7 @@
 				37C1B28F2EE1364D00DD4496 /* EnvironmentChecker.swift in Sources */,
 				37C1B28A2EE0457F00DD4496 /* LivingDownloadsListView.swift in Sources */,
 				3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */,
+				3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */,
 				37CC00022F9D000100000001 /* SentinelIPCClient.swift in Sources */,
 				CCB53DCF2E6EC437004BF233 /* OmniBoxTextField.swift in Sources */,
 				8EC70E182F0BC77E009FE2CD /* NSImageView+Favicon.swift in Sources */,
@@ -2049,7 +2062,7 @@
 				37C1B4F72EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift in Sources */,
 				37C1B4F82EE6CE8A00DD4496 /* GeneralSettingViewController.swift in Sources */,
 				8EE5BEEC2F14FF9800698D7D /* TabCloseButton.swift in Sources */,
-				37C1B4F92EE6CE8A00DD4496 /* GeneratlSettingView.swift in Sources */,
+				37C1B4F92EE6CE8A00DD4496 /* GeneralSettingView.swift in Sources */,
 				37C1B0E72ED851CE00DD4496 /* ShortcutsViewModel.swift in Sources */,
 				3769C6ED2EFA6CBE00A94DE0 /* GaussianEffectView.swift in Sources */,
 				B0F370B92E430CA5000B51F9 /* WebContentViewController.swift in Sources */,
@@ -2092,6 +2105,7 @@
 				376CE4162F2897D30093D937 /* Response.swift in Sources */,
 				8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */,
 				376CE4172F2897D30093D937 /* APIClient.swift in Sources */,
+				AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */,
 				CCEF2D9C2E5F1A9900FDDEB2 /* AIChatViewController.swift in Sources */,
 				CC6335F72E4B29E000A176DA /* Logging.swift in Sources */,
 			);
@@ -2103,6 +2117,7 @@
 			files = (
 				897C09F92F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */,
 				897C09FA2F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */,
+				AE00FFFE0000000000000003 /* PhiAgentEndpointResolver.swift in Sources */,
 				897C09FB2F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */,
 				897C09FC2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */,
 				897C09FD2F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */,
@@ -2115,6 +2130,7 @@
 			files = (
 				897C09FE2F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */,
 				897C09FF2F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */,
+				AE00FFFE0000000000000004 /* PhiAgentEndpointResolver.swift in Sources */,
 				897C0A002F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */,
 				897C0A012F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */,
 				897C0A022F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */,

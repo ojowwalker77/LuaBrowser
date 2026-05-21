@@ -438,6 +438,11 @@ final class IMChannelsViewModel {
             switch apiError {
             case .invalidResponse:
                 return fallback
+            case .unauthorized:
+                return NSLocalizedString(
+                    "Your Phi session has expired. Please sign in again, then retry Phi Link.",
+                    comment: "Phi Link - Message shown when phi-agent returns 401 unauthorized"
+                )
             case .httpError(let statusCode):
                 if statusCode >= 500 {
                     return fallback

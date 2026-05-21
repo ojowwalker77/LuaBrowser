@@ -28,17 +28,13 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         return label
     }()
     
-    private lazy var colorSlider: CustomSlider = {
-        let slider = CustomSlider(frame: NSRect(origin: .zero, size: NSSize(width: 128, height: 20)))
-        slider.trackImage = sliderBg
-        slider.knobSize = NSSize(width: 20, height: 20)
-        slider.barSize = NSSize(width: 13, height: 13)
-        slider.minValue = 0
-        slider.maxValue = 359
-        slider.doubleValue = 180
-        slider.target = self
-        slider.action = #selector(sliderValueChanged(_:))
-        return slider
+    private lazy var themeStackView: NSStackView = {
+        let stackView = NSStackView()
+        stackView.orientation = .horizontal
+        stackView.alignment = .top
+        stackView.distribution = .gravityAreas
+        stackView.spacing = 12
+        return stackView
     }()
     
     private var coloredBgView: NSView = {
@@ -46,10 +42,6 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         view.wantsLayer = true
         view.alphaValue = 0.1
         return view
-    }()
-    
-    private let sliderBg: NSImage = {
-        return .sliderBg
     }()
     
     private let dotBg: NSImage = {
@@ -61,27 +53,6 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         imageView.image = dotBg
         imageView.alphaValue = 0.15
         return imageView
-    }()
-    
-    private let colorLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "#2D6F7D")
-        label.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        label.textColor = .white
-        label.alignment = .center
-        label.isEditable = false
-        label.drawsBackground = false
-        return label
-    }()
-    
-    private lazy var colorView: NSView = {
-        let view = NSView()
-        view.addSubview(colorLabel)
-        colorLabel.snp.makeConstraints { make in
-            make.centerY.centerX.equalToSuperview()
-        }
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 8
-        return view
     }()
     
     private lazy var nextButton: GradientBorderButton = {
@@ -105,6 +76,15 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     
     var nextClosure: ((Bool) -> Void)?
     private var accentColor: NSColor?
+    private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
+    private var themeButtons: [String: OnboardingThemeSwatchButton] = [:]
+    
+    private var themes: [Theme] {
+        Theme.builtInThemes.map { builtInTheme in
+            ThemeManager.shared.registeredThemes[builtInTheme.id] ?? builtInTheme
+        }
+    }
+    
     var userName: String? {
         didSet {
             titleLabel.stringValue = String(format: NSLocalizedString("Welcome %@", comment: "Onboarding welcome page - Personalized welcome title with user name"), userName ?? "")
@@ -125,7 +105,11 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     
     override func viewWillAppear() {
         super.viewWillAppear()
-        sliderValueChanged(colorSlider)
+        selectedThemeId = ThemeManager.shared.currentTheme.id
+        updateThemeSelection()
+        if let theme = themes.first(where: { $0.id == selectedThemeId }) ?? themes.first {
+            themeChanged(theme)
+        }
     }
     
     override func viewDidDisappear() {
@@ -166,8 +150,7 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         view.addSubview(coloredBgView)
         view.addSubview(dotBackgroundImageView)
         view.addSubview(titleLabel)
-        view.addSubview(colorSlider)
-        view.addSubview(colorView)
+        view.addSubview(themeStackView)
         view.addSubview(nextButton)
         
         view.snp.makeConstraints { make in
@@ -196,18 +179,12 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
             make.leading.trailing.lessThanOrEqualToSuperview().inset(30)
         }
         
-        colorSlider.snp.makeConstraints { make in
+        setupThemeButtons()
+        
+        themeStackView.snp.makeConstraints { make in
             make.top.equalTo(titleLabel.snp.bottom).offset(22)
             make.centerX.equalToSuperview()
-            make.width.equalTo(128)
-            make.height.equalTo(20)
-        }
-        
-        colorView.snp.makeConstraints { make in
-            make.top.equalTo(colorSlider.snp.bottom).offset(5)
-            make.centerX.equalToSuperview()
-            make.width.equalTo(128)
-            make.height.equalTo(15)
+            make.height.equalTo(26)
         }
         
         nextButton.snp.makeConstraints { make in
@@ -219,30 +196,46 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     }
     
     // MARK: - Actions
-    @objc private func sliderValueChanged(_ sender: NSSlider) {
-        let hue = CGFloat(sender.doubleValue / 360.0)
-        let color = NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 0.75)
+    @objc private func themeButtonClicked(_ sender: NSButton) {
+        guard let button = sender as? OnboardingThemeSwatchButton else { return }
+        themeChanged(button.theme)
+    }
+    
+    private func themeChanged(_ theme: Theme) {
+        selectedThemeId = theme.id
+        ThemeManager.shared.switchTheme(to: theme.id)
+        updateThemeSelection()
         
-        let accentColor = NSColor(hue: hue, saturation: 1, brightness: 0.37, alpha: 1)
+        let appearance = ThemeManager.shared.currentAppearance
+        let overlayColor = normalizedOverlayColor(for: theme, appearance: appearance)
+        let resolvedOverlayColor = overlayColor.usingColorSpace(.deviceRGB)
+        let hue = resolvedOverlayColor?.hueComponent ?? 0
+        let overridedSaturation: CGFloat? = theme == .pure ? 0 : nil
+        let overridedBrightness: CGFloat? = theme == .pure ? 0.5 : nil
+        let accentColor = theme == .pure ?
+        NSColor.black :
+        NSColor(hue: hue,
+                saturation: 1,
+                brightness: 0.37,
+                alpha: 1)
         self.accentColor = accentColor
 
-        colorLabel.stringValue = colorToHex(accentColor)
-        
         titleLabel.textColor = accentColor
 
-        colorView.layer?.backgroundColor = accentColor.cgColor
-        
         nextButton.titleColor = Color(nsColor: accentColor)
         nextButton.borderColors = [Color(nsColor: accentColor)]
-        nextButton.backgroundColor = Color(nsColor: NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 0.1))
+        nextButton.backgroundColor = Color(nsColor: NSColor(hue: hue,
+                                                            saturation: overridedSaturation ?? 0.85,
+                                                            brightness: overridedBrightness ?? 0.75,
+                                                            alpha: 0.1))
         
         dotBackgroundImageView.image = dotBg.tinted(with: accentColor)
-        colorSlider.trackImage = sliderBg.tinted(with: accentColor)
         
-        coloredBgView.layer?.backgroundColor = NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 1).cgColor
-        colorSlider.knobColor = accentColor
-        colorSlider.knobFillColor =  NSColor(hue: hue, saturation: 0.85, brightness: 0.75, alpha: 0.1)
-        colorSliderChanged(CGFloat(sender.floatValue))
+        coloredBgView.layer?.backgroundColor = NSColor(hue: hue,
+                                                       saturation: overridedSaturation ?? 0.85,
+                                                       brightness: overridedBrightness ?? 0.75,
+                                                       alpha: 1).cgColor
+        themChanged(h: hue, s: overridedSaturation, b: overridedBrightness)
     }
     
     private func drawConch(with color: NSColor) {
@@ -266,11 +259,36 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     }
     
     private func nextButtonTapped() {
-        UserDefaults.standard.set(colorLabel.stringValue, forKey: PhiPreferences.accentColor.rawValue)
         nextClosure?(true)
     }
     
     // MARK: - Helpers
+    private func setupThemeButtons() {
+        themeStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        themeButtons.removeAll()
+        
+        for theme in themes {
+            let button = OnboardingThemeSwatchButton(theme: theme)
+            button.target = self
+            button.action = #selector(themeButtonClicked(_:))
+            themeButtons[theme.id] = button
+            themeStackView.addArrangedSubview(button)
+        }
+        
+        updateThemeSelection()
+    }
+    
+    private func updateThemeSelection() {
+        let appearance = ThemeManager.shared.currentAppearance
+        themeButtons.forEach { themeId, button in
+            button.updateSelection(themeId == selectedThemeId, appearance: appearance)
+        }
+    }
+    
+    private func normalizedOverlayColor(for theme: Theme, appearance: Appearance) -> NSColor {
+        theme.color(for: .windowOverlayBackground, appearance: appearance).withAlphaComponent(1)
+    }
+    
     private func adjustDateLabelFontSize() {
         let maxWidth = view.bounds.width
         var fontSize: CGFloat = 200
@@ -285,16 +303,61 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         }
     }
     
-    private func colorToHex(_ color: NSColor) -> String {
-        guard let rgbColor = color.usingColorSpace(.deviceRGB) else {
-            return "#000000"
+}
+
+private final class OnboardingThemeSwatchButton: NSButton {
+    let theme: Theme
+    
+    private let swatchView = NSView()
+    
+    init(theme: Theme) {
+        self.theme = theme
+        super.init(frame: .zero)
+        setupUI()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupUI() {
+        isBordered = false
+        title = ""
+        wantsLayer = true
+        
+        swatchView.wantsLayer = true
+        swatchView.layer?.cornerRadius = 13
+        swatchView.layer?.masksToBounds = false
+        swatchView.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowBlurRadius = 4
+            shadow.shadowOffset = NSSize(width: 0, height: -1)
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.12)
+            return shadow
+        }()
+        
+        addSubview(swatchView)
+        
+        snp.makeConstraints { make in
+            make.width.height.equalTo(26)
         }
         
-        let red = Int(rgbColor.redComponent * 255)
-        let green = Int(rgbColor.greenComponent * 255)
-        let blue = Int(rgbColor.blueComponent * 255)
+        swatchView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+    
+    func updateSelection(_ selected: Bool, appearance: Appearance) {
+        let themeColor = theme.color(for: .themeColor, appearance: appearance)
+        let swatchColor = theme == .pure ? .white : themeColor
+        let selectedBorderColor = theme == .pure
+            ? NSColor.black
+            : theme.color(for: .windowOverlayBackground, appearance: appearance).withAlphaComponent(1)
+        let unselectedBorderColor = NSColor.black.withAlphaComponent(0.12)
         
-        return String(format: "#%02X%02X%02X", red, green, blue)
+        swatchView.layer?.backgroundColor = swatchColor.cgColor
+        swatchView.layer?.borderWidth = selected ? 2 : 0
+        swatchView.layer?.borderColor = (selected ? selectedBorderColor : unselectedBorderColor).cgColor
     }
 }
 

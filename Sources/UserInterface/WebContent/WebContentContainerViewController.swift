@@ -122,12 +122,16 @@ class WebContentContainerViewController: NSViewController {
     private let outerBorderLayer = CAShapeLayer()
     private var outerBorderThemeObservation: AnyObject?
 
-    private enum LayerZIndex {
+    enum LayerZIndex {
         /// Stacks above every sibling sublayer in `view.layer` so the active
         /// tab's fill (in barController.view) and splitViewContainer's fill
         /// (in contentContainer → webContentVC.view) can't clip the stroke.
         /// Bump only if a higher-z layer is intentionally introduced.
         static let contentOuterBorder: CGFloat = 1000
+        /// Floating sidebar slides in above the content area; must sit above
+        /// `contentOuterBorder` so the outer-border stroke doesn't render on
+        /// top of the panel.
+        static let floatingSidebar: CGFloat = 1100
     }
     
     /// Titlebar aware area for handling double-click on titlebar
@@ -651,6 +655,11 @@ class WebContentContainerViewController: NSViewController {
         controller.detachBookmarkBarIfAttached()
         sharedBookmarkBarHostController = nil
     }
+
+    private func prepareSharedBookmarkBarSlot(for controller: WebContentViewController) {
+        guard let bookmarkBar = ensureSharedBookmarkBar() else { return }
+        controller.updateBookmarkBarVisibility(bookmarkCount: bookmarkBar.bookmarkCount)
+    }
     
     /// Scenario 1: Switch to an already-painted tab (immediate switch, bring to front)
     private func switchToWebContentController(_ controller: WebContentViewController) {
@@ -666,20 +675,30 @@ class WebContentContainerViewController: NSViewController {
             addChild(controller)
         }
 
+        let controllerView = controller.view
+        prepareSharedBookmarkBarSlot(for: controller)
+
         // Add new view on top (old view stays underneath until cleanup)
-        if controller.view.superview !== contentContainer {
-            contentContainer.addSubview(controller.view)
-            controller.view.snp.remakeConstraints { make in
+        if controllerView.superview !== contentContainer {
+            contentContainer.addSubview(controllerView)
+            controllerView.snp.remakeConstraints { make in
                 make.edges.equalToSuperview()
             }
         } else {
             // If already in container, bring to front
-            contentContainer.addSubview(controller.view, positioned: .above, relativeTo: nil)
+            contentContainer.addSubview(controllerView, positioned: .above, relativeTo: nil)
         }
 
         attachSharedBookmarkBar(to: controller)
 
         currentWebContentController = controller
+        // Force a full layout sweep before reading splitViewContainer's frame.
+        // Otherwise — if the window was just resized (e.g. titlebar
+        // double-click zoom) and a layout pass is still pending — the convert
+        // chain (splitViewContainer → controller.view → contentContainer →
+        // self.view) returns a stale rect, and the path gets drawn at the
+        // previous size until the next viewDidLayout corrects it.
+        view.layoutSubtreeIfNeeded()
         updateContentOuterBorder()
 
         // Notify Chromium that view switch is complete, it can now hide the old WebContents
@@ -697,11 +716,14 @@ class WebContentContainerViewController: NSViewController {
             addChild(controller)
         }
 
+        let controllerView = controller.view
+        prepareSharedBookmarkBarSlot(for: controller)
+
         // Add new view BELOW the current view (old view stays on top and visible)
-        if controller.view.superview !== contentContainer {
+        if controllerView.superview !== contentContainer {
             // Insert at the bottom of the subview stack
-            contentContainer.addSubview(controller.view, positioned: .below, relativeTo: currentWebContentController?.view)
-            controller.view.snp.remakeConstraints { make in
+            contentContainer.addSubview(controllerView, positioned: .below, relativeTo: currentWebContentController?.view)
+            controllerView.snp.remakeConstraints { make in
                 make.edges.equalToSuperview()
             }
         }
@@ -898,6 +920,9 @@ class WebContentContainerViewController: NSViewController {
         // Update current controller and identifier
         currentWebContentController = pending.controller
         currentTabIdentifier = pending.identifier
+        // Same reason as switchToWebContentController: force layout so the
+        // splitViewContainer frame chain is fresh before computing the path.
+        view.layoutSubtreeIfNeeded()
         updateContentOuterBorder()
 
         // Clear pending state

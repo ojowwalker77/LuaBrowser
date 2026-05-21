@@ -104,6 +104,12 @@ extension WebContentContainerViewController {
             make.top.bottom.trailing.equalToSuperview()
         }
 
+        // Sit above `outerBorderLayer` (zPosition = contentOuterBorder) so the
+        // unified content-border stroke doesn't paint on top of the panel
+        // when it slides in over the web content.
+        interactionContainerView.wantsLayer = true
+        interactionContainerView.layer?.zPosition = WebContentContainerViewController.LayerZIndex.floatingSidebar
+
         view.addSubview(interactionContainerView, positioned: .above, relativeTo: nil)
         interactionContainerView.snp.makeConstraints { make in
             floatingSidebarLeadingConstraint = make.leading.equalToSuperview().offset(floatingSidebarHiddenLeading).constraint

@@ -17,7 +17,8 @@ class ExtensionManager: ObservableObject {
     }
     static let phiExtensionIds = ["pjlnhbfabokjejbhmgghmjiaknfhnima",
                                   "pjgdkljlcbjgedgeppodjijjphfcplno",
-                                  "fenmfiepnpdlhplemgijlimpbebebljo"]
+                                  "fenmfiepnpdlhplemgijlimpbebebljo",
+                                  "ickhcgejficcoofnjnnobadfdnfbilnm"]
     
     func extensionChanged(_ info: [[String: Any]]) {
         let mapped = info.compactMap { Extension(from: $0) }

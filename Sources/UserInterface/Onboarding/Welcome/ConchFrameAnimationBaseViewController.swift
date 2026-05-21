@@ -5,6 +5,12 @@
 
 import Cocoa
 
+private struct ConchAnimationColorValue: Equatable {
+    let hue: CGFloat
+    let saturation: CGFloat?
+    let brightness: CGFloat?
+}
+
 class ConchFrameAnimationBaseViewController: NSViewController {
     var imageNamagePrefix: String {
         get { "" }
@@ -48,8 +54,9 @@ class ConchFrameAnimationBaseViewController: NSViewController {
     private var hasPlayedPreAnimation = false
     
     private var loadedCount = 0
-    private var currentColorValue: CGFloat = 0.0
+    private var currentColorValue = ConchAnimationColorValue(hue: 0, saturation: nil, brightness: nil)
     private var isColoringInProgress = false
+    private var pendingColorValue: ConchAnimationColorValue?
     private let colorQueue = DispatchQueue(label: "com.phi.animationQueue", qos: .userInitiated)
     private let stateQueue = DispatchQueue(label: "com.phi.animationState", qos: .userInitiated)
     private var preloadWorkItem: DispatchWorkItem?
@@ -59,7 +66,7 @@ class ConchFrameAnimationBaseViewController: NSViewController {
     // MARK: - Gradient Cache
     private var cachedGradient: NSGradient?
     private var cachedStrip: CIImage?
-    private var cachedColorValue: CGFloat = -1.0
+    private var cachedColorValue = ConchAnimationColorValue(hue: -1, saturation: nil, brightness: nil)
     
     // MARK: - Animation
     private var displayLink: CVDisplayLink?
@@ -144,9 +151,9 @@ class ConchFrameAnimationBaseViewController: NSViewController {
         AppLogDebug("[PreAnim] loadPreAnimationImages - loaded \(loadedImages.count) frames, isPreAnimationLoaded: \(loadedImages.count > 0)")
         
         if let firstFrame = loadedImages.first {
-            let defaultColorValue: CGFloat = 180.0
+            let defaultColorValue = ConchAnimationColorValue(hue: 0.5, saturation: nil, brightness: nil)
             
-            let targetColor = interpolateColor(value: defaultColorValue)
+            let targetColor = interpolateColor(defaultColorValue)
             let colors = [NSColor.white, targetColor]
             let positions: [CGFloat] = [0.0, 0.1]
             
@@ -224,7 +231,10 @@ class ConchFrameAnimationBaseViewController: NSViewController {
                         
                         if shouldUpdate {
                             DispatchQueue.main.async { [weak self] in
-                                self?.updateImage()
+                                guard let self else { return }
+                                let colorValue = self.stateQueue.sync { self.currentColorValue }
+                                self.colorAllImagesAsync(colorValue: colorValue)
+                                self.updateImage()
                             }
                         }
                     } else {
@@ -357,13 +367,18 @@ class ConchFrameAnimationBaseViewController: NSViewController {
             self.updateImage()
         }
     }
-    func colorSliderChanged(_ value: CGFloat) {
+    func themChanged(h: CGFloat, s: CGFloat? = nil, b: CGFloat? = nil) {
         guard !isTornDownFlag() else { return }
+        let colorValue = ConchAnimationColorValue(
+            hue: min(max(h, 0), 1),
+            saturation: s.map { min(max($0, 0), 1) },
+            brightness: b.map { min(max($0, 0), 1) }
+        )
         stateQueue.sync {
-            currentColorValue = value
+            currentColorValue = colorValue
         }
         
-        // Only play the pre-animation on the first slider change after preload.
+        // Only play the pre-animation on the first theme change after preload.
         let (shouldPlay, debugInfo) = stateQueue.sync { () -> (Bool, String) in
             let info = "isFirstSliderChange: \(isFirstSliderChange), isPreAnimationLoaded: \(isPreAnimationLoaded), hasPlayedPreAnimation: \(hasPlayedPreAnimation)"
             guard isFirstSliderChange, isPreAnimationLoaded, !hasPlayedPreAnimation else { return (false, info) }
@@ -372,24 +387,24 @@ class ConchFrameAnimationBaseViewController: NSViewController {
             return (true, info)
         }
         
-        AppLogDebug("[PreAnim] colorSliderChanged - value: \(value), shouldPlayPreAnimation: \(shouldPlay), \(debugInfo)")
+        AppLogDebug("[PreAnim] themChanged - h: \(colorValue.hue), s: \(String(describing: colorValue.saturation)), b: \(String(describing: colorValue.brightness)), shouldPlayPreAnimation: \(shouldPlay), \(debugInfo)")
         
         if shouldPlay {
-            // Colorize and play the pre-animation on the first slider change.
-            colorAndPlayPreAnimation(colorValue: value)
+            // Colorize and play the pre-animation on the first theme change.
+            colorAndPlayPreAnimation(colorValue: colorValue)
         }
         
         // Update the center image first so feedback feels immediate.
-        colorCenterImageFirst(colorValue: value)
+        colorCenterImageFirst(colorValue: colorValue)
         
         // Color the remaining frames asynchronously.
-        colorAllImagesAsync(colorValue: value)
+        colorAllImagesAsync(colorValue: colorValue)
     }
     
     // MARK: - Pre-Animation Coloring & Playback
     
     /// Colorizes the pre-animation frames and starts playback.
-    private func colorAndPlayPreAnimation(colorValue: CGFloat) {
+    private func colorAndPlayPreAnimation(colorValue: ConchAnimationColorValue) {
         guard !isTornDownFlag() else {
             AppLogDebug("[PreAnim] colorAndPlayPreAnimation - isTornDown, skip")
             return
@@ -531,7 +546,7 @@ class ConchFrameAnimationBaseViewController: NSViewController {
     }
     
     
-    func colorCenterImageFirst(colorValue: CGFloat) {
+    private func colorCenterImageFirst(colorValue: ConchAnimationColorValue) {
         guard !isTornDownFlag() else { return }
         guard let originalImage = image(atRow: centerY, col: centerX) else { return }
         
@@ -561,10 +576,15 @@ class ConchFrameAnimationBaseViewController: NSViewController {
         
     }
     
-    private func colorAllImagesAsync(colorValue: CGFloat) {
+    private func colorAllImagesAsync(colorValue: ConchAnimationColorValue) {
         let shouldStart = stateQueue.sync { () -> Bool in
-            guard !isTornDown, !isColoringInProgress else { return false }
+            guard !isTornDown else { return false }
+            guard !isColoringInProgress else {
+                pendingColorValue = colorValue
+                return false
+            }
             isColoringInProgress = true
+            pendingColorValue = nil
             return true
         }
         guard shouldStart else { return }
@@ -577,9 +597,7 @@ class ConchFrameAnimationBaseViewController: NSViewController {
             
             guard let strip = self.stateQueue.sync(execute: { self.cachedStrip }) else {
                 DispatchQueue.main.async {
-                    self.stateQueue.sync {
-                        self.isColoringInProgress = false
-                    }
+                    self.finishColoringPass()
                 }
                 return
             }
@@ -591,13 +609,11 @@ class ConchFrameAnimationBaseViewController: NSViewController {
                 if self.colorWorkItem?.isCancelled == true || self.isTornDownFlag() {
                     break
                 }
-                // Abort if a new slider value superseded this work item.
+                // Abort if a new theme value superseded this work item.
                 let isColorUnchanged = self.stateQueue.sync { self.currentColorValue == capturedColorValue }
                 guard isColorUnchanged else {
                     DispatchQueue.main.async {
-                        self.stateQueue.sync {
-                            self.isColoringInProgress = false
-                        }
+                        self.finishColoringPass()
                     }
                     return
                 }
@@ -617,13 +633,26 @@ class ConchFrameAnimationBaseViewController: NSViewController {
             }
             
             DispatchQueue.main.async {
-                self.stateQueue.sync {
-                    self.isColoringInProgress = false
-                }
+                self.finishColoringPass()
             }
         }
         colorWorkItem = workItem
         colorQueue.async(execute: workItem)
+    }
+    
+    private func finishColoringPass() {
+        let nextColorValue = stateQueue.sync { () -> ConchAnimationColorValue? in
+            isColoringInProgress = false
+            let value = pendingColorValue
+            pendingColorValue = nil
+            return value
+        }
+        
+        if let nextColorValue {
+            colorAllImagesAsync(colorValue: nextColorValue)
+        } else {
+            updateImage()
+        }
     }
 
     private func isValidIndex(row: Int, col: Int, in matrix: [[NSImage?]]) -> Bool {
@@ -651,12 +680,12 @@ class ConchFrameAnimationBaseViewController: NSViewController {
         }
     }
     
-    private func updateGradientCache(colorValue: CGFloat) {
-        // Reuse the cached gradient when the slider value is unchanged.
-        let needsUpdate = stateQueue.sync { !isTornDown && abs(colorValue - cachedColorValue) > 0.001 }
+    private func updateGradientCache(colorValue: ConchAnimationColorValue) {
+        // Reuse the cached gradient when the theme color is unchanged.
+        let needsUpdate = stateQueue.sync { !isTornDown && colorValue != cachedColorValue }
         guard needsUpdate else { return }
         
-        let targetColor = interpolateColor(value: colorValue)
+        let targetColor = interpolateColor(colorValue)
         let color0 = NSColor.white
         let colors = [color0, targetColor]
         let positions: [CGFloat] = [0.0, 0.1]
@@ -697,10 +726,10 @@ class ConchFrameAnimationBaseViewController: NSViewController {
         return result
     }
     
-    private func interpolateColor(value: CGFloat) -> NSColor {
-        let hue = value / 360.0
-        let saturation: CGFloat = 0.85
-        let brightness: CGFloat = 0.75
+    private func interpolateColor(_ colorValue: ConchAnimationColorValue) -> NSColor {
+        let hue = min(max(colorValue.hue, 0), 1)
+        let saturation = colorValue.saturation ?? 0.85
+        let brightness = colorValue.brightness ?? 0.75
         return NSColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1.0)
     }
 

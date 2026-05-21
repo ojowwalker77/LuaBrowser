@@ -128,9 +128,9 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         // Profile card on the left
         view.addSubview(profileCardView)
         profileCardView.snp.makeConstraints { make in
-            make.left.equalToSuperview().offset(36)
+            make.left.equalToSuperview().offset(24)  // 36 - 12(inner padding for shadow)
             make.top.equalToSuperview().offset(36)
-            make.width.equalTo(240)
+            make.width.equalTo(264)
         }
 
         // Right side container
@@ -138,7 +138,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         view.addSubview(rightContainer)
 
         rightContainer.snp.makeConstraints { make in
-            make.left.equalTo(profileCardView.snp.right).offset(16)
+            make.left.equalTo(profileCardView.snp.right).offset(4)
             make.top.equalToSuperview().offset(36)
             make.right.equalToSuperview().offset(-36)
             make.bottom.lessThanOrEqualToSuperview().offset(-36)
@@ -534,7 +534,17 @@ class ShareViewModel: ObservableObject {
 // MARK: - Profile Card View
 
 class ProfileCardView: NSView {
+    private enum Metrics {
+        static let cardWidth: CGFloat = 240
+        static let cardHeight: CGFloat = 380
+        /// Extra padding around the card so the drop shadow has room to render
+        /// instead of being clipped by the surrounding layout.
+        static let shadowPadding: CGFloat = 10
+    }
+    
     private let cardImageView = NSImageView()
+    private let cardContainerView = NSView()
+    private let shadowLayer = CALayer()
     private lazy var downloadButton = NSButton(title: "", target: self, action: #selector(downloadProfileImage))
     private let profileCardViewController = ProfileCardViewController()
     var userInfo: Profile? {
@@ -555,14 +565,40 @@ class ProfileCardView: NSView {
 
     private func setupUI() {
         wantsLayer = true
+        layer?.masksToBounds = false
+
+        shadowLayer.backgroundColor = NSColor.white.cgColor
+        shadowLayer.cornerRadius = 8
+        shadowLayer.masksToBounds = false
+        shadowLayer.shadowColor = NSColor.black.cgColor
+        shadowLayer.shadowOpacity = 0.15
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -3)
+        shadowLayer.shadowRadius = 6
+        layer?.addSublayer(shadowLayer)
+
+        cardContainerView.wantsLayer = true
+        cardContainerView.layer?.cornerRadius = 8
+        cardContainerView.layer?.borderWidth = 1
+        cardContainerView.layer?.masksToBounds = true
+        cardContainerView.phiLayer?.setBorderColor(Mapper<CGColor>(
+            NSColor(white: 0, alpha: 0.13).cgColor,
+            NSColor(white: 1, alpha: 0.22).cgColor
+        ))
         
-        addSubview(profileCardViewController.view)
-        profileCardViewController.view.snp.makeConstraints { make in
-            make.top.left.right.equalToSuperview()
-            make.height.equalTo(380)
+        addSubview(cardContainerView)
+        cardContainerView.snp.makeConstraints { make in
+            make.top.equalToSuperview()
+            make.centerX.equalToSuperview()
+            make.width.equalTo(Metrics.cardWidth)
+            make.height.equalTo(Metrics.cardHeight)
         }
 
-        downloadButton.title = NSLocalizedString("Download images", comment: "Account settings - Button to download profile card as image")
+        cardContainerView.addSubview(profileCardViewController.view)
+        profileCardViewController.view.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        downloadButton.title = NSLocalizedString("Download image", comment: "Account settings - Button to download profile card as image")
         downloadButton.bezelStyle = .rounded
         downloadButton.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
         downloadButton.imagePosition = .imageLeading
@@ -570,9 +606,23 @@ class ProfileCardView: NSView {
 
         downloadButton.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
-            make.top.equalTo(profileCardViewController.view.snp.bottom).offset(10)
+            make.top.equalTo(cardContainerView.snp.bottom).offset(Metrics.shadowPadding + 4)
             make.bottom.equalToSuperview()
         }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shadowLayer.frame = cardContainerView.frame
+        shadowLayer.shadowPath = CGPath(
+            roundedRect: shadowLayer.bounds,
+            cornerWidth: 8,
+            cornerHeight: 8,
+            transform: nil
+        )
+        CATransaction.commit()
     }
     
     @objc private func downloadProfileImage() {
@@ -854,6 +904,8 @@ class AccountCardView: SettingItemBackgroundView {
         // Logout button (right side)
         logoutButton.target = self
         logoutButton.action = #selector(logoutTapped)
+        logoutButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        logoutButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(logoutButton)
         logoutButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
@@ -878,12 +930,14 @@ class AccountCardView: SettingItemBackgroundView {
 
         // Name label + edit icon
         nameHoverArea.addSubview(nameLabel)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameLabel.snp.makeConstraints { make in
             make.left.equalToSuperview().offset(12)
             make.bottom.equalToSuperview().offset(-2)
         }
 
         nameHoverArea.addSubview(nameEditIconButton)
+        nameEditIconButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         nameEditIconButton.target = self
         nameEditIconButton.action = #selector(nameEditTapped)
         nameEditIconButton.snp.makeConstraints { make in
@@ -895,6 +949,7 @@ class AccountCardView: SettingItemBackgroundView {
 
         // Email label
         addSubview(emailLabel)
+        emailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         emailLabel.snp.makeConstraints { make in
             make.left.equalTo(avatarContainerView.snp.right).offset(12)
             make.top.equalTo(snp.centerY).offset(2)
@@ -902,6 +957,7 @@ class AccountCardView: SettingItemBackgroundView {
         }
 
         addSubview(reauthenticationWarningLabel)
+        reauthenticationWarningLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         reauthenticationWarningLabel.snp.makeConstraints { make in
             make.left.equalTo(emailLabel)
             make.top.equalTo(emailLabel.snp.bottom).offset(2)

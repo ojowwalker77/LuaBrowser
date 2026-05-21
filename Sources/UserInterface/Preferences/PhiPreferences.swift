@@ -108,8 +108,8 @@ extension PhiPreferences {
     }
     
     enum AISettings: String, CaseIterable {
-        case phiAIEnabled, enableConnectors, enableConnectorContext , enableChatWithTabs, enableBrowserMemories, launchSentinelOnLogin
-        
+        case phiAIEnabled, enableConnectors, enableConnectorContext , enableChatWithTabs, enableBrowserMemories, launchSentinelOnLogin, enableProactiveSuggestionsOnNTP
+
         var defaultValue: Bool {
             switch self {
             case .phiAIEnabled:
@@ -123,6 +123,8 @@ extension PhiPreferences {
             case .enableBrowserMemories:
                 return true
             case .launchSentinelOnLogin:
+                return true
+            case .enableProactiveSuggestionsOnNTP:
                 return true
             }
         }
@@ -150,6 +152,8 @@ extension PhiPreferences {
         case userAppearanceChoice = "PhiUserAppearanceChoice"
         /// Current theme identifier.
         case currentThemeId = "PhiCurrentThemeId"
+        /// Archived snapshots for themes customized by the user.
+        case themeSnapshots = "PhiThemeSnapshots"
         
         var defaultValue: Any {
             switch self {
@@ -157,6 +161,8 @@ extension PhiPreferences {
                 return 0  // .system
             case .currentThemeId:
                 return "default"
+            case .themeSnapshots:
+                return Data()
             }
         }
         

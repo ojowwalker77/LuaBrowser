@@ -7,6 +7,20 @@ import Cocoa
 import Combine
 import QuartzCore
 
+/// Full-screen root for the omnibox overlay. Outside the omnibox panel it dismisses the overlay
+/// and forwards the click to views below so controls (e.g. buttons) still activate.
+private final class OmniBoxContainerRootView: NSView {
+    weak var controller: OmniBoxContainerViewController?
+
+    override func mouseDown(with event: NSEvent) {
+        guard let controller else {
+            super.mouseDown(with: event)
+            return
+        }
+        controller.handleBackgroundMouseDown(event)
+    }
+}
+
 final class OmniBoxContainerViewController: NSViewController {
     private(set) var omniBoxController: OmniBoxViewController?
     private var cancellables = Set<AnyCancellable>()
@@ -31,7 +45,7 @@ final class OmniBoxContainerViewController: NSViewController {
         omniBoxController?.setActionDelegate(self)
         
         superView?.mouseDown = { [weak self] event in
-            self?.superViewClicked(event)
+            self?.handleBackgroundMouseDown(event)
         }
     }
     
@@ -40,7 +54,9 @@ final class OmniBoxContainerViewController: NSViewController {
     }
     
     override func loadView() {
-        view = NSView()
+        let root = OmniBoxContainerRootView()
+        root.controller = self
+        view = root
         view.wantsLayer = true
         view.postsFrameChangedNotifications = true
     }
@@ -88,21 +104,73 @@ final class OmniBoxContainerViewController: NSViewController {
             }
     }
     
-    private func superViewClicked(_ event: NSEvent) {
+    fileprivate func handleBackgroundMouseDown(_ event: NSEvent) {
         guard let omniBoxView = omniBoxController?.view else { return }
-        
-        guard let superview = view.superview else { return }
-        let clickLocation = event.locationInWindow
-        let clickPointInSuperview = superview.convert(clickLocation, from: nil)
-        
-        let clickPointInView = view.convert(clickLocation, from: nil)
-        
-        let omniBoxFrameInView = omniBoxView.frame
-        let isClickInsideOmniBox = omniBoxFrameInView.contains(clickPointInView)
-        
-        if !isClickInsideOmniBox {
+
+        let clickPointInRoot = view.convert(event.locationInWindow, from: nil)
+        let omniBoxFrameInRoot = omniBoxView.frame
+        guard !omniBoxFrameInRoot.contains(clickPointInRoot) else { return }
+
+        let locationInWindow = event.locationInWindow
+        guard let window = event.window else {
             hideOmniBox()
+            return
         }
+
+        hideOmniBox()
+
+        DispatchQueue.main.async { [weak window] in
+            guard let window else { return }
+            Self.forwardFirstClickToUnderlyingContent(
+                at: locationInWindow,
+                in: window,
+                originalEvent: event
+            )
+        }
+    }
+
+    /// After the overlay is removed from the window, replay the click through the window so
+    /// AppKit performs normal hit testing and tracking (native buttons, embedded views, etc.).
+    /// `NSControl.performClick` and direct `mouseDown`/`mouseUp` on a pre-hit-tested view are
+    /// unreliable here (e.g. async delivery vs `currentEvent` / control tracking).
+    private static func forwardFirstClickToUnderlyingContent(
+        at locationInWindow: NSPoint,
+        in window: NSWindow,
+        originalEvent: NSEvent
+    ) {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        let windowNumber = window.windowNumber
+        let flags = originalEvent.modifierFlags
+        let clickCount = originalEvent.clickCount
+        let eventNumber = originalEvent.eventNumber
+        let pressureDown = originalEvent.pressure
+
+        guard let mouseDown = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: locationInWindow,
+            modifierFlags: flags,
+            timestamp: timestamp,
+            windowNumber: windowNumber,
+            context: nil,
+            eventNumber: eventNumber,
+            clickCount: clickCount,
+            pressure: pressureDown
+        ) else { return }
+
+        guard let mouseUp = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: locationInWindow,
+            modifierFlags: flags,
+            timestamp: timestamp + 0.02,
+            windowNumber: windowNumber,
+            context: nil,
+            eventNumber: eventNumber,
+            clickCount: clickCount,
+            pressure: 0.0
+        ) else { return }
+
+        window.sendEvent(mouseDown)
+        window.sendEvent(mouseUp)
     }
     
     
