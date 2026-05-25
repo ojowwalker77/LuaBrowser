@@ -317,6 +317,7 @@ class WebContentContainerViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateLayoutForMode()
+                self?.updateContentOuterBorder()
             }
             .store(in: &cancellables)
 
