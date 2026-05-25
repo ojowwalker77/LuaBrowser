@@ -107,9 +107,150 @@ extension NSView {
     }
 }
 
+// MARK: - Tab Hover Region
+
+/// Transparent overlay that owns hover tracking for sidebar tabs.
+/// NSHostingView sits underneath and does not reliably deliver parent tracking-area events.
+private final class SidebarTabHoverRegionView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    weak var mouseEventForwardTarget: NSView?
+
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+        syncHoverStateForCurrentMouseLocation()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHoverChanged?(false)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    private func forwardMouseEvent(_ event: NSEvent) {
+        guard let mouseEventForwardTarget,
+              let window = mouseEventForwardTarget.window else {
+            return
+        }
+        let point = mouseEventForwardTarget.convert(event.locationInWindow, from: nil)
+        guard mouseEventForwardTarget.bounds.contains(point) else { return }
+        switch event.type {
+        case .leftMouseDown:
+            mouseEventForwardTarget.mouseDown(with: event)
+        case .leftMouseUp:
+            mouseEventForwardTarget.mouseUp(with: event)
+        case .rightMouseDown:
+            mouseEventForwardTarget.rightMouseDown(with: event)
+        default:
+            break
+        }
+    }
+
+    private func syncHoverStateForCurrentMouseLocation() {
+        guard let window else {
+            onHoverChanged?(false)
+            return
+        }
+        let screenPoint = NSEvent.mouseLocation
+        let screenRect = CGRect(x: screenPoint.x, y: screenPoint.y, width: 1, height: 1)
+        let windowPoint = window.convertFromScreen(screenRect).origin
+        let point = convert(windowPoint, from: nil)
+        onHoverChanged?(bounds.contains(point))
+    }
+}
+
+/// Clears tab hover when the cursor is in the trailing strip beside the split divider.
+private final class SidebarTabHoverDeadZoneView: NSView {
+    var onEntered: (() -> Void)?
+    weak var mouseEventForwardTarget: NSView?
+
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onEntered?()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        forwardMouseEvent(event)
+    }
+
+    private func forwardMouseEvent(_ event: NSEvent) {
+        guard let mouseEventForwardTarget,
+              let window = mouseEventForwardTarget.window else {
+            return
+        }
+        let point = mouseEventForwardTarget.convert(event.locationInWindow, from: nil)
+        guard mouseEventForwardTarget.bounds.contains(point) else { return }
+        switch event.type {
+        case .leftMouseDown:
+            mouseEventForwardTarget.mouseDown(with: event)
+        case .leftMouseUp:
+            mouseEventForwardTarget.mouseUp(with: event)
+        case .rightMouseDown:
+            mouseEventForwardTarget.rightMouseDown(with: event)
+        default:
+            break
+        }
+    }
+}
+
 // MARK: - Tab Cell View (reused from existing)
 class SidebarTabCellView: SidebarCellView {
     private var hostingView: ThemedHostingView!
+    private let hoverRegionView = SidebarTabHoverRegionView()
+    private let hoverDeadZoneView = SidebarTabHoverDeadZoneView()
     private let viewModel = TabViewModel()
     weak var delegate: TabCellDelegate?
     
@@ -160,6 +301,27 @@ class SidebarTabCellView: SidebarCellView {
         hostingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        hoverRegionView.mouseEventForwardTarget = hostingView
+        hoverRegionView.onHoverChanged = { [weak self] isHovered in
+            self?.viewModel.isHovered = isHovered
+        }
+        addSubview(hoverRegionView)
+        hoverRegionView.snp.makeConstraints { make in
+            make.leading.top.bottom.equalToSuperview()
+            make.trailing.equalToSuperview().inset(SideTabView.trailingHoverDeadZoneWidth)
+        }
+
+        hoverDeadZoneView.mouseEventForwardTarget = hostingView
+        hoverDeadZoneView.onEntered = { [weak self] in
+            self?.viewModel.isHovered = false
+        }
+        addSubview(hoverDeadZoneView)
+        hoverDeadZoneView.snp.makeConstraints { make in
+            make.top.bottom.trailing.equalToSuperview()
+            make.width.equalTo(SideTabView.trailingHoverDeadZoneWidth)
+        }
+
         setupPressAnimation()
     }
     
@@ -189,7 +351,7 @@ class SidebarTabCellView: SidebarCellView {
         guard let tab = item as? Tab else { return }
         delegate?.tabCellDidRequestClose(tab)
     }
-    
+
     override func configureAppearance() {
         guard let tab = item as? Tab else { return }
         cancellables.forEach { $0.cancel() }
