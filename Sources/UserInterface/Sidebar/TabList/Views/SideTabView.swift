@@ -8,6 +8,8 @@ import AppKit
 // MARK: - SideTabView
 
 struct SideTabView: View {
+    static let trailingHoverDeadZoneWidth: CGFloat = 6
+
     var model: TabViewModel
     var onClose: (() -> Void)? = nil
 
@@ -32,7 +34,6 @@ struct SideTabView: View {
             UnifiedTabFaviconView(viewModel: model)
                 .frame(width: 16, height: 16)
 
-            // Media Indicators
             if model.isCurrentlyAudible || model.isAudioMuted {
                 UnifiedTabMuteButton(viewModel: model)
             }
