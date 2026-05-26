@@ -28,7 +28,7 @@ class PinnedTabLayout: NSCollectionViewLayout {
     }
 
     private enum Constants {
-        static let spacing: CGFloat = 4
+        static let spacing: CGFloat = 8
         static let insets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         static let tabHeight: CGFloat = 45
         static let extensionHeight: CGFloat = 28

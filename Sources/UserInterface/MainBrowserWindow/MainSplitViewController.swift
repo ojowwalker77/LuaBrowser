@@ -6,7 +6,7 @@
 import Cocoa
 import Combine
 class MainSplitViewController: NSViewController {
-    static let leftItemMinWidth: CGFloat = 185
+    static let leftItemMinWidth: CGFloat = 193
     static let leftItemMaxWidth: CGFloat = 500
     
     private let splitViewController = NSSplitViewController()
