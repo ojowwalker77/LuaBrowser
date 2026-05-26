@@ -43,7 +43,9 @@ import PostHog
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var pendingColdOpenForwardURLs: [URL] = []
     private var pendingOpenURLsAwaitingLoginStatus: [URL] = []
-    
+    /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
+    private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
+
     override init() {
         super.init()
         Self.shared = self
@@ -93,6 +95,8 @@ import PostHog
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        bindChromiumBridgeIfNeeded()
+
         // Register defaults before any settings are read.
         UserDefaultsRegistration.registerDefaults()
         
@@ -126,7 +130,7 @@ import PostHog
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }
 
-        ChromiumLauncher.sharedInstance().bridge?.applicationWillFinishLaunching(notification)
+        chromiumBridge?.applicationWillFinishLaunching(notification)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -134,7 +138,12 @@ import PostHog
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
         MemoryUsageMonitor.shared.stop()
-        ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
+        if let chromiumBridge {
+            chromiumBridge.applicationWillTerminate(notification)
+        } else {
+            AppLogWarn("[AppController] applicationWillTerminate: chromium bridge not cached; using launcher fallback")
+            ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
+        }
     }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -256,6 +265,12 @@ import PostHog
     @objc private func loginCompleted(_ notification: Notification) {
         Task { @MainActor in
             self.flushPendingOpenURLsAwaitingLoginStatus()
+        }
+    }
+
+    private func bindChromiumBridgeIfNeeded() {
+        if chromiumBridge == nil {
+            chromiumBridge = ChromiumLauncher.sharedInstance().bridge
         }
     }
 
