@@ -62,9 +62,7 @@ import Countly
         setupKinfisherCache()
         
         SentryService.setup()
-        if let account = AccountController.shared.account {
-            SentryService.configureUser(account)
-        }
+        
         MemoryUsageMonitor.shared.start()
         
         DefaultExtensionManifestWriter.start()

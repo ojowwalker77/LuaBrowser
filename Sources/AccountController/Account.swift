@@ -18,6 +18,8 @@ class Account {
         if let userInfo {
             EventTracker.updateUserProfile(userInfo)
         }
+        
+        SentryService.configureUser(self)
     }
     
     var userDataStorage: URL {
