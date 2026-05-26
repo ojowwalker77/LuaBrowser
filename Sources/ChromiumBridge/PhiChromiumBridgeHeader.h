@@ -250,6 +250,30 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                                       payload:(NSString *)payload
                                     requestId:(NSString *)requestId
                                       senderId:(NSString *)senderId;
+
+// ==========================================================================
+// Placeholder mode (Chromium → Mac notification)
+// ==========================================================================
+
+/// Window entered placeholder mode: the TabStripModel just became empty and
+/// the Browser is showing an out-of-band `chrome://dino` WebContents.
+/// Mac must:
+///   1. Attach wrapper.nativeView to the content area.
+///   2. Set BrowserState.isInPlaceholderMode = true (UI bindings respond).
+///   3. Retain wrapper for the duration of placeholder mode.
+/// @param windowId The window's session id.
+/// @param wrapper The WebContentWrapper for the placeholder WebContents.
+- (void)windowDidEnterPlaceholderMode:(int64_t)windowId
+                      placeholderView:(id<WebContentWrapper>)wrapper;
+
+/// Window exited placeholder mode: a real tab was inserted into TabStripModel.
+/// Mac must SYNCHRONOUSLY before returning:
+///   1. Detach the placeholder NSView from the view hierarchy.
+///   2. Release the wrapper (lifetime owned by Chromium; nativeView dies on return).
+///   3. Set BrowserState.isInPlaceholderMode = false.
+/// A subsequent newTabCreatedWithInfo + activeTabChanged provides the new tab.
+/// @param windowId The window's session id.
+- (void)windowDidExitPlaceholderMode:(int64_t)windowId;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>

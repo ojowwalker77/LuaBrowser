@@ -101,7 +101,8 @@ class AIChatViewController: NSViewController {
     
     /// Switches to or creates the AI Chat tab for the current focused tab.
     private func handleFocusingTabChanged(_ focusingTab: Tab?) {
-        guard let focusingTab else { return }
+        guard let focusingTab,
+              state.isInPlaceholderMode == false else { return }
 
         let identifier = state.getTabIdentifier(for: focusingTab)
         guard identifier != currentIdentifier else { return }

@@ -66,7 +66,7 @@ struct WebContentHeaderView: View {
 
             HStack(spacing: 0) {
                 leadingButtons
-                    .padding(.leading, 16)
+                    .padding(.leading, state.isInPlaceholderMode ? 8 : 16)
 
                 if state.showAddressBar {
                     WebContentAddressBarView(
@@ -93,6 +93,7 @@ struct WebContentHeaderView: View {
                     showMemory: state.showMemoryButton,
                     showFeedback: state.showFeedbackButton,
                     showChat: state.showChatButton,
+                    isInPlaceholderMode: state.isInPlaceholderMode,
                     extensionManager: browserState?.extensionManager,
                     browserState: browserState,
                     downloadViewModel: downloadViewModel,
@@ -123,7 +124,8 @@ struct WebContentHeaderView: View {
         let buttonsWidth: CGFloat = count > 0
             ? CGFloat(count) * 24 + CGFloat(count - 1) * 8
             : 0
-        return 16 + buttonsWidth
+        let leadingPadding: CGFloat = state.isInPlaceholderMode ? 8 : 16
+        return leadingPadding + buttonsWidth
     }
 
     /// Minimum width reserved for the address bar so trailing area doesn't over-expand

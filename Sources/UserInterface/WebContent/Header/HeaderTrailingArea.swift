@@ -87,6 +87,7 @@ struct HeaderTrailingArea: View {
     let showMemory: Bool
     let showFeedback: Bool
     let showChat: Bool
+    let isInPlaceholderMode: Bool
 
     let extensionManager: ExtensionManager?
     let browserState: BrowserState?
@@ -225,7 +226,9 @@ struct HeaderTrailingArea: View {
         moreItems: [MoreMenuItem]
     ) -> some View {
         HStack(alignment: .center, spacing: 0) {
-            extensionArea(pinned: pinned)
+            if !isInPlaceholderMode {
+                extensionArea(pinned: pinned)
+            }
 
             if memory {
                 MemoryButton(action: onMemoryTap, useCircularHoverShape: true)

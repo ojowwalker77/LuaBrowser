@@ -402,6 +402,49 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
 
     // =========================================================================
+    // Placeholder mode (last-tab close → chrome://dino shell)
+    //
+    // Mirrors the Chromium-side bridge in
+    // chrome/browser/phinomenon/phi_app_bridge/PhiChromiumBridgeHeader.h.
+    // The synchronous detach contract (spec §9.1) requires the BrowserState
+    // state flip + NSView detach to complete BEFORE returning to Chromium,
+    // hence MainActor.assumeIsolated rather than Task { @MainActor in ... }.
+    // =========================================================================
+
+    func windowDidEnterPlaceholderMode(_ windowId: Int64,
+                                       placeholderView wrapper: any WebContentWrapper) {
+        AppLogInfo("🦖 [Coordinator] enterPlaceholderMode windowId=\(windowId)")
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
+            return
+        }
+        guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
+            AppLogWarn("🦖 [Coordinator] wrapper cast failed")
+            return
+        }
+        // Synchronous (NOT Task { @MainActor in ... }) so state flips before
+        // returning to Chromium.
+        MainActor.assumeIsolated {
+            windowController.browserState.enterPlaceholderMode(wrapper: nsWrapper)
+        }
+    }
+
+    func windowDidExitPlaceholderMode(_ windowId: Int64) {
+        AppLogInfo("🦖 [Coordinator] exitPlaceholderMode windowId=\(windowId)")
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
+            return
+        }
+        MainActor.assumeIsolated {
+            windowController.browserState.exitPlaceholderMode()
+        }
+    }
+
+    // =========================================================================
     // Tab groups (Chromium → Mac)
     //
     // Forwards all 5 bridge callbacks through EventBus, matching the

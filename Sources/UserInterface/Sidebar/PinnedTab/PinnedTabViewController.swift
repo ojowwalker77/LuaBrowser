@@ -283,13 +283,16 @@ class PinnedTabViewController: NSViewController {
             .store(in: &cancellables)
         
         browserState.extensionManager.$pinedExtensions
-            .combineLatest(browserState.extensionManager.$shouldDisplayExtensionsWithinSidebar.removeDuplicates())
+            .combineLatest(
+                browserState.extensionManager.$shouldDisplayExtensionsWithinSidebar.removeDuplicates(),
+                browserState.$isInPlaceholderMode.removeDuplicates()
+            )
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] extensions, show in
-                if show {
-                    self?.handlePinnedExtensionsUpdate(extensions)
-                } else {
+            .sink { [weak self] extensions, show, isPlaceholder in
+                if isPlaceholder || !show {
                     self?.handlePinnedExtensionsUpdate([])
+                } else {
+                    self?.handlePinnedExtensionsUpdate(extensions)
                 }
             }
             .store(in: &cancellables)
@@ -308,6 +311,7 @@ class PinnedTabViewController: NSViewController {
         guard let browserState else { return }
         pinnedTabs = browserState.pinnedTabs
         let showExtensions = browserState.extensionManager.shouldDisplayExtensionsWithinSidebar
+            && !browserState.isInPlaceholderMode
         let extensions = showExtensions ? browserState.extensionManager.pinedExtensions : []
         pinnedExtensionItems = extensions.map {
             PinnedTabItemModel(id: $0.id, title: $0.name, icon: $0.icon, tooltip: $0.name)

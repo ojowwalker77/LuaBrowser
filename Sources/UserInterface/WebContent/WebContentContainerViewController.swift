@@ -24,12 +24,24 @@ class WebContentContainerViewController: NSViewController {
     /// Currently displayed WebContentViewController
     private weak var currentWebContentController: WebContentViewController?
 
+    /// Owned by this controller while in placeholder mode; released on exit.
+    /// Mutually exclusive with the active tab's WCVC (only one is visible
+    /// in contentContainer at a time).
+    private var placeholderShell: PlaceholderShellViewController?
+
     /// Shared bookmark bar owned once per window and moved between controllers.
     private var sharedBookmarkBar: BookmarkBar?
     /// Current host for the shared bookmark bar.
     private weak var sharedBookmarkBarHostController: WebContentViewController?
 
-    var addressBarAnchorView: NSView? { currentWebContentController?.addressBarAnchorView }
+    var addressBarAnchorView: NSView? {
+        // In placeholder mode the shell owns the anchor — needed for the
+        // omnibox popup when invoked via cmd+L.
+        if let shell = placeholderShell {
+            return shell.addressBarAnchorView
+        }
+        return currentWebContentController?.addressBarAnchorView
+    }
 
     // =========================================================================
     // Tab switch
@@ -341,6 +353,25 @@ class WebContentContainerViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tabs in
                 self?.handleTabsChanged(tabs)
+            }
+            .store(in: &cancellables)
+
+        // Placeholder mode attach/detach.
+        //
+        // SYNCHRONOUS by design (no `.receive(on:)`, no `Task { @MainActor }`).
+        // See spec §9.1: the UAF contract requires the NSView to be detached
+        // from the AppKit hierarchy before `exitPlaceholderMode` returns to
+        // Chromium, which then resets `placeholder_web_contents_` and destroys
+        // the underlying NSView. Any async hop here would dangle.
+        browserState?.$isInPlaceholderMode
+            .removeDuplicates()
+            .sink { [weak self] isPlaceholder in
+                guard let self else { return }
+                if isPlaceholder {
+                    self.attachPlaceholderShell()
+                } else {
+                    self.detachPlaceholderShell()
+                }
             }
             .store(in: &cancellables)
 
@@ -848,6 +879,65 @@ class WebContentContainerViewController: NSViewController {
         controller.updateBookmarkBarVisibility(bookmarkCount: bookmarkBar.bookmarkCount)
     }
     
+    // MARK: - Placeholder Shell
+
+    /// Mount the placeholder shell inside `contentContainer` and ask it to
+    /// host the placeholder WebContents NSView. Idempotent: re-mounts the
+    /// nativeView on the existing shell if one is already attached.
+    @MainActor
+    private func attachPlaceholderShell() {
+        guard let wrapper = browserState?.placeholderWrapper,
+              let nativeView = wrapper.nativeView else {
+            AppLogWarn("🦖 [Container] attachPlaceholderShell: no wrapper/nativeView")
+            return
+        }
+
+        let shell: PlaceholderShellViewController
+        if let existing = placeholderShell {
+            shell = existing
+        } else {
+            shell = PlaceholderShellViewController(browserState: browserState)
+            addChild(shell)
+            contentContainer.addSubview(shell.view)
+            shell.view.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            placeholderShell = shell
+        }
+        shell.mountPlaceholderNativeView(nativeView)
+
+        // Focus the placeholder so the user can immediately press Space to
+        // start the dino game without first clicking the canvas.
+        // Two-step focus matches WebContentViewController.focusWebContent:
+        //   1. Cocoa-level: window.makeFirstResponder routes Cocoa events.
+        //   2. Chromium-level: wrapper.focus() routes Chromium's internal
+        //      focus tracker so the renderer receives keystrokes. Without
+        //      it, makeFirstResponder alone may leave the renderer in a
+        //      "not focused" state and keyDown events go nowhere.
+        // wrapper.focus() may silently fail if chrome://dino hasn't
+        // committed navigation yet (URL=nil), but the page loads fast
+        // enough that the first user keystroke arrives after commit.
+        nativeView.window?.makeFirstResponder(nativeView)
+        if wrapper.responds(to: #selector(WebContentWrapper.focus)) {
+            wrapper.focus()
+        }
+
+        AppLogInfo("🦖 [Container] attached placeholder shell + focused")
+    }
+
+    /// Tear down the placeholder shell. Synchronous structural cleanup —
+    /// `BrowserState.exitPlaceholderMode` already removed the underlying
+    /// NSView from the hierarchy (the Combine sink fires synchronously).
+    /// See spec §9.1.
+    @MainActor
+    private func detachPlaceholderShell() {
+        placeholderShell?.unmountPlaceholderNativeView()
+        placeholderShell?.view.removeFromSuperview()
+        placeholderShell?.removeFromParent()
+        placeholderShell = nil
+        AppLogInfo("🦖 [Container] detached placeholder shell")
+    }
+
     /// Scenario 1: Switch to an already-painted tab (immediate switch, bring to front)
     private func switchToWebContentController(_ controller: WebContentViewController) {
         // Flicker fix: Don't remove old view immediately, defer until Chromium confirms.

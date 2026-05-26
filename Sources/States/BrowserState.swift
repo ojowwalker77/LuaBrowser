@@ -113,6 +113,17 @@ class BrowserState {
     @Published var isInFullScreenMode = false
     @Published var targetURL: String = ""
 
+    /// True while this window is showing the chrome://dino placeholder.
+    /// Drives every UI binding that hides sub-elements during placeholder mode.
+    @Published private(set) var isInPlaceholderMode: Bool = false
+
+    /// Wrapper around the Chromium-owned placeholder WebContents while in
+    /// placeholder mode. Retained for the duration of placeholder mode;
+    /// released on exit. Lifetime of the underlying NSView is owned by
+    /// Chromium — wrapper.nativeView is invalid after exitPlaceholderMode
+    /// returns.
+    private(set) var placeholderWrapper: (WebContentWrapper & NSObject)? = nil
+
     @Published var isDraggingTab = false
     let imagePreviewState: BrowserImagePreviewState
     let themeContext: BrowserThemeContext
@@ -480,9 +491,14 @@ class BrowserState {
     /// Toggle AI Chat for the currently focused tab
     /// The collapse state is now managed per-tab, not globally
     func toggleAIChat(_ collapse: Bool? = nil) {
+        // Defense in depth: any caller (extension, debug, etc.) hitting this
+        // path during placeholder mode would operate on a stale focusingTab.
+        // Primary entry points are gated upstream; this is the safety net.
+        guard !isInPlaceholderMode else { return }
+
         // Dispatch to the focusing tab's AI Chat state
         focusingTab?.toggleAIChat(collapse)
-        
+
         // Also update the global state for backward compatibility
         // (e.g., for AIChatViewController in non-traditional layout)
         if let collapse {
@@ -491,7 +507,60 @@ class BrowserState {
             aiChatCollapsed.toggle()
         }
     }
-    
+
+    // =========================================================================
+    // Placeholder mode (last-tab close → chrome://dino shell)
+    //
+    // Driven by PhiChromiumCoordinator.windowDidEnter/ExitPlaceholderMode,
+    // which are themselves triggered by Browser::Show/HidePlaceholder on the
+    // Chromium side. See docs/superpowers/specs/
+    // 2026-05-25-placeholder-on-last-tab-close-design.md §6.1 / §9.1 for
+    // the synchronous detach contract.
+    // =========================================================================
+
+    @MainActor
+    func enterPlaceholderMode(wrapper: WebContentWrapper & NSObject) {
+        guard placeholderWrapper == nil else { return }  // Idempotent
+        placeholderWrapper = wrapper
+        // Clear stale focused tab. The just-closed tab is already gone from
+        // `tabs`, but `focusingTab` still references it because nothing on the
+        // close path nils it. Selectors that read `focusingTab` (e.g.
+        // canBookmarkCurrentTab, address-bar context menu) would otherwise
+        // operate on a destroyed Tab object during placeholder mode.
+        focusingTab = nil
+        isInPlaceholderMode = true
+        AppLogInfo("🦖 [BrowserState] entered placeholder mode windowId=\(windowId)")
+    }
+
+    @MainActor
+    func exitPlaceholderMode() {
+        guard let wrapper = placeholderWrapper else { return }
+        // CONTRACT (UAF prevention): detach NSView SYNCHRONOUSLY before
+        // returning. Chromium calls placeholder_web_contents_.reset()
+        // immediately after this bridge call returns; the underlying NSView
+        // is destroyed at that point. If it's still in the AppKit hierarchy,
+        // AppKit holds a dangling pointer.
+        wrapper.nativeView?.removeFromSuperview()
+        placeholderWrapper = nil
+        isInPlaceholderMode = false
+        // The new real tab's activeTabChanged event arrives shortly and sets
+        // focusingTab. Until then, nil is correct.
+        AppLogInfo("🦖 [BrowserState] exited placeholder mode windowId=\(windowId)")
+    }
+
+    deinit {
+        // Diagnostic only. By the time we get here both the Mac-side
+        // windowWillClose handler AND Chromium's Browser::~Browser →
+        // HidePlaceholder bridge call should have run exitPlaceholderMode,
+        // leaving placeholderWrapper == nil. We deliberately do NOT touch
+        // nativeView here: deinit is non-isolated and may run off the main
+        // thread, and removeFromSuperview() is a main-thread AppKit call.
+        // If this warn fires, the fix belongs in the teardown paths, not here.
+        if placeholderWrapper != nil {
+            AppLogWarn("🦖 [BrowserState] deinit reached with placeholderWrapper still set — teardown paths skipped windowId=\(windowId)")
+        }
+    }
+
     func toggleFullScreenMode(_ fullScreen: Bool) {
         if fullScreen != isInFullScreenMode {
             isInFullScreenMode.toggle()

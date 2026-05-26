@@ -38,7 +38,14 @@ class SidebarViewController: NSViewController {
             self?.state.openTab(URLProcessor.processUserInput(url))
         }
         view.onChatTap = { [weak self] in
-            self?.state.toggleAIChat()
+            guard let self else { return }
+            // Defense in depth: chat entry should be hidden in placeholder
+            // mode. Early-return if a stale tap reaches this handler.
+            guard self.state.isInPlaceholderMode == false else {
+                NSSound.beep()
+                return
+            }
+            self.state.toggleAIChat()
         }
         view.onCardEntryTap = { [weak self] in
             self?.showMessageCardTemporarily()

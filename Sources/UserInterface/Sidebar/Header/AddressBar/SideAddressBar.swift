@@ -94,7 +94,7 @@ class SideAddressBar: NSView {
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
         extensionMenuHostingView.rootView = ExtensionPopoverButton(extensionManager: browserState.extensionManager)
-        
+
         $currentTab
             .compactMap { $0 }
             .map { tab in
@@ -105,6 +105,7 @@ class SideAddressBar: NSView {
             .removeDuplicates()
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
             .sink { [weak self] url in
+                guard browserState.isInPlaceholderMode != true else { return }
                 self?.updateDisplayedURL(url)
             }
             .store(in: &cancellables)
@@ -112,7 +113,27 @@ class SideAddressBar: NSView {
         browserState.$groupOverviewState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
+                guard browserState.isInPlaceholderMode != true else { return }
                 self?.updateDisplayedURL(self?.currentTab?.url)
+            }
+            .store(in: &cancellables)
+
+        // Placeholder-mode sink: blank text on enter, restore on exit.
+        // Also hide the trailing accessory buttons (copy link, extension menu)
+        // and any in-bar extension icons — there's no tab context to act on.
+        browserState.$isInPlaceholderMode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isPlaceholder in
+                guard let self else { return }
+                if isPlaceholder {
+                    self.textField.stringValue = ""
+                } else {
+                    self.updateDisplayedURL(self.currentTab?.url)
+                }
+                self.copyURLButton.isHidden = isPlaceholder
+                self.extensionMenuHostingView.isHidden = isPlaceholder
+                self.extensionIconsStackView.isHidden = isPlaceholder
             }
             .store(in: &cancellables)
 

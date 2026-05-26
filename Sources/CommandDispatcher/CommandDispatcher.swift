@@ -88,6 +88,15 @@ struct CommandDispatcher {
         case .IDC_NEW_TAB:
             windowController.newBrowserTab(nil)
             return true
+        case .IDC_NEW_TAB_TO_RIGHT:
+            // Placeholder mode has no active tab, so "to the right" has no
+            // meaning — fall back to a plain new tab. Outside placeholder,
+            // let Chromium handle it normally (it operates on active_index()).
+            if windowController.browserState.isInPlaceholderMode {
+                windowController.newBrowserTab(nil)
+                return true
+            }
+            return false
         case .IDC_CLOSE_TAB:
             return windowController.handleCloseTab()
         case .IDC_FOCUS_LOCATION:
