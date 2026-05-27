@@ -13,6 +13,7 @@ import Sparkle
 import WebKit
 import Settings
 import Countly
+import PostHog
 
 @objc class AppController: NSObject, NSApplicationDelegate {
     @IBOutlet var window: NSWindow!
@@ -42,7 +43,9 @@ import Countly
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var pendingColdOpenForwardURLs: [URL] = []
     private var pendingOpenURLsAwaitingLoginStatus: [URL] = []
-    
+    /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
+    private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
+
     override init() {
         super.init()
         Self.shared = self
@@ -62,9 +65,7 @@ import Countly
         setupKinfisherCache()
         
         SentryService.setup()
-        if let account = AccountController.shared.account {
-            SentryService.configureUser(account)
-        }
+        
         MemoryUsageMonitor.shared.start()
         
         DefaultExtensionManifestWriter.start()
@@ -94,6 +95,8 @@ import Countly
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        bindChromiumBridgeIfNeeded()
+
         // Register defaults before any settings are read.
         UserDefaultsRegistration.registerDefaults()
         
@@ -105,7 +108,29 @@ import Countly
         SharedAuthTokenStore.shared.logDelegate = SharedAuthTokenStoreLogBridge.shared
         AppLogInfo("------------------------------  Starting: \(Self.makeClientString())  ------------------------------")
         recordLaunchVersion()
-        ChromiumLauncher.sharedInstance().bridge?.applicationWillFinishLaunching(notification)
+
+        // Set up PostHog before `didFinishLaunchingNotification` fires so the
+        // SDK can observe the app-opened lifecycle event. If either value is
+        // missing the app runs without analytics.
+        if let token = PostHogEnv.projectToken.value,
+           let host = PostHogEnv.host.value {
+            let postHogConfig = PostHogConfig(apiKey: token, host: host)
+            postHogConfig.captureApplicationLifecycleEvents = true
+            #if DEBUG
+            postHogConfig.debug = true
+            #endif
+            postHogConfig.setBeforeSend { event in
+                guard event.event == "$app_opened" else { return event }
+                event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
+                event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
+                return event
+            }
+            PostHogSDK.shared.setup(postHogConfig)
+        } else {
+            AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
+        }
+
+        chromiumBridge?.applicationWillFinishLaunching(notification)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -113,7 +138,12 @@ import Countly
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
         MemoryUsageMonitor.shared.stop()
-        ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
+        if let chromiumBridge {
+            chromiumBridge.applicationWillTerminate(notification)
+        } else {
+            AppLogWarn("[AppController] applicationWillTerminate: chromium bridge not cached; using launcher fallback")
+            ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
+        }
     }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -235,6 +265,12 @@ import Countly
     @objc private func loginCompleted(_ notification: Notification) {
         Task { @MainActor in
             self.flushPendingOpenURLsAwaitingLoginStatus()
+        }
+    }
+
+    private func bindChromiumBridgeIfNeeded() {
+        if chromiumBridge == nil {
+            chromiumBridge = ChromiumLauncher.sharedInstance().bridge
         }
     }
 

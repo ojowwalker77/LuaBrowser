@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Foundation
+import PostHog
 class Account {
     let userID: String
     let userInfo: User?
@@ -17,7 +18,12 @@ class Account {
         self.userInfo = userInfo
         if let userInfo {
             EventTracker.updateUserProfile(userInfo)
+            if let sub = userInfo.sub {
+                PostHogSDK.shared.identify(sub)
+            }
         }
+        
+        SentryService.configureUser(self)
     }
     
     var userDataStorage: URL {
