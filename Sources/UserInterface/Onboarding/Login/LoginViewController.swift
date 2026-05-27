@@ -299,13 +299,9 @@ class LoginViewController: NSViewController {
 
                 if let credentials {
                     self.activeLoginAttemptID = nil
-                    // PostHog: Identify user and capture login event
                     let user = AuthManager.retriveUserInfo(from: credentials)
                     if let sub = user.sub {
-                        var userProperties: [String: Any] = [:]
-                        if let email = user.email { userProperties["email"] = email }
-                        if let name = user.name { userProperties["name"] = name }
-                        PostHogSDK.shared.identify(sub, userProperties: userProperties)
+                        PostHogSDK.shared.identify(sub)
                     }
                     PostHogSDK.shared.capture("user_logged_in")
                     self.onLoginSuccess?(credentials)

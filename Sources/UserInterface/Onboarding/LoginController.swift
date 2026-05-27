@@ -136,10 +136,7 @@ class LoginController {
         // Restore PostHog identity for returning users — covers session
         // recovery on launch, where no explicit login event fires.
         if let sub = user.sub {
-            var userProperties: [String: Any] = [:]
-            if let email = user.email { userProperties["email"] = email }
-            if let name = user.name { userProperties["name"] = name }
-            PostHogSDK.shared.identify(sub, userProperties: userProperties)
+            PostHogSDK.shared.identify(sub)
         }
 
         if let current = AccountController.shared.account {
