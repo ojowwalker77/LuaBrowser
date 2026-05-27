@@ -229,7 +229,7 @@ final class TabGroupCellView: SidebarCellView {
     static let containerLeadingInset: CGFloat = WebContentConstant.edgesSpacing
     /// Container trailing is `0` so the rounded border aligns flush with
     /// the right edge of an ungrouped tab row.
-    static let containerTrailingInset: CGFloat = 0
+    static let containerTrailingInset: CGFloat = WebContentConstant.edgesSpacing
     static let containerVerticalInset: CGFloat = 2
     static let headerHeight: CGFloat = 32
     /// Collapsed row height matches an ungrouped tab row (`36`). The
