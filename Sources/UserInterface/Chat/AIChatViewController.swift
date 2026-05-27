@@ -5,17 +5,19 @@
 
 import Cocoa
 import Combine
+import PostHog
 
 class AIChatViewController: NSViewController {
     private lazy var contentView = NSView()
     private lazy var cancellables = Set<AnyCancellable>()
     let state: BrowserState
     private var isInitialized = false
-    
+
     /// Currently displayed AI Chat Tab
     private var currentAIChatTab: Tab?
     /// Identifier of the currently displayed AI Chat Tab
     private var currentIdentifier: String?
+    private var aiChatPageViewStart: Date?
     
     init(with browserState: BrowserState) {
         self.state = browserState
@@ -49,10 +51,18 @@ class AIChatViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         handleAIChatVisibilityChanged(collapsed: false)
+        aiChatPageViewStart = Date()
+        PostHogSDK.shared.capture("ai_chat_page_opened")
     }
-    
+
     override func viewDidDisappear() {
         super.viewDidDisappear()
+        if let start = aiChatPageViewStart {
+            PostHogSDK.shared.capture("ai_chat_page_viewed", properties: [
+                "duration_seconds": Date().timeIntervalSince(start),
+            ])
+            aiChatPageViewStart = nil
+        }
     }
     
     private func setupObservers() {

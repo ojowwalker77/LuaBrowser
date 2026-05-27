@@ -6,6 +6,7 @@
 import Cocoa
 import SnapKit
 import SwiftUI
+import PostHog
 
 class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     override var imageNamagePrefix: String { "oobe-" }
@@ -259,6 +260,10 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     }
     
     private func nextButtonTapped() {
+        PostHogSDK.shared.capture("onboarding_completed", properties: [
+            "theme_id": selectedThemeId,
+            "accent_color": accentColor.map(colorToHex) ?? "",
+        ])
         nextClosure?(true)
     }
     
@@ -289,6 +294,18 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
         theme.color(for: .windowOverlayBackground, appearance: appearance).withAlphaComponent(1)
     }
     
+    private func colorToHex(_ color: NSColor) -> String {
+        guard let rgbColor = color.usingColorSpace(.deviceRGB) else {
+            return "#000000"
+        }
+
+        let red = Int(rgbColor.redComponent * 255)
+        let green = Int(rgbColor.greenComponent * 255)
+        let blue = Int(rgbColor.blueComponent * 255)
+
+        return String(format: "#%02X%02X%02X", red, green, blue)
+    }
+
     private func adjustDateLabelFontSize() {
         let maxWidth = view.bounds.width
         var fontSize: CGFloat = 200

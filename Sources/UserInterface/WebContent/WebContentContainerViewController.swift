@@ -157,9 +157,6 @@ class WebContentContainerViewController: NSViewController {
     /// Titlebar aware area for handling double-click on titlebar
     private var titleAwareArea = TitlebarAwareView()
     
-    /// Left resize handle for adjusting sidebar width
-    private lazy var resizeHandle = SplitViewResizeHandle()
-
     /// Left-edge hover trigger for showing floating sidebar when main sidebar is collapsed.
     lazy var floatingSidebarTriggerView = MouseTrackingAreaView()
 
@@ -257,19 +254,8 @@ class WebContentContainerViewController: NSViewController {
             }
         }
         
-        // Add resize handle for sidebar adjustment
-        view.addSubview(resizeHandle)
-        resizeHandle.snp.makeConstraints { make in
-            make.left.equalToSuperview()
-            make.top.bottom.equalToSuperview()
-            make.width.equalTo(10)
-        }
-        resizeHandle.onDragEnded = { [weak self] in
-            self?.updateLayoutForMode()
-        }
-
         // Add left-edge hover trigger for floating sidebar.
-        view.addSubview(floatingSidebarTriggerView, positioned: .above, relativeTo: resizeHandle)
+        view.addSubview(floatingSidebarTriggerView)
         floatingSidebarTriggerView.snp.makeConstraints { make in
             make.leading.top.bottom.equalToSuperview()
             make.width.equalTo(Self.floatingSidebarTriggerWidth)
@@ -362,6 +348,7 @@ class WebContentContainerViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateLayoutForMode()
+                self?.updateContentOuterBorder()
             }
             .store(in: &cancellables)
 
@@ -448,20 +435,21 @@ class WebContentContainerViewController: NSViewController {
         updateContentOuterBorder()
     }
 
-    /// Computes and applies the unified content border path. The path traces:
-    /// active tab (top + sides + inverse curves) → splitViewContainer
-    /// (rounded-rect outline) as one closed shape, so a single stroke renders
-    /// across the whole boundary without seams. In sidebar layouts (no
-    /// horizontal tab strip) it intentionally falls back to a plain
-    /// rounded-rect outline — we still want the content container to carry
-    /// its own outline in Balanced/Performance, just without the active-tab
-    /// gap that only makes sense when a horizontal tab strip is present.
+    /// Computes and applies the unified content border path for comfortable
+    /// layout, where the outline needs to connect with the active horizontal tab.
     private func updateContentOuterBorder() {
         guard let controller = currentWebContentController else {
             outerBorderLayer.path = nil
             clearGroupBoundaryLayers()
             return
         }
+        let isComfortableLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
+        guard isComfortableLayout else {
+            outerBorderLayer.path = nil
+            return
+        }
+
         let r = controller.splitViewContainerFrame(in: view)
         guard r.width > 0, r.height > 0 else {
             outerBorderLayer.path = nil
@@ -484,9 +472,7 @@ class WebContentContainerViewController: NSViewController {
         // path, focusingTab updates before currentWebContentController is
         // promoted; using the visible tab keeps the outline attached to the
         // tab whose page is actually onscreen.
-        let activeFrame: CGRect? = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
-            ? tabStripBarController?.tabFrame(for: controller.associatedTab, in: view)
-            : nil
+        let activeFrame = tabStripBarController?.tabFrame(for: controller.associatedTab, in: view)
 
         let path = CGMutablePath()
 
@@ -1016,10 +1002,8 @@ class WebContentContainerViewController: NSViewController {
             titleAwareArea.isHidden = false
         }
 
-        // Keep the resize handle visible during an active drag so the user can
-        // re-expand the sidebar without releasing the mouse button.
-        resizeHandle.isHidden = shouldEnableFloatingSidebar() && !resizeHandle.isDragging
         updateFloatingSidebarAvailability()
+        updateContentOuterBorder()
     }
 
     // MARK: - AI Chat Toggle

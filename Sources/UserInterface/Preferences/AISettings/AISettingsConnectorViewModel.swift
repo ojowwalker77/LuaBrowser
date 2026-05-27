@@ -5,6 +5,7 @@
 
 import Foundation
 import AppKit
+import PostHog
 
 struct ConnectorTemplate: Identifiable {
     let id: String
@@ -219,5 +220,6 @@ final class AISettingsConnectorViewModel {
                 partialResult[template.name] = connection.connected ? "connected" : "disconnected"
             }
         }
+        PostHogSDK.shared.capture("connector_status", properties: dic)
     }
 }

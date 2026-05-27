@@ -451,6 +451,8 @@ extension Tab {
         return url?.hasPrefix("chrome://newtab") ?? false
         || url?.hasPrefix("phi://newtab") ?? false
         || url?.hasPrefix("chrome://conversation") ?? false
+        || url?.hasPrefix("phi://skills") ?? false
+        || url?.hasPrefix("chrome://skills") ?? false
     }
 }
 
@@ -458,6 +460,8 @@ extension String {
     var isNTPUrlString: Bool {
         return hasPrefix("chrome://newtab") ||
         hasPrefix("phi://newtab") ||
-        hasPrefix("chrome://conversation")
+        hasPrefix("chrome://conversation") ||
+        hasPrefix("phi://skills") ||
+        hasPrefix("chrome://skills")
     }
 }

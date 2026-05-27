@@ -386,14 +386,14 @@ class DownloadsManager: ObservableObject {
                     self.downloads.insert(newItem, at: 0)
                     affectedItem = newItem
                 }
-                
+
             case .updated, .completed, .paused, .resumed:
                 if let wrapper = wrapper,
                    let existing = self.downloads.first(where: { $0.id == guid }) {
                     existing.update(from: wrapper)
                     affectedItem = existing
                 }
-                
+
             case .cancelled, .interrupted:
                 if let wrapper = wrapper,
                    let existing = self.downloads.first(where: { $0.id == guid }) {

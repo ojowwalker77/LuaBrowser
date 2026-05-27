@@ -8,6 +8,7 @@ import AVFoundation
 import WebKit
 import Auth0
 import SwiftUI
+import PostHog
 
 class LoginViewController: NSViewController {
     enum Phase {
@@ -298,6 +299,11 @@ class LoginViewController: NSViewController {
 
                 if let credentials {
                     self.activeLoginAttemptID = nil
+                    let user = AuthManager.retriveUserInfo(from: credentials)
+                    if let sub = user.sub {
+                        PostHogSDK.shared.identify(sub)
+                    }
+                    PostHogSDK.shared.capture("user_logged_in")
                     self.onLoginSuccess?(credentials)
                 } else {
                     self.showRetryHint()
@@ -481,6 +487,8 @@ extension LoginViewController {
         loginTimeoutWorkItem = nil
         AuthManager.shared.cancelOngoingWebAuthentication()
         hideRetryHint()
+        // PostHog: Capture login retry event
+        PostHogSDK.shared.capture("login_retried")
         updateUI(with: .login)
     }
 }

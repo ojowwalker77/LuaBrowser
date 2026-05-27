@@ -24,7 +24,8 @@ let package = Package(
         .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "8.57.0"),
         .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.5.2"),
         .package(url: "https://github.com/Countly/countly-sdk-ios.git", exact: "25.4.8"),
-        
+        .package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.53.1"),
+
     ],
     targets: [
          .target(
@@ -41,6 +42,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "Lottie", package: "lottie-spm"),
                 .product(name: "Countly", package: "countly-sdk-ios"),
+                .product(name: "PostHog", package: "posthog-ios"),
             ])
     ]
 )

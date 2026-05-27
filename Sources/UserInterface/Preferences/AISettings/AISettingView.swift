@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import SwiftUI
+import PostHog
 
 struct AISettingView: View {
     @State private var connectorViewModel: AISettingsConnectorViewModel
@@ -51,6 +52,10 @@ struct AISettingView: View {
                 connectorViewModel.disconnectAll()
             }
             notifyNativeSettingsChanged()
+            // PostHog: Capture AI features toggled event
+            PostHogSDK.shared.capture("ai_features_toggled", properties: [
+                "enabled": newValue,
+            ])
         }
         .alert(
             NSLocalizedString("Turn Off AI Features?",

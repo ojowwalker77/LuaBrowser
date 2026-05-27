@@ -209,14 +209,19 @@ class BrowserState {
             configuration: BrowserThemeConfigurationResolver.resolve(isIncognito: isIncognito)
         )
         self.layoutMode = Self.buildLayoutMode()
-        self.addPinnedTabObserver()
+        if isIncognito {
+            pinnedTabs = []
+            visibleBookmarkTabs = []
+        } else {
+            addPinnedTabObserver()
+            _ = bookmarkManager
+        }
         self.tabDraggingSession.isDraggingPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isDragging in
                 self?.isDraggingTab = isDragging
             }
             .store(in: &cancellables)
-        _ = bookmarkManager
         _ = extensionManager
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
@@ -285,6 +290,10 @@ class BrowserState {
     }
     
     @MainActor func addPinnedTabObserver() {
+        guard !isIncognito else {
+            pinnedTabs = []
+            return
+        }
         loadInitialPinnedTabs()
 
         $focusingTab
@@ -302,6 +311,10 @@ class BrowserState {
     }
 
     @MainActor private func loadInitialPinnedTabs() {
+        guard !isIncognito else {
+            pinnedTabs = []
+            return
+        }
         let localTabs: [TabDataModel] = localStore.getAllPinnedTabs(for: profileId)
         pinnedTabs = localTabs.map { makePinnedTab(from: $0) }
 
@@ -317,6 +330,10 @@ class BrowserState {
     }
 
     private func handlePinnedTabsChanged(_ localTabs: [Tab]) {
+        guard !isIncognito else {
+            pinnedTabs = []
+            return
+        }
         pinnedTabs = localTabs.map { localTab in
             if let existing = pinnedTabs.first(where: { $0.guidInLocalDB == localTab.guidInLocalDB }) {
                 syncPinnedTabMetadata(existing, from: localTab)
@@ -358,6 +375,7 @@ class BrowserState {
     }
     
     private func updateBookmarkActiveState(_ focusingTab: Tab?) {
+        guard !isIncognito else { return }
         let allBookmarks = bookmarkManager.getAllBookmarks()
         for bookmark in allBookmarks {
             bookmark.isActive = (bookmark.chromiumTabGuid == focusingTab?.guid)
@@ -393,8 +411,12 @@ class BrowserState {
     }
 
     func updateNormalTabs() {
-        let openedPinnedGuids = Set(pinnedTabs.filter{ $0.isOpenned }.compactMap { $0.guidInLocalDB })
-        let openedBookmarkGuids = Set(bookmarkManager.getAllBookmarks().filter{ $0.isOpened }.map { $0.guid })
+        let openedPinnedGuids = isIncognito
+            ? []
+            : Set(pinnedTabs.filter { $0.isOpenned }.compactMap { $0.guidInLocalDB })
+        let openedBookmarkGuids = isIncognito
+            ? []
+            : Set(bookmarkManager.getAllBookmarks().filter { $0.isOpened }.map { $0.guid })
         
         let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
         let normalTabGuids = tabs.compactMap { tab -> Int? in
@@ -824,6 +846,7 @@ class BrowserState {
 
     /// Walk the opener chain upward to find a pinned or bookmark content tab.
     private func findPinnedOrBookmarkAncestor(of tabId: Int) -> Int? {
+        guard !isIncognito else { return nil }
         let openedPinnedGuids = Set(pinnedTabs.filter { $0.isOpenned }.compactMap { $0.guidInLocalDB })
         let openedBookmarkGuids = Set(bookmarkManager.getAllBookmarks().filter { $0.isOpened }.map { $0.guid })
 
@@ -2390,16 +2413,22 @@ class BrowserState {
     }
     
     func updateFavoriteTabs(_ newFavoriteTabs: [Tab]) {
+        guard !isIncognito else {
+            pinnedTabs = []
+            return
+        }
         pinnedTabs = newFavoriteTabs
     }
 
     func addToFavorites(_ tab: Tab) {
+        guard !isIncognito else { return }
         if !pinnedTabs.contains(where: { $0.guid == tab.guid }) {
             pinnedTabs.append(tab)
         }
     }
 
     func removeFromFavorites(_ tab: Tab) {
+        guard !isIncognito else { return }
         pinnedTabs.removeAll { $0.guid == tab.guid }
     }
     
