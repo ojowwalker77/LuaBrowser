@@ -127,6 +127,8 @@
 		37DEB33E2F63F13700129429 /* TabDataModelSchemaV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEB33D2F63F13700129429 /* TabDataModelSchemaV2.swift */; };
 		37DEB42F2F67C0F000129429 /* TabDataModelSchemaV3.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEB42E2F67C0F000129429 /* TabDataModelSchemaV3.swift */; };
 		37E6AF402EEC30E80078CCD8 /* ChatButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E6AF3F2EEC30E80078CCD8 /* ChatButton.swift */; };
+		37E9E91B2FC84DEA00815832 /* TabDataModelSchemaV4.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E9E9192FC84DEA00815832 /* TabDataModelSchemaV4.swift */; };
+		37E9E91C2FC84DEA00815832 /* TabDataModelSchemaV5.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E9E91A2FC84DEA00815832 /* TabDataModelSchemaV5.swift */; };
 		37EA23AB2F6C010C00D3C4A9 /* Dependencies in Frameworks */ = {isa = PBXBuildFile; productRef = B00B9F252E3B2A3F0029D3A9 /* Dependencies */; };
 		37EA23AC2F6C010C00D3C4A9 /* Dependencies in Frameworks */ = {isa = PBXBuildFile; productRef = B02BEB612E3B2D5900E5859A /* Dependencies */; };
 		37EA25EF2F6D5A5A00D3C4A9 /* CommonMessageRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37EA25EE2F6D5A5A00D3C4A9 /* CommonMessageRouter.swift */; };
@@ -140,6 +142,8 @@
 		4D454D4F5259000000000004 /* MemoryUsageMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000005 /* MemoryUsageMonitor.swift */; };
 		4D454D4F5259000000000006 /* ProcessMemorySampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000007 /* ProcessMemorySampler.swift */; };
 		7A5B00A02EF0000000000001 /* MemoryButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5B00A02EF0000000000002 /* MemoryButton.swift */; };
+		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
+		7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */; };
 		897C09F42F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */; };
 		897C09F52F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */; };
 		897C09F62F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */; };
@@ -315,8 +319,6 @@
 		D10000000000000000000007 /* ImagePreviewOverlayViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000017 /* ImagePreviewOverlayViewController.swift */; };
 		D10000000000000000000008 /* ExtensionDialogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000031 /* ExtensionDialogManager.swift */; };
 		D10000000000000000000009 /* ExtensionDialogViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000032 /* ExtensionDialogViewController.swift */; };
-		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
-		7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -507,6 +509,8 @@
 		37DEB33D2F63F13700129429 /* TabDataModelSchemaV2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV2.swift; sourceTree = "<group>"; };
 		37DEB42E2F67C0F000129429 /* TabDataModelSchemaV3.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV3.swift; sourceTree = "<group>"; };
 		37E6AF3F2EEC30E80078CCD8 /* ChatButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatButton.swift; sourceTree = "<group>"; };
+		37E9E9192FC84DEA00815832 /* TabDataModelSchemaV4.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV4.swift; sourceTree = "<group>"; };
+		37E9E91A2FC84DEA00815832 /* TabDataModelSchemaV5.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV5.swift; sourceTree = "<group>"; };
 		37EA25EE2F6D5A5A00D3C4A9 /* CommonMessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonMessageRouter.swift; sourceTree = "<group>"; };
 		37EECF212F0F623A0022A176 /* EmbeddedChatViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddedChatViewController.swift; sourceTree = "<group>"; };
 		37F574472F7A7C5D00879867 /* PhiIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = PhiIcon.icon; sourceTree = "<group>"; };
@@ -518,6 +522,8 @@
 		4D454D4F5259000000000005 /* MemoryUsageMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryUsageMonitor.swift; sourceTree = "<group>"; };
 		4D454D4F5259000000000007 /* ProcessMemorySampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMemorySampler.swift; sourceTree = "<group>"; };
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
+		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
+		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
 		8417101CC460A0D12720DE81 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelAPIClient.swift; sourceTree = "<group>"; };
 		897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingHostingViewController.swift; sourceTree = "<group>"; };
@@ -708,8 +714,6 @@
 		D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingHostingViewController.swift; sourceTree = "<group>"; };
 		D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingsConnectorViewModel.swift; sourceTree = "<group>"; };
 		E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "PhiBrowser-OpenSource.entitlements"; sourceTree = "<group>"; };
-		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
-		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -1045,6 +1049,8 @@
 				37DEB3392F63F0F500129429 /* TabDataModelSchemaV1.swift */,
 				37DEB33D2F63F13700129429 /* TabDataModelSchemaV2.swift */,
 				37DEB42E2F67C0F000129429 /* TabDataModelSchemaV3.swift */,
+				37E9E9192FC84DEA00815832 /* TabDataModelSchemaV4.swift */,
+				37E9E91A2FC84DEA00815832 /* TabDataModelSchemaV5.swift */,
 			);
 			path = TabDataModel;
 			sourceTree = "<group>";
@@ -1946,6 +1952,8 @@
 				37289F122EFE602F0003624E /* EventTracker.swift in Sources */,
 				37289F132EFE602F0003624E /* ExperimentConfigProvider.swift in Sources */,
 				7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */,
+				37E9E91B2FC84DEA00815832 /* TabDataModelSchemaV4.swift in Sources */,
+				37E9E91C2FC84DEA00815832 /* TabDataModelSchemaV5.swift in Sources */,
 				7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */,
 				B025870E2E430305001B08FC /* MainSplitViewController.swift in Sources */,
 				3769C2E82EF9437A00A94DE0 /* ArcDataParser.swift in Sources */,
