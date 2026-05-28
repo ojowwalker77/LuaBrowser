@@ -447,6 +447,7 @@ class WebContentContainerViewController: NSViewController {
         controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
         guard isComfortableLayout else {
             outerBorderLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
 
