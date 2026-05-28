@@ -3107,6 +3107,16 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
     }
 
     func tabGroupCell(_ cell: TabGroupCellView,
+                      didUpdateDropTargetHighlight highlighted: Bool,
+                      for group: WebContentGroupInfo) {
+        if highlighted {
+            setDropFeedback(.tabGroup(token: group.token))
+        } else if dropFeedbackTarget == .tabGroup(token: group.token) {
+            setDropFeedback(.none)
+        }
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
                       didAcceptTab tab: Tab,
                       intoGroupToken token: String,
                       atNormalTabsIdx targetIdx: Int) -> Bool {

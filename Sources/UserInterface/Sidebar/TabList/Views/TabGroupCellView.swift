@@ -71,6 +71,19 @@ protocol TabGroupCellViewDelegate: AnyObject {
                       didAcceptTab tab: Tab,
                       intoGroupToken token: String,
                       atNormalTabsIdx normalTabsIdx: Int) -> Bool
+
+    /// Inner table accepted or rejected a drag over this group. The
+    /// controller maps this to `dropFeedbackTarget` container tinting.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didUpdateDropTargetHighlight highlighted: Bool,
+                      for group: WebContentGroupInfo)
+}
+
+/// Visual-only overlay; must not intercept mouse or drag hit-testing.
+private final class TabGroupBorderOverlayView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
 }
 
 // MARK: - GroupTabsDiffableDataSource
@@ -269,7 +282,7 @@ final class TabGroupCellView: SidebarCellView {
     private(set) var token: String = ""
 
     private var containerView: NSView!
-    private var containerBorderOverlayView: NSView!
+    private var containerBorderOverlayView: TabGroupBorderOverlayView!
     private var hostingView: TabGroupHeaderHostingView!
     private(set) var innerTable: GroupTabsTableView!
     private let viewModel = TabGroupHeaderViewModel()
@@ -285,7 +298,7 @@ final class TabGroupCellView: SidebarCellView {
     private var isDropTargetHighlighted = false
     private var isHovered = false
     private var lastGroupColor: GroupColor = .grey
-    private var hoverTrackingArea: NSTrackingArea?
+    private let hoverRegionView = SidebarTabHoverRegionView()
 
     private var collapseSubscription: AnyCancellable?
     private weak var configuredGroup: WebContentGroupInfo?
@@ -333,31 +346,6 @@ final class TabGroupCellView: SidebarCellView {
         if Self.isDebugVisualizeEnabled {
             logDebugFrames()
         }
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTrackingArea {
-            removeTrackingArea(hoverTrackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        setHovered(true)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        setHovered(false)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -433,7 +421,7 @@ final class TabGroupCellView: SidebarCellView {
         }
         innerTableCollapsedHeightConstraint?.deactivate()
 
-        containerBorderOverlayView = NSView()
+        containerBorderOverlayView = TabGroupBorderOverlayView()
         containerBorderOverlayView.wantsLayer = true
         containerBorderOverlayView.layer?.backgroundColor = NSColor.clear.cgColor
         containerBorderOverlayView.layer?.cornerRadius = 8
@@ -459,6 +447,14 @@ final class TabGroupCellView: SidebarCellView {
 
         if Self.isDebugVisualizeEnabled {
             applyDebugTints()
+        }
+
+        hoverRegionView.onHoverChanged = { [weak self] isHovered in
+            self?.setHovered(isHovered)
+        }
+        addSubview(hoverRegionView)
+        hoverRegionView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
     }
 
@@ -635,12 +631,11 @@ final class TabGroupCellView: SidebarCellView {
         }
     }
 
-    /// Cell-level hover tracked by an AppKit tracking area on the full
-    /// cell bounds — only drives the rounded border highlight. The
-    /// header-specific hover (which controls the close button's
-    /// visibility) lives on `viewModel.isHeaderHovered` and is written
-    /// from SwiftUI's `.onHover` inside `TabGroupHeaderView`, so the
-    /// two states stay scoped to their respective hit regions.
+    /// Container border hover is driven by `hoverRegionView` (same
+    /// transparent overlay pattern as `SidebarTabCellView`) so moves
+    /// between the inner table and the SwiftUI header do not spuriously
+    /// exit tracking. Header close-button visibility stays on
+    /// `viewModel.isHeaderHovered` via SwiftUI `.onHover`.
     private func setHovered(_ hovered: Bool) {
         guard isHovered != hovered else { return }
         isHovered = hovered
@@ -907,18 +902,26 @@ extension TabGroupCellView: GroupTabsDragSource {
         if dropOperation == .on {
             innerTable.setDropRow(proposedRow, dropOperation: .above)
         }
-        // Pinned and bookmark drops never join a group.
-        if pasteboard.string(forType: .pinnedTab) != nil { return [] }
-        if pasteboard.string(forType: .phiBookmark) != nil { return [] }
-        // Cross-window normal-tab joins are unsupported (mirrors the
-        // outer resolver's `crossWindowGroupJoinUnsupported` reject).
-        if let sourceIdString = pasteboard.string(forType: .sourceWindowId),
-           let sourceId = Int(sourceIdString),
-           let state = configuredBrowserState,
-           sourceId != state.windowId {
-            return []
+        let result: NSDragOperation = {
+            // Pinned and bookmark drops never join a group.
+            if pasteboard.string(forType: .pinnedTab) != nil { return [] }
+            if pasteboard.string(forType: .phiBookmark) != nil { return [] }
+            // Cross-window normal-tab joins are unsupported (mirrors the
+            // outer resolver's `crossWindowGroupJoinUnsupported` reject).
+            if let sourceIdString = pasteboard.string(forType: .sourceWindowId),
+               let sourceId = Int(sourceIdString),
+               let state = configuredBrowserState,
+               sourceId != state.windowId {
+                return []
+            }
+            return pasteboard.string(forType: .normalTab) != nil ? .move : []
+        }()
+        if let group = configuredGroup {
+            groupCellDelegate?.tabGroupCell(
+                self,
+                didUpdateDropTargetHighlight: result == .move,
+                for: group)
         }
-        let result: NSDragOperation = pasteboard.string(forType: .normalTab) != nil ? .move : []
         AppLogDebug("[TAB_GROUPS][INNER_DRAG] inner.validateDrop -> \(result.rawValue)")
         return result
     }

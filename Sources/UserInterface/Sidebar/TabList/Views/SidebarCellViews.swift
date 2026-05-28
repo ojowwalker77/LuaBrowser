@@ -113,7 +113,8 @@ extension NSView {
 /// NSHostingView sits underneath and does not reliably deliver parent tracking-area events,
 /// so this view drives hover via its own tracking area while staying transparent to hit-testing
 /// — clicks fall through to the SwiftUI buttons (close / mute) inside the hosting view.
-private final class SidebarTabHoverRegionView: NSView {
+/// Shared by ungrouped `SidebarTabCellView` and `TabGroupCellView` container hover.
+final class SidebarTabHoverRegionView: NSView {
     var onHoverChanged: ((Bool) -> Void)?
 
     private var trackingArea: NSTrackingArea?
