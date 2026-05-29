@@ -170,7 +170,7 @@ class SideAddressBar: NSView {
     private func updateDisplayedURL(_ url: String?) {
         guard unsafeBrowserState?.groupOverviewState == nil,
               let url,
-              !url.isNTPUrlString else {
+              !url.isNTP else {
             textField.stringValue = ""
             return
         }
