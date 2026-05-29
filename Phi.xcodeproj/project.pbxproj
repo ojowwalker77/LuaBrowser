@@ -150,6 +150,10 @@
 		897C09F72F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */; };
 		897C09F82F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */; };
 		8E21BB6A2FC5503D00378ABE /* PlaceholderShellViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */; };
+		8E0B00012FC0000000000001 /* GroupOverviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00032FC0000000000001 /* GroupOverviewState.swift */; };
+		8E0B00022FC0000000000001 /* BrowserState+GroupOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */; };
+		8E0B00052FC0000000000001 /* GroupOverviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */; };
+		8E0B00062FC0000000000001 /* GroupOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00082FC0000000000001 /* GroupOverviewView.swift */; };
 		8E2A91272FB18051003E1F05 /* TabGroupDragContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */; };
 		8E2A91282FB18051003E1F05 /* TabGroupDragController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */; };
 		8E486A752F3ED68600078DEC /* StatusURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E486A742F3ED68600078DEC /* StatusURLView.swift */; };
@@ -165,10 +169,6 @@
 		8E762CC62F16531A00631087 /* TabStripAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E762CC52F16531A00631087 /* TabStripAnimation.swift */; };
 		8E8008D72FA1A59800EB24C5 /* GroupColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008D42FA1A59800EB24C5 /* GroupColor.swift */; };
 		8E8008D82FA1A59800EB24C5 /* WebContentGroupInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008D52FA1A59800EB24C5 /* WebContentGroupInfo.swift */; };
-		8E0B00012FC0000000000001 /* GroupOverviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00032FC0000000000001 /* GroupOverviewState.swift */; };
-		8E0B00022FC0000000000001 /* BrowserState+GroupOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */; };
-		8E0B00052FC0000000000001 /* GroupOverviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */; };
-		8E0B00062FC0000000000001 /* GroupOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00082FC0000000000001 /* GroupOverviewView.swift */; };
 		8E8008DA2FA1A69600EB24C5 /* GroupColor+NSColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008D92FA1A69600EB24C5 /* GroupColor+NSColor.swift */; };
 		8E8008F52FA1A72E00EB24C5 /* TabGroupHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008F42FA1A72E00EB24C5 /* TabGroupHeaderView.swift */; };
 		8E8008F82FA1A73A00EB24C5 /* TabGroupSidebarItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8008F72FA1A73A00EB24C5 /* TabGroupSidebarItem.swift */; };
@@ -198,8 +198,6 @@
 		AA10000000000000000000B4 /* TabSwitchWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F4 /* TabSwitchWindowController.swift */; };
 		AA10000000000000000000B5 /* TabSwitchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F5 /* TabSwitchManager.swift */; };
 		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
-		AE00FFFE0000000000000003 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
-		AE00FFFE0000000000000004 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
 		B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */; };
 		B02586F62E42FD97001B08FC /* AppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02586F02E42FD97001B08FC /* AppController.swift */; };
@@ -536,6 +534,10 @@
 		897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingViewController.swift; sourceTree = "<group>"; };
 		897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsViewModel.swift; sourceTree = "<group>"; };
 		8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderShellViewController.swift; sourceTree = "<group>"; };
+		8E0B00032FC0000000000001 /* GroupOverviewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewState.swift; sourceTree = "<group>"; };
+		8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+GroupOverview.swift"; sourceTree = "<group>"; };
+		8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewViewController.swift; sourceTree = "<group>"; };
+		8E0B00082FC0000000000001 /* GroupOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewView.swift; sourceTree = "<group>"; };
 		8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragContext.swift; sourceTree = "<group>"; };
 		8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragController.swift; sourceTree = "<group>"; };
 		8E486A742F3ED68600078DEC /* StatusURLView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusURLView.swift; sourceTree = "<group>"; };
@@ -551,10 +553,6 @@
 		8E762CC52F16531A00631087 /* TabStripAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripAnimation.swift; sourceTree = "<group>"; };
 		8E8008D42FA1A59800EB24C5 /* GroupColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupColor.swift; sourceTree = "<group>"; };
 		8E8008D52FA1A59800EB24C5 /* WebContentGroupInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentGroupInfo.swift; sourceTree = "<group>"; };
-		8E0B00032FC0000000000001 /* GroupOverviewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewState.swift; sourceTree = "<group>"; };
-		8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+GroupOverview.swift"; sourceTree = "<group>"; };
-		8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewViewController.swift; sourceTree = "<group>"; };
-		8E0B00082FC0000000000001 /* GroupOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewView.swift; sourceTree = "<group>"; };
 		8E8008D92FA1A69600EB24C5 /* GroupColor+NSColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GroupColor+NSColor.swift"; sourceTree = "<group>"; };
 		8E8008F42FA1A72E00EB24C5 /* TabGroupHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupHeaderView.swift; sourceTree = "<group>"; };
 		8E8008F72FA1A73A00EB24C5 /* TabGroupSidebarItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupSidebarItem.swift; sourceTree = "<group>"; };
@@ -853,15 +851,6 @@
 			path = NativeNTP;
 			sourceTree = "<group>";
 		};
-		8E0B00092FC0000000000001 /* GroupOverview */ = {
-			isa = PBXGroup;
-			children = (
-				8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */,
-				8E0B00082FC0000000000001 /* GroupOverviewView.swift */,
-			);
-			path = GroupOverview;
-			sourceTree = "<group>";
-		};
 		376CE3FE2F2891670093D937 /* MessageCard */ = {
 			isa = PBXGroup;
 			children = (
@@ -1111,6 +1100,15 @@
 				897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */,
 			);
 			path = IMChannels;
+			sourceTree = "<group>";
+		};
+		8E0B00092FC0000000000001 /* GroupOverview */ = {
+			isa = PBXGroup;
+			children = (
+				8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */,
+				8E0B00082FC0000000000001 /* GroupOverviewView.swift */,
+			);
+			path = GroupOverview;
 			sourceTree = "<group>";
 		};
 		8E6145812F753114001919BA /* LayoutSelection */ = {
@@ -2213,7 +2211,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AE00FFFE0000000000000003 /* PhiAgentEndpointResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2221,7 +2218,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AE00FFFE0000000000000004 /* PhiAgentEndpointResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
