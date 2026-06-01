@@ -199,8 +199,8 @@ class OmniBoxViewModel: ObservableObject {
             } else {
                 browserState.createTab(url)
             }
-        } else if opennedFromCurrentTab, let tab = currentTab, !tab.isPinnedOrInDB {
-            tab.webContentWrapper?.navigate(toURL: url)
+        } else if opennedFromCurrentTab, let wrapper = currentTab?.webContentWrapper {
+            wrapper.navigate(toURL: url)
         } else {
             browserState.createTab(url)
         }
