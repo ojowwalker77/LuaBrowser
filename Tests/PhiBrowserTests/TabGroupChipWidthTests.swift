@@ -110,4 +110,59 @@ final class TabGroupChipWidthTests: XCTestCase {
 
         XCTAssertTrue(hit === chip)
     }
+
+    func test_clickingCollapsedMosaicTogglesCollapse() {
+        let title = "Work"
+        let width = TabGroupChipView.chipWidth(
+            forTitle: title,
+            hasUserSetTitle: true,
+            memberCount: 5,
+            isCollapsed: true
+        )
+        let chip = TabGroupChipView()
+        chip.frame = CGRect(x: 0, y: 0, width: width, height: TabGroupChipView.height)
+        chip.configure(
+            token: "group-1",
+            color: .blue,
+            displayTitle: title,
+            memberCount: 5,
+            hasUserSetTitle: true,
+            isCollapsed: true,
+            memberFavicons: [nil, nil, nil, nil]
+        )
+        chip.layout()
+
+        let collapseX = width - TabGroupChipView.labelRightPadding - TabGroupChipView.collapseControlSize
+        let trailingX = collapseX - TabGroupChipView.collapseControlGap
+        let mosaicX = trailingX - TabGroupChipMosaicView.mosaicSize
+        let mosaicCenter = CGPoint(
+            x: mosaicX + TabGroupChipMosaicView.mosaicSize / 2,
+            y: TabGroupChipView.height / 2
+        )
+
+        var toggledToken: String?
+        var clickedToken: String?
+        chip.onCollapseToggle = { toggledToken = $0 }
+        chip.onClick = { clickedToken = $0 }
+
+        chip.mouseDown(with: mouseEvent(type: .leftMouseDown, location: mosaicCenter))
+        chip.mouseUp(with: mouseEvent(type: .leftMouseUp, location: mosaicCenter))
+
+        XCTAssertEqual(toggledToken, "group-1")
+        XCTAssertNil(clickedToken)
+    }
+
+    private func mouseEvent(type: NSEvent.EventType, location: CGPoint) -> NSEvent {
+        NSEvent.mouseEvent(
+            with: type,
+            location: location,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        )!
+    }
 }

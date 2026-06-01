@@ -345,7 +345,7 @@
     "Click " : {
       "comment" : "Phi Link - Custom bot guide prefix"
     },
-    "Click the title to open the group overview. Click the chevron to collapse or expand the group." : {
+    "Click the title for overview. Click the arrow to expand or collapse." : {
       "comment" : "Tab Groups - tooltip for horizontal-strip group chip interactions"
     },
     "Click to install update" : {

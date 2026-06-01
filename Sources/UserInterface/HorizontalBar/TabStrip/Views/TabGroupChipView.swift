@@ -112,6 +112,7 @@ final class TabGroupChipView: NSView {
     private enum PendingClickTarget {
         case overview
         case collapse
+        case expandFromMosaic
     }
 
     private var pendingAction: PendingChipAction = .idle
@@ -207,7 +208,7 @@ final class TabGroupChipView: NSView {
         mosaicView.isHidden = true
 
         toolTip = NSLocalizedString(
-            "Click the title to open the group overview. Click the chevron to collapse or expand the group.",
+            "Click the title for overview. Click the arrow to expand or collapse.",
             comment: "Tab Groups - tooltip for horizontal-strip group chip interactions")
     }
 
@@ -307,7 +308,7 @@ final class TabGroupChipView: NSView {
     }
 
     private func updateCollapseImage() {
-        let name = isCollapsed ? "chevron.right" : "chevron.down"
+        let name = isCollapsed ? "chevron.right" : "chevron.left"
         collapseImageView.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
     }
 
@@ -436,6 +437,11 @@ final class TabGroupChipView: NSView {
         collapseImageView.frame.insetBy(dx: -4, dy: -6)
     }
 
+    private func mosaicExpandRect() -> CGRect {
+        guard isCollapsed, !mosaicView.isHidden else { return .null }
+        return mosaicView.frame
+    }
+
     // MARK: - Mouse handling
 
     override func updateTrackingAreas() {
@@ -492,9 +498,15 @@ final class TabGroupChipView: NSView {
         mouseDownInside = true
         mouseDownLocation = event.locationInWindow
         let localPoint = convert(event.locationInWindow, from: nil)
-        pendingClickTarget = collapseControlRect().contains(localPoint) ? .collapse : .overview
+        if collapseControlRect().contains(localPoint) {
+            pendingClickTarget = .collapse
+        } else if mosaicExpandRect().contains(localPoint) {
+            pendingClickTarget = .expandFromMosaic
+        } else {
+            pendingClickTarget = .overview
+        }
         pendingAction = .click
-        if event.clickCount > 1 {
+        if event.clickCount > 1 || pendingClickTarget != .overview {
             cancelPendingSingleClick()
         }
     }
@@ -528,14 +540,20 @@ final class TabGroupChipView: NSView {
         case .click:
             let p = convert(event.locationInWindow, from: nil)
             guard bounds.contains(p) else { return }
-            if pendingClickTarget == .collapse {
+            switch pendingClickTarget {
+            case .collapse:
                 guard collapseControlRect().contains(p) else { return }
                 onCollapseToggle?(token)
-            } else if event.clickCount > 1 {
-                cancelPendingSingleClick()
+            case .expandFromMosaic:
+                guard mosaicExpandRect().contains(p) else { return }
                 onCollapseToggle?(token)
-            } else {
-                scheduleOverviewClick(for: token)
+            case .overview:
+                if event.clickCount > 1 {
+                    cancelPendingSingleClick()
+                    onCollapseToggle?(token)
+                } else {
+                    scheduleOverviewClick(for: token)
+                }
             }
         case .drag:
             onDragEnd?(token, event.locationInWindow)
