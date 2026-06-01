@@ -8,9 +8,23 @@ import SnapKit
 import SwiftUI
 
 /// NSHostingView variant that ignores safe area insets.
-private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Content> {
+private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Content>, TitlebarAwareHitTestable {
     override var safeAreaInsets: NSEdgeInsets {
         return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+
+    func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+        return NSApp.currentEvent?.type == .rightMouseDown
+    }
+}
+
+final class TabStripBarView: NSView, TitlebarAwareHitTestable {
+    func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+        return shouldConsumeHitTest(for: NSApp.currentEvent)
+    }
+
+    func shouldConsumeHitTest(for event: NSEvent?) -> Bool {
+        return event?.type == .rightMouseDown
     }
 }
 
@@ -56,7 +70,7 @@ final class TabStripBarController: NSViewController {
     // MARK: - Lifecycle
     
     override func loadView() {
-        view = NSView()
+        view = TabStripBarView()
         view.wantsLayer = true
     }
     
@@ -102,7 +116,9 @@ final class TabStripBarController: NSViewController {
         view.addSubview(hostingView)
         
         view.addSubview(tabStrip)
+        view.menu = stripContextMenu
         tabStrip.menu = stripContextMenu
+        hostingView.menu = stripContextMenu
         
         tabStrip.snp.makeConstraints { make in
             make.leading.equalToSuperview().inset(Self.horizontalInset)
