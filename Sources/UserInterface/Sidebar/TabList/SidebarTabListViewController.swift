@@ -447,6 +447,23 @@ class SidebarTabListViewController: NSViewController {
         if let provider = item as? UnderlyingBookmarkProviding { return provider.underlyingBookmark }
         return nil
     }
+
+    private static func dragThresholdLogDescription(for item: Any?) -> String {
+        switch item {
+        case let tab as Tab:
+            return "tab(\(tab.guid))"
+        case let groupItem as TabGroupSidebarItem:
+            return "tabGroup(\(groupItem.group.token))"
+        case let bookmark as Bookmark:
+            return "bookmark(\(bookmark.guid))"
+        case let sidebarItem as SidebarItem:
+            return String(describing: sidebarItem.itemType)
+        case .some(let value):
+            return String(describing: type(of: value))
+        case .none:
+            return "nil"
+        }
+    }
     
     // MARK: - Helper Methods
     private func getIndexPath(for item: SidebarItem) -> Int? {
@@ -542,6 +559,10 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             // Phase 3: grouped tabs are draggable. Resolver decides drop intent.
             pasteboardItem.setString(String(tab.guid), forType: .normalTab)
             pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+            AppLogDebug(
+                "[SIDEBAR_TAB_DRAG_THRESHOLD] pasteboardWriter normalTab " +
+                "guid=\(tab.guid) windowId=\(browserState.windowId)"
+            )
             return pasteboardItem
         }
 
@@ -1268,6 +1289,11 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                      draggingSession session: NSDraggingSession,
                      willBeginAt screenPoint: NSPoint,
                      forItems draggedItems: [Any]) {
+        AppLogDebug(
+            "[SIDEBAR_TAB_DRAG_THRESHOLD] outline.willBegin " +
+            "firstItem=\(Self.dragThresholdLogDescription(for: draggedItems.first)) " +
+            "screen=\(screenPoint)"
+        )
         if let groupItem = draggedItems.first as? TabGroupSidebarItem {
             temporarilyCollapseGroupForDragIfNeeded(
                 groupItem: groupItem,
@@ -1290,6 +1316,10 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                      draggingSession session: NSDraggingSession,
                      endedAt screenPoint: NSPoint,
                      operation: NSDragOperation) {
+        AppLogDebug(
+            "[SIDEBAR_TAB_DRAG_THRESHOLD] outline.ended " +
+            "screen=\(screenPoint) operation=\(operation.rawValue)"
+        )
         finalizeWholeGroupSidebarTearOffIfNeeded(
             session: session,
             screenPoint: screenPoint,
@@ -3205,6 +3235,60 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         browserState.tabDraggingSession.attachNativeSession(session)
         browserState.tabDraggingSession.update(
             screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y)
+        )
+    }
+
+    func outlineView(_ outlineView: SideBarOutlineView, didClickRow row: Int) {
+        guard row >= 0,
+              let item = outlineView.item(atRow: row) as? SidebarItem else {
+            return
+        }
+        itemClicked(item)
+    }
+
+    func outlineView(_ outlineView: SideBarOutlineView,
+                     beginDraggingTabAtRow row: Int,
+                     with mouseDownEvent: NSEvent) {
+        guard row >= 0,
+              let tab = outlineView.item(atRow: row) as? Tab,
+              let rowView = outlineView.view(
+                atColumn: 0,
+                row: row,
+                makeIfNecessary: false) as? SidebarTabCellView,
+              let image = rowView.createDraggingImage() else {
+            AppLogDebug(
+                "[SIDEBAR_TAB_DRAG_THRESHOLD] manual drag failed row=\(row)"
+            )
+            return
+        }
+
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(String(tab.guid), forType: .normalTab)
+        pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let frame = outlineView.convert(rowView.bounds, from: rowView)
+        draggingItem.setDraggingFrame(frame, contents: image)
+
+        let session = outlineView.beginDraggingSession(
+            with: [draggingItem],
+            event: mouseDownEvent,
+            source: self)
+        let screenPoint = mouseDownEvent.window?
+            .convertPoint(toScreen: mouseDownEvent.locationInWindow) ?? NSEvent.mouseLocation
+        AppLogDebug(
+            "[SIDEBAR_TAB_DRAG_THRESHOLD] manual drag begin " +
+            "row=\(row) tab=\(tab.guid) screen=\(screenPoint)"
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.expandFloatingBookmarkParentsIfNeeded()
+            self?.browserState.isDraggingTab = true
+        }
+        browserState.tabDraggingSession.attachNativeSession(session)
+        browserState.tabDraggingSession.begin(
+            draggingItem: tab,
+            screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
+            containerView: hostVC?.view
         )
     }
     
