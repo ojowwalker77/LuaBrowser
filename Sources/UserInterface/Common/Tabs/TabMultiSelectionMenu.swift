@@ -34,28 +34,28 @@ enum TabMultiSelectionMenu {
 
         items.append(.separator())
 
-        let addToBookmarks = NSMenuItem(
+        let addToBookmarkItem = NSMenuItem(
             title: NSLocalizedString(
-                "Add to Bookmarks",
-                comment: "Tab multi-selection context menu - submenu to bookmark all selected tabs"),
+                "Add to Bookmark",
+                comment: "Tab multi-selection context menu - add selected tabs to the root bookmark location"),
+            action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
+            keyEquivalent: "")
+        addToBookmarkItem.target = controller
+        items.append(addToBookmarkItem)
+
+        let addToFolderItem = NSMenuItem(
+            title: NSLocalizedString(
+                "Add to Folder",
+                comment: "Tab multi-selection context menu - submenu to add selected tabs to a bookmark folder"),
             action: nil,
             keyEquivalent: "")
         let bookmarkSubmenu = NSMenu()
 
-        let bookmarkBarItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Bookmark Bar",
-                comment: "Tab multi-selection context menu - bookmark selected tabs into the root bookmark bar"),
-            action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
-            keyEquivalent: "")
-        bookmarkBarItem.target = controller
-        bookmarkSubmenu.addItem(bookmarkBarItem)
-
         let folders = browserState.bookmarkManager.getAllFolderWithHierarchy()
         if !folders.isEmpty {
             buildFolderMenuItems(from: folders, into: bookmarkSubmenu, controller: controller)
+            bookmarkSubmenu.addItem(.separator())
         }
-        bookmarkSubmenu.addItem(.separator())
 
         let newFolderItem = NSMenuItem(
             title: NSLocalizedString(
@@ -66,14 +66,14 @@ enum TabMultiSelectionMenu {
         newFolderItem.target = controller
         bookmarkSubmenu.addItem(newFolderItem)
 
-        addToBookmarks.submenu = bookmarkSubmenu
-        items.append(addToBookmarks)
+        addToFolderItem.submenu = bookmarkSubmenu
+        items.append(addToFolderItem)
 
         items.append(.separator())
 
         let createGroupItem = NSMenuItem(
             title: NSLocalizedString(
-                "Create Tab Group",
+                "Add Tabs to New Group",
                 comment: "Tab multi-selection context menu - create a new tab group from selected tabs"),
             action: #selector(TabMultiSelectionMenuController.createTabGroup),
             keyEquivalent: "")
@@ -83,8 +83,8 @@ enum TabMultiSelectionMenu {
         if !orderedGroups.isEmpty {
             let addToGroup = NSMenuItem(
                 title: NSLocalizedString(
-                    "Add to Group",
-                    comment: "Tab multi-selection context menu - submenu to add selected tabs to an existing tab group"),
+                    "Move Tabs to Group",
+                    comment: "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"),
                 action: nil,
                 keyEquivalent: "")
             let groupSubmenu = NSMenu()
@@ -111,8 +111,17 @@ enum TabMultiSelectionMenu {
                 "Close Tabs",
                 comment: "Tab multi-selection context menu - close all selected tabs"),
             action: #selector(TabMultiSelectionMenuController.closeSelected),
-            keyEquivalent: "")
+            keyEquivalent: "w")
+        closeItem.keyEquivalentModifierMask = [.command]
         items.append(closeItem)
+
+        let closeOtherItem = NSMenuItem(
+            title: NSLocalizedString(
+                "Close Other Tabs",
+                comment: "Tab multi-selection context menu - close all tabs except the selected ones"),
+            action: #selector(TabMultiSelectionMenuController.closeOtherSelected),
+            keyEquivalent: "")
+        items.append(closeOtherItem)
 
         items.forEach { item in
             if item.representedObject == nil {
@@ -167,6 +176,7 @@ final class TabMultiSelectionMenuController: NSObject {
     @objc func duplicateSelected() { browserState?.duplicateMultiSelectedTabs() }
     @objc func copyLinks() { browserState?.copyLinksOfMultiSelectedTabs() }
     @objc func closeSelected() { browserState?.closeMultiSelectedTabs() }
+    @objc func closeOtherSelected() { browserState?.closeTabsOutsideMultiSelection() }
     @objc func addToBookmarkBar() { browserState?.bookmarkMultiSelectedTabs(into: nil) }
     @objc func addToFolder(_ sender: NSMenuItem) {
         guard let folder = sender.representedObject as? Bookmark else { return }
@@ -191,11 +201,19 @@ final class TabMultiSelectionMenuController: NSObject {
 
     // Disable a group entry when every selected tab is already in that group.
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard menuItem.action == #selector(addToExistingGroup(_:)),
-              let token = menuItem.representedObject as? String,
-              let browserState else {
-            return true
+        guard let browserState else { return true }
+
+        if menuItem.action == #selector(addToExistingGroup(_:)) {
+            guard let token = menuItem.representedObject as? String else {
+                return false
+            }
+            return !browserState.multiSelectionTargets(forAddingToGroup: token).isEmpty
         }
-        return !browserState.multiSelectionTargets(forAddingToGroup: token).isEmpty
+
+        if menuItem.action == #selector(closeOtherSelected) {
+            return browserState.hasTabsOutsideMultiSelection
+        }
+
+        return true
     }
 }

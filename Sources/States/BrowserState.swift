@@ -670,6 +670,18 @@ class BrowserState {
         }
     }
 
+    var hasTabsOutsideMultiSelection: Bool {
+        let selectedTabIds = Set(orderedMultiSelectedTabs.map(\.guid))
+        return tabs.contains { !selectedTabIds.contains($0.guid) }
+    }
+
+    @MainActor
+    func closeTabsOutsideMultiSelection() {
+        let selectedTabIds = Set(orderedMultiSelectedTabs.map(\.guid))
+        guard !selectedTabIds.isEmpty else { return }
+        closeTabs(keeping: selectedTabIds)
+    }
+
     func copyLinksOfMultiSelectedTabs() {
         let urls = orderedMultiSelectedTabs.compactMap { $0.url }
         clearMultiSelection()

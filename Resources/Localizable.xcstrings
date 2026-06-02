@@ -164,20 +164,20 @@
     "Add New" : {
       "comment" : "Shortcuts settings - Placeholder text when no shortcut is assigned"
     },
+    "Add Tabs to New Group" : {
+      "comment" : "Tab multi-selection context menu - create a new tab group from selected tabs"
+    },
     "Add to Bookmark" : {
-      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar"
+      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar\nTab multi-selection context menu - add selected tabs to the root bookmark location"
     },
     "Add to Bookmark Bar" : {
       "comment" : "Tab context menu - Add current tab to root bookmark bar"
     },
-    "Add to Bookmarks" : {
-      "comment" : "Tab multi-selection context menu - submenu to bookmark all selected tabs"
-    },
     "Add to Folder" : {
-      "comment" : "Tab context menu - Menu item to add tab to bookmarks"
+      "comment" : "Tab context menu - Menu item to add tab to bookmarks\nTab multi-selection context menu - submenu to add selected tabs to a bookmark folder"
     },
     "Add to Group" : {
-      "comment" : "Tab context menu - Submenu to add this tab to an existing tab group\nTab multi-selection context menu - submenu to add selected tabs to an existing tab group"
+      "comment" : "Tab context menu - Submenu to add this tab to an existing tab group"
     },
     "Additional browser settings" : {
       "comment" : "General settings - Title for always more settings"
@@ -259,9 +259,6 @@
     },
     "Bookmark All Tabs..." : {
       "comment" : "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window"
-    },
-    "Bookmark Bar" : {
-      "comment" : "Tab multi-selection context menu - bookmark selected tabs into the root bookmark bar"
     },
     "Bookmark Name" : {
       "comment" : "Bookmark editor - Placeholder for bookmark name input"
@@ -367,7 +364,7 @@
       "comment" : "Tab group overview - Accessibility label for the button that closes the overview"
     },
     "Close Other Tabs" : {
-      "comment" : "Tab context menu - Menu item to close all tabs except the selected one"
+      "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
     },
     "Close Tab" : {
       "comment" : "Tab group overview - Accessibility label for the button that closes one tab card"
@@ -440,9 +437,6 @@
     },
     "Create a new folder to organize your bookmarks." : {
       "comment" : "Folder creator - Subtitle explaining new folder creation"
-    },
-    "Create Tab Group" : {
-      "comment" : "Tab multi-selection context menu - create a new tab group from selected tabs"
     },
     "Custom Telegram bot" : {
       "comment" : "Phi Link - Custom bot title"
@@ -776,6 +770,9 @@
     },
     "More Settings" : {
       "comment" : "Address bar menu - Settings submenu item to open settings page\nExtension list - Website settings item to open more settings"
+    },
+    "Move Tabs to Group" : {
+      "comment" : "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"
     },
     "Move to Group" : {
       "comment" : "Tab context menu - Submenu to move this tab to another tab group"
