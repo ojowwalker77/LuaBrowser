@@ -278,6 +278,8 @@ final class SplitPaneHostView: NSView {
         container.layer?.cornerCurve = .continuous
         container.layer?.cornerRadius = outerCornerRadius
         container.layer?.masksToBounds = true
+        container.layer?.borderWidth = 1
+        container.phiLayer?.setBorderColor(.border)
     }
 
     /// Outer corner radius the focus ring should follow at the pane corners
@@ -494,11 +496,10 @@ private final class DividerHandle: NSView {
 
 // MARK: - Focus ring
 
-/// 3pt border overlaid on the focused pane. Painted in the app's Accent
-/// Color (`Assets.xcassets/AccentColor`, surfaced as `controlAccentColor`)
-/// so the focused pane reads with the same affordance as other accented
-/// chrome. Hit-test transparent so clicks pass through to Chromium content
-/// and still fire `onPaneInteraction`.
+/// 2pt border overlaid on the focused pane. Painted in the active browser
+/// theme color so the focused pane reads with the same affordance as other
+/// themed chrome. Hit-test transparent so clicks pass through to Chromium
+/// content and still fire `onPaneInteraction`.
 ///
 /// Uses `CALayer.cornerCurve = .continuous` so the rounded corners exactly
 /// match the pane container's squircle clip.
@@ -535,7 +536,7 @@ private final class FocusRingView: NSView {
         guard let layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.borderColor = NSColor.controlAccentColor.cgColor
+        layer.borderColor = ThemedColor.themeColor.resolve(in: self).cgColor
         CATransaction.commit()
     }
 }

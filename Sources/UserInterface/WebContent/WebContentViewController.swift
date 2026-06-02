@@ -1647,7 +1647,10 @@ class WebContentViewController: NSViewController {
     /// Updates left-container border and inset styling for AI Chat state.
     /// - Parameter isAIChatExpanded: Whether the AI Chat sidebar is expanded.
     private func updateLeftContainerStyle(isAIChatExpanded: Bool) {
-        if isAIChatExpanded {
+        let shouldSeparateExpandedChat = isAIChatExpanded &&
+            PhiPreferences.GeneralSettings.loadLayoutMode() != .performance
+
+        if shouldSeparateExpandedChat {
             leftContainerView.layer?.borderWidth = 1
             leftContainerView.phiLayer?.setBorderColor(.border)
             leftContainerInsetConstraint?.update(inset: WebContentConstant.contentEdgeSpacing)
