@@ -11,6 +11,7 @@ struct TabRenderData: Equatable {
     var url: String
     var isActive: Bool
     var isPinned: Bool
+    var isMultiSelected: Bool = false
 
     // `sourceTab` is intentionally excluded from `Equatable`.
     weak var sourceTab: Tab?
@@ -19,6 +20,7 @@ struct TabRenderData: Equatable {
             lhs.title == rhs.title &&
             lhs.url == rhs.url &&
             lhs.isActive == rhs.isActive &&
-            lhs.isPinned == rhs.isPinned
+            lhs.isPinned == rhs.isPinned &&
+            lhs.isMultiSelected == rhs.isMultiSelected
     }
 }

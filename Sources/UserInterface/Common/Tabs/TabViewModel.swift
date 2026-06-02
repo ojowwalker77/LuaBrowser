@@ -20,6 +20,9 @@ final class TabViewModel {
     private(set) var faviconLoadURL: String?
     var isActive: Bool = false
     var isActiveSuppressed: Bool = false
+    /// True when this tab is part of the temporary multi-selection (the active
+    /// tab is implicitly included but never carries this flag).
+    var isMultiSelected: Bool = false
     var isHovered: Bool = false
     var isHoverSuppressed: Bool = false
     var isPressed: Bool = false
@@ -77,6 +80,7 @@ final class TabViewModel {
         liveFaviconRevision = 0
         isActive = false
         isActiveSuppressed = false
+        isMultiSelected = false
         isHovered = false
         isHoverSuppressed = false
         isPressed = false
@@ -276,6 +280,19 @@ final class TabViewModel {
                     self.groupColor = color
                 }
                 .store(in: &cancellables)
+        }
+
+        if let browserState {
+            self.isMultiSelected = browserState.multiSelection.contains(expectedGuid)
+            browserState.$multiSelection
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] selection in
+                    guard let self, self.configuredTabGuid == expectedGuid else { return }
+                    self.isMultiSelected = selection.contains(expectedGuid)
+                }
+                .store(in: &cancellables)
+        } else {
+            self.isMultiSelected = false
         }
     }
 

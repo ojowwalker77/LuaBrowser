@@ -12,6 +12,7 @@ final class TabBackgroundLayer: CAShapeLayer {
     enum State {
         case inactive
         case hovered
+        case subSelected
         case active
     }
 
@@ -70,6 +71,8 @@ final class TabBackgroundLayer: CAShapeLayer {
         switch tabState {
             case .active:
                 fillColor = ThemedColor.contentOverlayBackground.resolve(in: sourceView).cgColor
+            case .subSelected:
+                fillColor = ThemedColor.tabSubSelectionBackground.resolve(in: sourceView).cgColor
             case .hovered:
                 fillColor = ThemedColor.hover.resolve(in: sourceView).cgColor
             case .inactive:

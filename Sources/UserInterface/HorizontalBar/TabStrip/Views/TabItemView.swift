@@ -36,7 +36,7 @@ final class TabItemView: NSView {
 
     // MARK: - Public Properties
 
-    var onSelect: (() -> Void)?
+    var onSelect: ((NSEvent.ModifierFlags) -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
 
     /// Called when a drag begins from this tab view.
@@ -69,6 +69,7 @@ final class TabItemView: NSView {
     // MARK: - State
 
     private var isActive = false
+    private var isMultiSelected = false
     private var isPinned = false
     private var isDragHighlighted = false {
         didSet {
@@ -314,14 +315,19 @@ final class TabItemView: NSView {
     private func updateAppearance() {
         backgroundLayer.isPinned = isPinned
 
-        switch (isActive, isHovered || isDragHighlighted) {
-        case (true, _):
+        if isActive {
             backgroundLayer.tabState = .active
             layer?.zPosition = 10
-        case (false, true):
+        } else if isMultiSelected {
+            // Sub-selection is a persistent state and must win over the
+            // transient hover background, otherwise a Cmd+click on a hovered
+            // tab shows no visible change.
+            backgroundLayer.tabState = .subSelected
+            layer?.zPosition = 0
+        } else if isHovered || isDragHighlighted {
             backgroundLayer.tabState = .hovered
             layer?.zPosition = 5
-        case (false, false):
+        } else {
             backgroundLayer.tabState = .inactive
             layer?.zPosition = 0
         }
@@ -365,6 +371,7 @@ final class TabItemView: NSView {
     func configure(with data: TabRenderData) {
         currentTabId = data.id
         isActive = data.isActive
+        isMultiSelected = data.isMultiSelected
         isPinned = data.isPinned
 
         updateAppearance()
@@ -419,6 +426,11 @@ final class TabItemView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        if let tab = sourceTab,
+           let state = MainBrowserWindowControllersManager.shared.getBrowserState(for: tab.windowId),
+           TabMultiSelectionMenu.populateIfNeeded(menu, browserState: state) {
+            return menu
+        }
         if let representable = sourceTab as? ContextMenuRepresentable {
             representable.makeContextMenu(on: menu)
         }
@@ -473,7 +485,7 @@ final class TabItemView: NSView {
                 return
             }
             
-            onSelect?()
+            onSelect?(event.modifierFlags)
         }
         mouseDownPoint = nil
     }

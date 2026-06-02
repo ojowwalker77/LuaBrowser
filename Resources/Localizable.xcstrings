@@ -170,11 +170,14 @@
     "Add to Bookmark Bar" : {
       "comment" : "Tab context menu - Add current tab to root bookmark bar"
     },
+    "Add to Bookmarks" : {
+      "comment" : "Tab multi-selection context menu - submenu to bookmark all selected tabs"
+    },
     "Add to Folder" : {
       "comment" : "Tab context menu - Menu item to add tab to bookmarks"
     },
     "Add to Group" : {
-      "comment" : "Tab context menu - Submenu to add this tab to an existing tab group"
+      "comment" : "Tab context menu - Submenu to add this tab to an existing tab group\nTab multi-selection context menu - submenu to add selected tabs to an existing tab group"
     },
     "Additional browser settings" : {
       "comment" : "General settings - Title for always more settings"
@@ -256,6 +259,9 @@
     },
     "Bookmark All Tabs..." : {
       "comment" : "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window"
+    },
+    "Bookmark Bar" : {
+      "comment" : "Tab multi-selection context menu - bookmark selected tabs into the root bookmark bar"
     },
     "Bookmark Name" : {
       "comment" : "Bookmark editor - Placeholder for bookmark name input"
@@ -366,6 +372,9 @@
     "Close Tab" : {
       "comment" : "Tab group overview - Accessibility label for the button that closes one tab card"
     },
+    "Close Tabs" : {
+      "comment" : "Tab multi-selection context menu - close all selected tabs"
+    },
     "Code Examples" : {
 
     },
@@ -420,6 +429,9 @@
     "Copy Link" : {
       "comment" : "Address bar menu - Copy link menu item\nBookmark Copy Link menu item\nDownload item row - Tooltip for copy link button\nSidebar address bar - Copy current page URL button tooltip\nTab context menu - Menu item to copy the tab URL to clipboard\nTooltip for button to copy download URL in living downloads toast"
     },
+    "Copy Links" : {
+      "comment" : "Tab multi-selection context menu - copy links of all selected tabs"
+    },
     "Coral" : {
       "comment" : "Coral theme color name"
     },
@@ -428,6 +440,9 @@
     },
     "Create a new folder to organize your bookmarks." : {
       "comment" : "Folder creator - Subtitle explaining new folder creation"
+    },
+    "Create Tab Group" : {
+      "comment" : "Tab multi-selection context menu - create a new tab group from selected tabs"
     },
     "Custom Telegram bot" : {
       "comment" : "Phi Link - Custom bot title"
@@ -479,6 +494,9 @@
     },
     "Duplicate" : {
       "comment" : "Tab context menu - Menu item to duplicate the selected tab"
+    },
+    "Duplicate Tabs" : {
+      "comment" : "Tab multi-selection context menu - duplicate all selected tabs"
     },
     "e.g. 123456:ABC-DEF..." : {
 
@@ -784,7 +802,7 @@
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
     },
     "New Folder" : {
-      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder"
+      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder\nTab multi-selection context menu - bookmark selected tabs into a newly created folder"
     },
     "New Folder…" : {
       "comment" : "Bookmark editor - Create new folder option in folder picker"

@@ -296,8 +296,14 @@ class BookmarkManager: ObservableObject {
 //    }
     
     func addBookmark(title: String, url: String, to parent: Bookmark? = nil, targetIndex: Int? = nil) {
+        addBookmark(title: title, url: url, toParentGuid: parent?.guid, targetIndex: targetIndex)
+    }
+
+    /// Adds a bookmark under a parent referenced by guid. Use when the parent
+    /// was just created and may not yet be present in the in-memory index.
+    func addBookmark(title: String, url: String, toParentGuid parentGuid: String?, targetIndex: Int? = nil) {
         guard let profileId = browserState?.profileId else { return }
-        browserState?.localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parent?.guid, index: targetIndex)
+        browserState?.localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parentGuid, index: targetIndex)
     }
     
     func addFolder(title: String, to parent: Bookmark? = nil) {

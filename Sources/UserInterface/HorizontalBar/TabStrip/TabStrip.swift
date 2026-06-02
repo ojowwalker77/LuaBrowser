@@ -1147,6 +1147,16 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             }
             .store(in: &cancellables)
 
+        browserState.$multiSelection
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.isActive else { return }
+                self.performLayout(context: .dataChanged)
+                self.needsLayout = true
+            }
+            .store(in: &cancellables)
+
         browserState.$groupOverviewState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -1529,6 +1539,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 url: tab.url ?? "",
                 isActive: isTabActive(tab, activeTab: activeTab),
                 isPinned: isPinned,
+                isMultiSelected: browserState.multiSelection.contains(tab.guid),
                 sourceTab: tab
             )
             view.configure(with: renderData)
@@ -1549,8 +1560,17 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 self?.handleTabDragEnd()
             }
 
-            view.onSelect = { [weak self, weak tab] in
-                self?.handleTabSelection(tab: tab)
+            view.onSelect = { [weak self, weak tab] flags in
+                guard let self, let tab else { return }
+                // Cmd+click toggles multi-selection; owner handles pinned/active.
+                if flags.contains(.command) {
+                    self.browserState.toggleMultiSelection(for: tab)
+                } else {
+                    if self.browserState.multiSelection.isActive {
+                        self.browserState.clearMultiSelection()
+                    }
+                    self.handleTabSelection(tab: tab)
+                }
             }
             if !isPinned {
                 let capturedIndex = index
@@ -1981,6 +2001,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     private func handleChipClick(token: String) {
         guard browserState.groups[token] != nil else { return }
+        // A plain click while multi-selecting exits the selection
+        if browserState.multiSelection.isActive {
+            browserState.clearMultiSelection()
+        }
         browserState.showGroupOverview(token: token)
         AppLogDebug(
             "[TAB_GROUPS][STRIP] chip overview windowId=\(browserState.windowId) " +

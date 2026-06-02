@@ -275,6 +275,17 @@ private final class TabGroupHeaderHostingView: NSHostingView<TabGroupHeaderView>
             return
         }
 
+        // Cmd+click never opens the overview: a collapsed group expands,
+        // an expanded group does nothing (in particular it must not clear
+        // an active multi-selection).
+        if event.modifierFlags.contains(.command) {
+            cancelPendingSingleClick()
+            if rootView.viewModel.isCollapsed {
+                dragDelegate?.tabGroupHeaderHostingViewDidToggleCollapse(self)
+            }
+            return
+        }
+
         scheduleOverviewRequest()
     }
 
@@ -782,6 +793,10 @@ extension TabGroupCellView: TabGroupHeaderHostingViewDelegate {
 
     fileprivate func tabGroupHeaderHostingViewDidRequestOverview(_ view: TabGroupHeaderHostingView) {
         guard let group = configuredGroup else { return }
+        // A plain click while multi-selecting exits the selection
+        if let state = configuredBrowserState, state.multiSelection.isActive {
+            state.clearMultiSelection()
+        }
         groupCellDelegate?.tabGroupCellDidRequestOverview(self, group: group)
     }
 
@@ -845,6 +860,17 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
         guard currentMemberOrder.indices.contains(row),
               let tab = tabsByGuid[currentMemberOrder[row]] else {
             return
+        }
+        // Cmd+click toggles multi-selection; a plain click clears it first.
+        if let state = configuredBrowserState {
+            let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+            if isCommandClick {
+                state.toggleMultiSelection(for: tab)
+                return
+            }
+            if state.multiSelection.isActive {
+                state.clearMultiSelection()
+            }
         }
         tab.performAction(with: nil)
     }

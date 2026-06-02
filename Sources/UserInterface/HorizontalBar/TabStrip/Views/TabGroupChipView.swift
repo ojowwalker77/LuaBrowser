@@ -551,6 +551,14 @@ final class TabGroupChipView: NSView {
                 if event.clickCount > 1 {
                     cancelPendingSingleClick()
                     onCollapseToggle?(token)
+                } else if event.modifierFlags.contains(.command) {
+                    // Cmd+click never opens the overview: a collapsed group
+                    // expands, an expanded group does nothing (in particular
+                    // it must not clear an active multi-selection).
+                    cancelPendingSingleClick()
+                    if isCollapsed {
+                        onCollapseToggle?(token)
+                    }
                 } else {
                     scheduleOverviewClick(for: token)
                 }

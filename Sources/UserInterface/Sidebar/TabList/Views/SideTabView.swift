@@ -19,6 +19,9 @@ struct SideTabView: View {
         if model.isActive {
             return Color(nsColor: NSColor(resource: .sidebarTabSelected))
         }
+        if model.isMultiSelected {
+            return Color(nsColor: NSColor(resource: .sidebarTabSubSelected))
+        }
         if model.isHovered {
             return Color(nsColor: NSColor(resource: .sidebarTabHovered))
         }

@@ -31,9 +31,14 @@ extension MainBrowserWindowController {
         if omniBoxContainerViewController?.hasShown ?? false {
             omniBoxContainerViewController?.hideOmniBox()
             return true
-        } else {
-            return false
         }
+        // In multi-select mode Cmd+W closes the whole selection instead of
+        // letting Chromium close only the active tab.
+        if browserState.multiSelection.isActive {
+            browserState.closeMultiSelectedTabs()
+            return true
+        }
+        return false
     }
     
     @IBAction func openLocationBar(_ sender: Any?) {

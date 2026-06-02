@@ -87,7 +87,19 @@ class BrowserState {
     private var lastSentinelOnLogin: Bool = PhiPreferences.AISettings.launchSentinelOnLogin.loadValue()
     
     /// Currently focused tab.
-    @Published var focusingTab: Tab?
+    @Published var focusingTab: Tab? {
+        didSet {
+            // Activating a different tab (new tab, switch, etc.) exits the
+            // temporary multi-selection. Building a selection via Cmd+click
+            // never reassigns this, so it won't interfere.
+            if oldValue?.guid != focusingTab?.guid {
+                clearMultiSelection()
+            }
+        }
+    }
+
+    /// Temporary multi-selection. Empty == normal single-selection mode.
+    @Published private(set) var multiSelection: TabMultiSelection = .empty
 
     /// Visible bookmark items in the sidebar bookmark section.
     /// This list is maintained by `SidebarTabListViewController` and is ordered by the current
@@ -249,6 +261,7 @@ class BrowserState {
                 let newLayoutMode = Self.buildLayoutMode()
                 if self.layoutMode != newLayoutMode {
                     self.layoutMode = newLayoutMode
+                    self.clearMultiSelection()
                 }
                 self.mayUpdateNormalTabsOnLayoutChanged()
                 self.updateAISettings()
@@ -464,6 +477,14 @@ class BrowserState {
         normalTabs = normalTabOrder.compactMap { guid in
             tabs.first { $0.guid == guid }
         }
+
+        if multiSelection.isActive {
+            var pruned = multiSelection
+            pruned.formIntersection(normalTabGuidSet)
+            if pruned != multiSelection {
+                multiSelection = pruned
+            }
+        }
     }
     
     
@@ -591,6 +612,154 @@ class BrowserState {
         tabSwitchManager.handleExternalFocusChange()
         focusingTab = tab
         tabSwitchManager.recordActiveTab(tab)
+    }
+
+    // MARK: - Multi-selection
+
+    @MainActor
+    func toggleMultiSelection(for tab: Tab) {
+        // Pinned / bookmark-backed tabs do not participate: exit multi-select + activate.
+        if tab.isPinned {
+            clearMultiSelection()
+            openOrFocusPinnedTab(tab)
+            return
+        }
+        if isBookmarkBackedTab(tab) {
+            clearMultiSelection()
+            focuseTab(tab)
+            return
+        }
+        // A group overview is a separate surface where multi-selection is
+        // disabled: a Cmd+click activates the tab (which dismisses the
+        // overview) rather than toggling the selection.
+        if activeGroupOverviewToken != nil {
+            clearMultiSelection()
+            focuseTab(tab)
+            return
+        }
+        // The active tab is always implicitly included; toggling it is a no-op.
+        if tab.guid == focusingTab?.guid { return }
+        multiSelection.toggle(tab.guid)
+    }
+
+    func clearMultiSelection() {
+        guard multiSelection.isActive else { return }
+        multiSelection = .empty
+    }
+
+    /// Selected tabs in authoritative tab order (active tab implicitly included).
+    var orderedMultiSelectedTabs: [Tab] {
+        var target = multiSelection.guids
+        if let active = focusingTab?.guid { target.insert(active) }
+        return normalTabs.filter { target.contains($0.guid) }
+    }
+
+    private func isBookmarkBackedTab(_ tab: Tab) -> Bool {
+        guard !tab.isPinned, let guid = tab.guidInLocalDB, !guid.isEmpty else { return false }
+        return bookmarkManager.bookmark(withGuid: guid) != nil
+    }
+
+    // MARK: - Multi-selection batch actions
+
+    @MainActor
+    func closeMultiSelectedTabs() {
+        let tabs = orderedMultiSelectedTabs
+        clearMultiSelection()
+        for tab in tabs {
+            tab.close()
+        }
+    }
+
+    func copyLinksOfMultiSelectedTabs() {
+        let urls = orderedMultiSelectedTabs.compactMap { $0.url }
+        clearMultiSelection()
+        guard !urls.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(urls.joined(separator: "\n"), forType: .string)
+    }
+
+    @MainActor
+    func duplicateMultiSelectedTabs() {
+        let tabs = orderedMultiSelectedTabs
+        clearMultiSelection()
+        for tab in tabs {
+            guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
+            createTab(tabURL, focusAfterCreate: true)
+        }
+    }
+
+    func bookmarkMultiSelectedTabs(into folder: Bookmark?) {
+        let tabs = orderedMultiSelectedTabs
+        clearMultiSelection()
+        for tab in tabs {
+            guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
+            bookmarkManager.addBookmark(title: tab.title,
+                                        url: URLProcessor.processUserInput(tabURL),
+                                        to: folder)
+        }
+    }
+
+    /// Bookmarks a pre-captured tab snapshot into a newly created folder.
+    /// The caller must snapshot the selection before any async UI (e.g. the
+    /// new-folder dialog) clears it; reading the live selection here would
+    /// only see the implicit active tab.
+    func bookmarkTabs(_ tabs: [Tab], intoNewFolderNamed name: String) {
+        let validTabs = tabs.filter { ($0.url?.isEmpty == false) }
+        clearMultiSelection()
+        guard let first = validTabs.first, let firstURL = first.url else { return }
+        bookmarkManager.addFolderFromTabStrip(
+            title: name,
+            to: nil,
+            bookmarkTitle: first.title,
+            bookmarkURL: URLProcessor.processUserInput(firstURL)
+        ) { [weak self] success, newFolderGuid in
+            // The folder may not be in the in-memory index yet, so address it
+            // by guid rather than resolving a `Bookmark` instance.
+            guard success, let self else { return }
+            for tab in validTabs.dropFirst() {
+                guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
+                self.bookmarkManager.addBookmark(
+                    title: tab.title,
+                    url: URLProcessor.processUserInput(tabURL),
+                    toParentGuid: newFolderGuid)
+            }
+        }
+    }
+
+    @MainActor
+    func groupMultiSelectedTabs() {
+        let tabs = orderedMultiSelectedTabs
+        clearMultiSelection()
+        guard !tabs.isEmpty, let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        let tabIds = tabs.map { NSNumber(value: Int64($0.guid)) }
+        let token = bridge.createGroupFromTabs(withWindowId: Int64(windowId),
+                                               tabIds: tabIds,
+                                               title: nil,
+                                               color: nil)
+        guard !token.isEmpty else { return }
+        for tab in tabs {
+            applyOptimisticGroupMembership(tabId: tab.guid, newToken: token)
+        }
+    }
+
+    /// Targets to add to an existing group, excluding tabs already in it.
+    func multiSelectionTargets(forAddingToGroup token: String) -> [Tab] {
+        orderedMultiSelectedTabs.filter { $0.groupToken != token }
+    }
+
+    @MainActor
+    func addMultiSelectedTabs(toGroup token: String) {
+        let targets = multiSelectionTargets(forAddingToGroup: token)
+        clearMultiSelection()
+        guard !targets.isEmpty, let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        let tabIds = targets.map { NSNumber(value: Int64($0.guid)) }
+        bridge.addTabsToGroup(withWindowId: Int64(windowId),
+                              tabIds: tabIds,
+                              tokenHex: token)
+        for tab in targets {
+            applyOptimisticGroupMembership(tabId: tab.guid, newToken: token)
+        }
     }
     
     @MainActor
