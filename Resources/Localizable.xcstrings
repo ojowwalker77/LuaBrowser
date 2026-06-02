@@ -236,7 +236,7 @@
     "Are you sure you want to install version %@ and restart Phi?" : {
       "comment" : "Update alert - Message asking user to confirm update installation with version number"
     },
-    "Attach file" : {
+    "Attach files" : {
       "comment" : "Feedback form - Label for file attachment section"
     },
     "Automatically add current tab as context to new conversation" : {
@@ -345,8 +345,8 @@
     "Checking for updates..." : {
       "comment" : "Phi menu - Menu item text while checking for updates"
     },
-    "Choose File" : {
-      "comment" : "Feedback form - Button to open file picker for attachment"
+    "Choose Files" : {
+      "comment" : "Feedback form - Button to open file picker for attachments"
     },
     "Chromium Engine Version %@" : {
       "comment" : "About window - Chromium engine version label"
@@ -449,6 +449,12 @@
     },
     "Coral" : {
       "comment" : "Coral theme color name"
+    },
+    "Could Not Add Attachment" : {
+      "comment" : "Feedback form - Alert title when selected attachments cannot be added"
+    },
+    "Could Not Save Feedback" : {
+      "comment" : "Feedback form - Alert title when local outbox save fails"
     },
     "Crash Samples" : {
 
@@ -605,9 +611,6 @@
     },
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
-    },
-    "File too large" : {
-      "comment" : "Feedback form - Alert title when selected file exceeds size limit"
     },
     "Find shortcut keys" : {
       "comment" : "Shortcuts settings - Search field placeholder to find shortcuts"
@@ -916,7 +919,7 @@
       "comment" : "Phi Link - Official Bot title"
     },
     "OK" : {
-      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nFeedback form - OK button to dismiss file size alert\nGeneric - OK button to dismiss an alert"
+      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nGeneric - OK button to dismiss an alert"
     },
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
@@ -938,6 +941,9 @@
     },
     "Open User Data Directory" : {
       "comment" : "Debug menu item to reveal the current user's data storage directory in Finder"
+    },
+    "Or paste an image" : {
+      "comment" : "Feedback form - Hint explaining pasted images can be added as attachments"
     },
     "Orange" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
@@ -996,9 +1002,6 @@
     "Please reauthenticate to restore account features." : {
       "comment" : "Account settings - Tooltip explaining why reauthentication is needed"
     },
-    "Please select a file smaller than 2MB." : {
-      "comment" : "Feedback form - Alert message explaining file size limit"
-    },
     "Pop up" : {
       "comment" : "Notification menu option - Enable auto popup for notification cards"
     },
@@ -1043,6 +1046,9 @@
     },
     "Remove" : {
       "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
+    },
+    "Remove attachment" : {
+      "comment" : "Feedback form - Tooltip for removing an attachment"
     },
     "Remove from Group" : {
       "comment" : "Tab context menu - Remove this tab from its tab group"

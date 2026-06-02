@@ -6,14 +6,11 @@
 import Cocoa
 import SwiftUI
 
-class FeedbackViewModel: ObservableObject {
-    @Published var urlString: String = ""
-}
-
+@MainActor
 class FeedbackViewController: NSViewController {
     let hostWindowController: MainBrowserWindowController
     
-    private var viewModel = FeedbackViewModel()
+    private let viewModel = FeedbackViewModel()
     
     private lazy var feedbackView: FeedbackView = {
         // Pass the viewModel to the View
@@ -29,10 +26,16 @@ class FeedbackViewController: NSViewController {
         } onCancel: { [weak self] in
             guard let self else { return }
             closeWindow()
-        } onSend: {[weak self] payload in
+        } onSend: { [weak self] in
             guard let self else { return }
-            ChromiumLauncher.sharedInstance().bridge?.submitFeedback(withParams: payload, windowId: hostWindowController.browserState.windowId.int64Value)
-            closeWindow()
+            refreshFeedbackContext()
+            do {
+                try viewModel.enqueueFeedback()
+                closeWindow()
+            } catch {
+                AppLogError("Feedback V2 enqueue failed: \(error.localizedDescription)")
+                viewModel.localSaveError = error.localizedDescription
+            }
         }
         return view
     }()
@@ -65,7 +68,8 @@ class FeedbackViewController: NSViewController {
         }
         
         if let tab = hostWindowController.browserState.focusingTab {
-            updateActiveTabURL(URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "") )
+            updateActiveTabURL(URLProcessor.phiBrandEnsuredUrlString(tab.url ?? ""))
+            viewModel.pageTitle = tab.title
         }
     }
     
@@ -79,6 +83,14 @@ class FeedbackViewController: NSViewController {
         DispatchQueue.main.async {
             self.viewModel.urlString = string ?? ""
         }
+    }
+
+    private func refreshFeedbackContext() {
+        if let tab = hostWindowController.browserState.focusingTab {
+            viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "")
+            viewModel.pageTitle = tab.title
+        }
+        viewModel.componentVersions = hostWindowController.browserState.extensionManager.phiExtensionVersions
     }
     
     private func closeWindow() {

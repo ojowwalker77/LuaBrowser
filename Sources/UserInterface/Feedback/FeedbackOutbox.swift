@@ -1,0 +1,1314 @@
+// Copyright 2026 Phinomenon Inc.
+//
+// Use of this source code is governed by an Apache license that can be
+// found in the LICENSE file.
+
+import AppKit
+import Foundation
+import UniformTypeIdentifiers
+
+@MainActor
+final class FeedbackViewModel: ObservableObject {
+    @Published var urlString: String = ""
+    @Published var descriptionText: String = ""
+    @Published private(set) var attachments: [FeedbackDraftAttachment] = []
+    @Published var localSaveError: String?
+    @Published var attachmentError: String?
+
+    var pageTitle: String?
+    var componentVersions: [String: String] = [:]
+
+    var canSend: Bool {
+        !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func addFileURLs(_ urls: [URL]) {
+        var errors: [String] = []
+
+        for url in urls {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            do {
+                let info = try FeedbackOutbox.selectedAttachmentInfo(for: url)
+                attachments.append(FeedbackDraftAttachment(
+                    filename: url.lastPathComponent,
+                    size: info.size,
+                    kind: info.isImage ? .image : .file,
+                    source: .file(url)
+                ))
+            } catch {
+                errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        if !errors.isEmpty {
+            let shownErrors = errors.prefix(3).joined(separator: "\n")
+            let remaining = errors.count - 3
+            attachmentError = remaining > 0 ? "\(shownErrors)\n+\(remaining) more" : shownErrors
+        }
+    }
+
+    func addPastedImage(_ image: NSImage) {
+        guard let data = FeedbackImageEncoder.pngData(from: image) else {
+            AppLogError("Feedback paste image failed: could not encode image data")
+            return
+        }
+        let index = attachments.filter { $0.kind == .image }.count + 1
+        attachments.append(FeedbackDraftAttachment(
+            filename: "image-\(index).png",
+            size: Int64(data.count),
+            kind: .image,
+            source: .pastedImage(data)
+        ))
+    }
+
+    func removeAttachment(id: UUID) {
+        attachments.removeAll { $0.id == id }
+    }
+
+    func enqueueFeedback() throws {
+        guard let account = AccountController.shared.account else {
+            throw FeedbackOutboxError.missingAccount
+        }
+
+        let trimmedDescription = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDescription.isEmpty else {
+            throw FeedbackOutboxError.emptyDescription
+        }
+
+        let draft = FeedbackDraft(
+            description: trimmedDescription,
+            pageURL: urlString.trimmingCharacters(in: .whitespacesAndNewlines),
+            pageTitle: pageTitle,
+            contactEmail: account.userInfo?.email,
+            components: componentVersions.map {
+                FeedbackV2Metadata.Component(
+                    id: $0.key,
+                    name: $0.key,
+                    type: "extension",
+                    version: $0.value
+                )
+            }.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending },
+            attachments: attachments
+        )
+
+        try FeedbackOutbox.enqueue(draft, account: account)
+        FeedbackOutboxUploader.shared.scheduleCurrentAccountProcessing()
+    }
+}
+
+struct FeedbackDraftAttachment: Identifiable {
+    enum Kind {
+        case image
+        case file
+    }
+
+    enum Source {
+        case file(URL)
+        case pastedImage(Data)
+    }
+
+    let id = UUID()
+    let filename: String
+    let size: Int64
+    let kind: Kind
+    let source: Source
+}
+
+struct FeedbackDraft {
+    let description: String
+    let pageURL: String
+    let pageTitle: String?
+    let contactEmail: String?
+    let components: [FeedbackV2Metadata.Component]
+    let attachments: [FeedbackDraftAttachment]
+}
+
+struct FeedbackSelectedAttachmentInfo {
+    let size: Int64
+    let mimeType: String
+    let isImage: Bool
+}
+
+enum FeedbackOutboxError: LocalizedError {
+    case missingAccount
+    case emptyDescription
+    case invalidManifest
+    case invalidAttachment(String)
+    case attachmentTooLarge(String)
+    case imageNormalizationFailed(String)
+    case requiredAttachmentUploadFailed(String)
+    case zipCreationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAccount:
+            return "No account is available for feedback submission."
+        case .emptyDescription:
+            return "Feedback description is empty."
+        case .invalidManifest:
+            return "The feedback job could not be read."
+        case .invalidAttachment(let detail):
+            return detail
+        case .attachmentTooLarge(let filename):
+            return "\(filename) is larger than 10 MB."
+        case .imageNormalizationFailed(let filename):
+            return "The image attachment could not be prepared: \(filename)."
+        case .requiredAttachmentUploadFailed(let filename):
+            return "A required feedback attachment failed to upload: \(filename)."
+        case .zipCreationFailed(let detail):
+            return detail
+        }
+    }
+}
+
+enum FeedbackOutbox {
+    static let maxSelectedAttachmentBytes: Int64 = 10 * 1024 * 1024
+    static let maxAttachmentBytes: Int64 = 20 * 1024 * 1024
+    static let zipPlanningBytes: Int64 = maxAttachmentBytes - 512 * 1024
+    static let maxJobRetryCount = 5
+    static let archiveStrategyVersion = 2
+    private static let directoryName = "feedbackOutbox"
+    private static let manifestFilename = "manifest.json"
+
+    static func outboxRoot(for account: Account) -> URL {
+        account.userDataStorage.appendingPathComponent(directoryName, isDirectory: true)
+    }
+
+    static func isImageFile(_ url: URL) -> Bool {
+        if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType {
+            return type.conforms(to: .image)
+        }
+        guard let type = UTType(filenameExtension: url.pathExtension) else {
+            return false
+        }
+        return type.conforms(to: .image)
+    }
+
+    static func selectedAttachmentInfo(for url: URL) throws -> FeedbackSelectedAttachmentInfo {
+        let values = try url.resourceValues(forKeys: [
+            .contentTypeKey,
+            .fileSizeKey,
+            .isDirectoryKey,
+            .isPackageKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey
+        ])
+
+        guard values.isSymbolicLink != true,
+              values.isDirectory != true,
+              values.isPackage != true,
+              values.isRegularFile == true else {
+            throw FeedbackOutboxError.invalidAttachment("Only regular files can be attached.")
+        }
+
+        let size = Int64(values.fileSize ?? 0)
+        guard size <= maxSelectedAttachmentBytes else {
+            throw FeedbackOutboxError.attachmentTooLarge(url.lastPathComponent)
+        }
+
+        let type = values.contentType ?? UTType(filenameExtension: url.pathExtension)
+        let isImage = type?.conforms(to: .image) == true
+        let mimeType = type?.preferredMIMEType ?? (isImage ? "image/png" : "application/octet-stream")
+        return FeedbackSelectedAttachmentInfo(size: size, mimeType: mimeType, isImage: isImage)
+    }
+
+    static func enqueue(_ draft: FeedbackDraft, account: Account) throws {
+        let fm = FileManager.default
+        let jobID = UUID().uuidString
+        let root = outboxRoot(for: account)
+        let jobRoot = root.appendingPathComponent(jobID, isDirectory: true)
+        let imagesDir = jobRoot.appendingPathComponent("images", isDirectory: true)
+        let filesDir = jobRoot.appendingPathComponent("files", isDirectory: true)
+        let preparedDir = jobRoot.appendingPathComponent("prepared", isDirectory: true)
+
+        try fm.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: preparedDir, withIntermediateDirectories: true)
+
+        var imageSources: [FeedbackOutboxSourceAttachment] = []
+        var fileSources: [FeedbackOutboxSourceAttachment] = []
+
+        for attachment in draft.attachments {
+            switch attachment.source {
+            case .pastedImage(let data):
+                let filename = uniqueFilename(attachment.filename, in: imagesDir)
+                let destination = imagesDir.appendingPathComponent(filename)
+                try data.write(to: destination, options: .atomic)
+                imageSources.append(sourceAttachment(
+                    filename: filename,
+                    fileURL: destination,
+                    jobRoot: jobRoot,
+                    mimeType: "image/png"
+                ))
+
+            case .file(let sourceURL):
+                let didAccess = sourceURL.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        sourceURL.stopAccessingSecurityScopedResource()
+                    }
+                }
+                let info = try selectedAttachmentInfo(for: sourceURL)
+                let isImage = attachment.kind == .image || info.isImage
+                let targetDirectory = isImage ? imagesDir : filesDir
+                let filename = uniqueFilename(sourceURL.lastPathComponent, in: targetDirectory)
+                let destination = targetDirectory.appendingPathComponent(filename)
+                try fm.copyItem(at: sourceURL, to: destination)
+
+                let source = sourceAttachment(
+                    filename: filename,
+                    fileURL: destination,
+                    jobRoot: jobRoot,
+                    mimeType: info.mimeType
+                )
+                if isImage {
+                    imageSources.append(source)
+                } else {
+                    fileSources.append(source)
+                }
+            }
+        }
+
+        let metadata = makeMetadata(jobID: jobID, draft: draft)
+        let manifest = FeedbackOutboxManifest(
+            id: jobID,
+            createdAt: Date(),
+            description: draft.description,
+            contactEmail: draft.contactEmail,
+            metadata: metadata,
+            sourceImages: imageSources,
+            sourceFiles: fileSources,
+            preparedAttachments: [],
+            archiveStrategyVersion: archiveStrategyVersion,
+            status: .queued,
+            retryCount: 0,
+            nextAttemptAt: nil,
+            lastError: nil
+        )
+        try writeManifest(manifest, jobRoot: jobRoot)
+        AppLogInfo("Feedback V2 outbox job enqueued: \(jobID)")
+    }
+
+    fileprivate static func manifestURL(for jobRoot: URL) -> URL {
+        jobRoot.appendingPathComponent(manifestFilename)
+    }
+
+    fileprivate static func readManifest(jobRoot: URL) throws -> FeedbackOutboxManifest {
+        let data = try Data(contentsOf: manifestURL(for: jobRoot))
+        return try JSONDecoder().decode(FeedbackOutboxManifest.self, from: data)
+    }
+
+    fileprivate static func writeManifest(_ manifest: FeedbackOutboxManifest, jobRoot: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(manifest)
+        try data.write(to: manifestURL(for: jobRoot), options: .atomic)
+    }
+
+    fileprivate static func removePreparedDirectory(jobRoot: URL) {
+        let preparedDir = jobRoot.appendingPathComponent("prepared", isDirectory: true)
+        try? FileManager.default.removeItem(at: preparedDir)
+    }
+
+    fileprivate static func prepareAttachments(
+        jobRoot: URL,
+        manifest: FeedbackOutboxManifest
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        let preparedDir = jobRoot.appendingPathComponent("prepared", isDirectory: true)
+        try FileManager.default.createDirectory(at: preparedDir, withIntermediateDirectories: true)
+
+        var attachments: [FeedbackOutboxUploadAttachment] = []
+        attachments.append(contentsOf: try prepareImageAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: manifest.sourceImages
+        ))
+        attachments.append(contentsOf: try prepareLogZipAttachments(
+            preparedDir: preparedDir
+        ))
+        attachments.append(contentsOf: try prepareUserFileZipAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: manifest.sourceFiles
+        ))
+        return attachments
+    }
+
+    private static func prepareImageAttachments(
+        jobRoot: URL,
+        preparedDir: URL,
+        sources: [FeedbackOutboxSourceAttachment]
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        try sources.map { source in
+            let sourceURL = jobRoot.appendingPathComponent(source.relativePath)
+            let prepared = try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
+            return FeedbackOutboxUploadAttachment(
+                id: UUID().uuidString,
+                relativePath: prepared.url.pathRelative(to: jobRoot),
+                filename: prepared.filename,
+                mimeType: prepared.mimeType,
+                size: prepared.size,
+                attachmentType: .screenshot,
+                required: true,
+                status: .queued,
+                retryCount: 0,
+                objectKey: nil
+            )
+        }
+    }
+
+    private static func normalizedImageIfNeeded(
+        sourceURL: URL,
+        source: FeedbackOutboxSourceAttachment,
+        preparedDir: URL
+    ) throws -> PreparedFile {
+        if source.size <= maxAttachmentBytes {
+            return PreparedFile(url: sourceURL, filename: source.filename, mimeType: source.mimeType, size: source.size)
+        }
+
+        guard let image = NSImage(contentsOf: sourceURL),
+              let data = FeedbackImageEncoder.jpegDataUnderLimit(from: image, maxBytes: maxAttachmentBytes) else {
+            throw FeedbackOutboxError.imageNormalizationFailed(source.filename)
+        }
+
+        let filename = uniqueFilename(source.filename.replacingPathExtension(with: "jpg"), in: preparedDir)
+        let destination = preparedDir.appendingPathComponent(filename)
+        try data.write(to: destination, options: .atomic)
+        return PreparedFile(url: destination, filename: filename, mimeType: "image/jpeg", size: Int64(data.count))
+    }
+
+    private static func prepareLogZipAttachments(preparedDir: URL) throws -> [FeedbackOutboxUploadAttachment] {
+        let items = try collectLogArchiveItems()
+        return try makeZipAttachments(
+            items: items,
+            preparedDir: preparedDir,
+            singleFilename: "logs.zip",
+            numberedPrefix: "logs",
+            attachmentType: .log,
+            required: true,
+            preferSingleArchiveWhenPossible: true
+        )
+    }
+
+    private static func prepareUserFileZipAttachments(
+        jobRoot: URL,
+        preparedDir: URL,
+        sources: [FeedbackOutboxSourceAttachment]
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        let items: [ArchiveItem] = sources.compactMap { source in
+            guard source.size <= maxAttachmentBytes else {
+                AppLogWarn("Feedback V2 optional file skipped because it exceeds 20 MB: \(source.filename)")
+                return nil
+            }
+            return ArchiveItem(
+                sourceURL: jobRoot.appendingPathComponent(source.relativePath),
+                inlineData: nil,
+                offset: 0,
+                length: UInt64(max(source.size, 0)),
+                archivePath: source.filename
+            )
+        }
+
+        guard !items.isEmpty else {
+            return []
+        }
+
+        return try makeZipAttachments(
+            items: items,
+            preparedDir: preparedDir,
+            singleFilename: nil,
+            numberedPrefix: "feedback-files",
+            attachmentType: .other,
+            required: false
+        )
+    }
+
+    private static func collectLogArchiveItems() throws -> [ArchiveItem] {
+        let phiLogsURL = URL(fileURLWithPath: FileSystemUtils.phiBrowserDataDirectory(), isDirectory: true)
+            .appendingPathComponent("PhiLogs", isDirectory: true)
+        let sentinelLogsURL = SentinelHelper.sentinelLogsDirectoryURL()
+
+        var items: [ArchiveItem] = []
+        items.append(contentsOf: try collectLogArchiveItems(root: phiLogsURL, archiveRoot: "PhiLogs"))
+        items.append(contentsOf: try collectLogArchiveItems(root: sentinelLogsURL, archiveRoot: "SentinelLogs"))
+        return items
+    }
+
+    static func collectLogArchiveItems(root: URL, archiveRoot: String) throws -> [ArchiveItem] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else {
+            let message = "\(archiveRoot) directory was not found at feedback submission time.\n"
+            return [ArchiveItem(
+                sourceURL: nil,
+                inlineData: Data(message.utf8),
+                offset: 0,
+                length: UInt64(message.utf8.count),
+                archivePath: "\(archiveRoot)/missing.txt"
+            )]
+        }
+
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: []
+        ) else {
+            return []
+        }
+
+        var items: [ArchiveItem] = []
+        for case let fileURL as URL in enumerator {
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true else { continue }
+
+            let relativePath = fileURL.pathRelative(to: root)
+            let archivePath = "\(archiveRoot)/\(relativePath)"
+            let size = Int64(values.fileSize ?? 0)
+            if size > zipPlanningBytes {
+                var offset: UInt64 = 0
+                var part = 1
+                while offset < UInt64(size) {
+                    let length = min(UInt64(zipPlanningBytes), UInt64(size) - offset)
+                    items.append(ArchiveItem(
+                        sourceURL: fileURL,
+                        inlineData: nil,
+                        offset: offset,
+                        length: length,
+                        archivePath: "\(archivePath).part-\(part)"
+                    ))
+                    offset += length
+                    part += 1
+                }
+            } else {
+                items.append(ArchiveItem(
+                    sourceURL: fileURL,
+                    inlineData: nil,
+                    offset: 0,
+                    length: UInt64(max(size, 0)),
+                    archivePath: archivePath
+                ))
+            }
+        }
+
+        if items.isEmpty {
+            let message = "\(archiveRoot) directory was empty at feedback submission time.\n"
+            return [ArchiveItem(
+                sourceURL: nil,
+                inlineData: Data(message.utf8),
+                offset: 0,
+                length: UInt64(message.utf8.count),
+                archivePath: "\(archiveRoot)/empty.txt"
+            )]
+        }
+
+        return items.sorted { $0.archivePath.localizedStandardCompare($1.archivePath) == .orderedAscending }
+    }
+
+    static func makeZipAttachments(
+        items: [ArchiveItem],
+        preparedDir: URL,
+        singleFilename: String?,
+        numberedPrefix: String,
+        attachmentType: FeedbackV2AttachmentType,
+        required: Bool,
+        preferSingleArchiveWhenPossible: Bool = false
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        if preferSingleArchiveWhenPossible, let singleFilename {
+            let destination = preparedDir.appendingPathComponent(singleFilename)
+            try zipArchiveItems(items, destination: destination)
+            let size = fileSize(destination)
+            if size <= maxAttachmentBytes {
+                return [FeedbackOutboxUploadAttachment(
+                    id: UUID().uuidString,
+                    relativePath: destination.pathRelative(to: preparedDir.deletingLastPathComponent()),
+                    filename: singleFilename,
+                    mimeType: "application/zip",
+                    size: size,
+                    attachmentType: attachmentType,
+                    required: required,
+                    status: .queued,
+                    retryCount: 0,
+                    objectKey: nil
+                )]
+            }
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        var pendingBuckets = bucketArchiveItems(items)
+        var useNumberedNames = singleFilename == nil || pendingBuckets.count > 1
+        var ordinal = 1
+        var attachments: [FeedbackOutboxUploadAttachment] = []
+
+        while !pendingBuckets.isEmpty {
+            let bucket = pendingBuckets.removeFirst()
+            let filename = useNumberedNames ? "\(numberedPrefix)-\(ordinal).zip" : (singleFilename ?? "\(numberedPrefix)-\(ordinal).zip")
+            let destination = preparedDir.appendingPathComponent(filename)
+            try zipArchiveItems(bucket, destination: destination)
+            let size = fileSize(destination)
+
+            if size > maxAttachmentBytes {
+                try? FileManager.default.removeItem(at: destination)
+                if bucket.count > 1 {
+                    useNumberedNames = true
+                    let midpoint = max(bucket.count / 2, 1)
+                    pendingBuckets.insert(Array(bucket[midpoint...]), at: 0)
+                    pendingBuckets.insert(Array(bucket[..<midpoint]), at: 0)
+                    continue
+                }
+
+                if required {
+                    throw FeedbackOutboxError.zipCreationFailed("\(filename) exceeds the 20 MB feedback attachment limit.")
+                } else {
+                    AppLogWarn("Feedback V2 optional zip skipped because it exceeds 20 MB: \(filename)")
+                    continue
+                }
+            }
+
+            attachments.append(FeedbackOutboxUploadAttachment(
+                id: UUID().uuidString,
+                relativePath: destination.pathRelative(to: preparedDir.deletingLastPathComponent()),
+                filename: filename,
+                mimeType: "application/zip",
+                size: size,
+                attachmentType: attachmentType,
+                required: required,
+                status: .queued,
+                retryCount: 0,
+                objectKey: nil
+            ))
+            ordinal += 1
+        }
+
+        return attachments
+    }
+
+    static func bucketArchiveItems(_ items: [ArchiveItem]) -> [[ArchiveItem]] {
+        var buckets: [[ArchiveItem]] = []
+        var current: [ArchiveItem] = []
+        var currentSize: Int64 = 0
+
+        for item in items {
+            let itemSize = Int64(item.length)
+            if !current.isEmpty && currentSize + itemSize > zipPlanningBytes {
+                buckets.append(current)
+                current = []
+                currentSize = 0
+            }
+            current.append(item)
+            currentSize += itemSize
+        }
+
+        if !current.isEmpty {
+            buckets.append(current)
+        }
+        return buckets
+    }
+
+    private static func zipArchiveItems(_ items: [ArchiveItem], destination: URL) throws {
+        let fm = FileManager.default
+        let staging = fm.temporaryDirectory.appendingPathComponent("FeedbackZip-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
+
+        var roots = Set<String>()
+        for item in items {
+            let destinationURL = staging.appendingPathComponent(item.archivePath)
+            try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try writeArchiveItem(item, to: destinationURL)
+            if let root = item.archivePath.split(separator: "/", omittingEmptySubsequences: true).first {
+                roots.insert(String(root))
+            }
+        }
+
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+
+        let stderrPipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.arguments = ["-r", "-q", destination.path] + roots.sorted()
+        process.currentDirectoryURL = staging
+        process.standardError = stderrPipe
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errorText = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let detail = errorText.isEmpty ? "zip exited with status \(process.terminationStatus)" : errorText
+            throw FeedbackOutboxError.zipCreationFailed(detail)
+        }
+    }
+
+    private static func writeArchiveItem(_ item: ArchiveItem, to destination: URL) throws {
+        if let inlineData = item.inlineData {
+            try inlineData.write(to: destination, options: .atomic)
+            return
+        }
+
+        guard let sourceURL = item.sourceURL else {
+            return
+        }
+
+        if item.offset == 0, item.length == UInt64(fileSize(sourceURL)) {
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            return
+        }
+
+        let input = try FileHandle(forReadingFrom: sourceURL)
+        defer { try? input.close() }
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+
+        try input.seek(toOffset: item.offset)
+        var remaining = item.length
+        let chunkSize = 1024 * 1024
+        while remaining > 0 {
+            let data = input.readData(ofLength: min(chunkSize, Int(remaining)))
+            if data.isEmpty { break }
+            try output.write(contentsOf: data)
+            remaining -= UInt64(data.count)
+        }
+    }
+
+    private static func makeMetadata(jobID: String, draft: FeedbackDraft) -> FeedbackV2Metadata {
+        FeedbackV2Metadata(
+            browser: .init(
+                name: "Phi Browser",
+                version: SystemUtils.appVersion,
+                channel: channelName,
+                revision: SystemUtils.buildNumber
+            ),
+            page: .init(
+                url: draft.pageURL.isEmpty ? nil : draft.pageURL,
+                title: draft.pageTitle
+            ),
+            clientContext: .init(
+                category: "issue-report",
+                userAgent: nil,
+                locale: Locale.current.identifier,
+                traceID: jobID
+            ),
+            components: Array(draft.components.prefix(100)),
+            extra: [
+                "build_number": SystemUtils.buildNumber,
+                "model_identifier": SystemUtils.modelIdentifier,
+                "os_version": SystemUtils.osVersionString
+            ]
+        )
+    }
+
+    private static var channelName: String {
+        #if NIGHTLY_BUILD
+        return browserChannelName(isNightlyBuild: true, isDebugBuild: false)
+        #elseif DEBUG
+        return browserChannelName(isNightlyBuild: false, isDebugBuild: true)
+        #else
+        return browserChannelName(isNightlyBuild: false, isDebugBuild: false)
+        #endif
+    }
+
+    static func browserChannelName(isNightlyBuild: Bool, isDebugBuild: Bool) -> String {
+        if isNightlyBuild {
+            return "canary"
+        }
+        if isDebugBuild {
+            return "debug"
+        }
+        return "stable"
+    }
+
+    static func shouldDiscardFailedJob(retryCount: Int) -> Bool {
+        retryCount > maxJobRetryCount
+    }
+
+    private static func sourceAttachment(
+        filename: String,
+        fileURL: URL,
+        jobRoot: URL,
+        mimeType: String
+    ) -> FeedbackOutboxSourceAttachment {
+        FeedbackOutboxSourceAttachment(
+            relativePath: fileURL.pathRelative(to: jobRoot),
+            filename: filename,
+            mimeType: mimeType,
+            size: fileSize(fileURL)
+        )
+    }
+
+    private static func mimeType(for url: URL, fallback: String) -> String {
+        if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+           let mimeType = type.preferredMIMEType {
+            return mimeType
+        }
+        if let type = UTType(filenameExtension: url.pathExtension),
+           let mimeType = type.preferredMIMEType {
+            return mimeType
+        }
+        return fallback
+    }
+
+    private static func uniqueFilename(_ originalFilename: String, in directory: URL) -> String {
+        let sanitized = sanitizedFilename(originalFilename)
+        let ext = (sanitized as NSString).pathExtension
+        let base = (sanitized as NSString).deletingPathExtension
+        var filename = sanitized
+        var index = 2
+        while FileManager.default.fileExists(atPath: directory.appendingPathComponent(filename).path) {
+            filename = ext.isEmpty ? "\(base)-\(index)" : "\(base)-\(index).\(ext)"
+            index += 1
+        }
+        return filename
+    }
+
+    private static func sanitizedFilename(_ filename: String) -> String {
+        let illegal = CharacterSet(charactersIn: "/:\\")
+        let cleaned = filename
+            .components(separatedBy: illegal)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "attachment" : cleaned
+    }
+
+    private static func fileSize(_ url: URL) -> Int64 {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return 0
+        }
+        return Int64(size)
+    }
+}
+
+@MainActor
+final class FeedbackOutboxUploader {
+    static let shared = FeedbackOutboxUploader()
+
+    private var accountObserver: NSObjectProtocol?
+    private var runningUserIDs = Set<String>()
+    private var delayedTasks: [String: Task<Void, Never>] = [:]
+
+    func start() {
+        guard accountObserver == nil else {
+            scheduleCurrentAccountProcessing()
+            return
+        }
+
+        accountObserver = NotificationCenter.default.addObserver(
+            forName: .mainAccountChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.scheduleCurrentAccountProcessing()
+        }
+        scheduleCurrentAccountProcessing()
+    }
+
+    func scheduleCurrentAccountProcessing(after delay: TimeInterval = 0) {
+        guard let account = AccountController.shared.account else {
+            return
+        }
+
+        let userID = account.userID
+        let root = FeedbackOutbox.outboxRoot(for: account)
+
+        if delay > 0 {
+            delayedTasks[userID]?.cancel()
+            delayedTasks[userID] = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                await MainActor.run {
+                    self?.delayedTasks[userID] = nil
+                    self?.scheduleCurrentAccountProcessing()
+                }
+            }
+            return
+        }
+
+        guard !runningUserIDs.contains(userID) else {
+            return
+        }
+
+        runningUserIDs.insert(userID)
+        Task.detached(priority: .utility) { [weak self] in
+            let hasRetryableFailures = await Self.processOutbox(userID: userID, root: root)
+            await MainActor.run {
+                guard let self else { return }
+                self.runningUserIDs.remove(userID)
+                if hasRetryableFailures {
+                    self.scheduleCurrentAccountProcessing(after: 60)
+                }
+            }
+        }
+    }
+
+    private static func processOutbox(userID: String, root: URL) async -> Bool {
+        guard await isCurrentAccount(userID) else {
+            return false
+        }
+
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let jobRoots = try fm.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ).filter { url in
+                (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+            var hasRetryableFailures = false
+            for jobRoot in jobRoots {
+                guard await isCurrentAccount(userID) else {
+                    return hasRetryableFailures
+                }
+                let retryable = await processJob(jobRoot: jobRoot, userID: userID)
+                hasRetryableFailures = hasRetryableFailures || retryable
+            }
+            return hasRetryableFailures
+        } catch {
+            AppLogError("Feedback V2 outbox scan failed: \(error.localizedDescription)")
+            return true
+        }
+    }
+
+    private static func processJob(jobRoot: URL, userID: String) async -> Bool {
+        do {
+            var manifest = try FeedbackOutbox.readManifest(jobRoot: jobRoot)
+            guard manifest.status != .submitted else {
+                return false
+            }
+            if let nextAttemptAt = manifest.nextAttemptAt, nextAttemptAt > Date() {
+                return true
+            }
+            if FeedbackOutbox.shouldDiscardFailedJob(retryCount: manifest.retryCount) {
+                AppLogError("Feedback V2 job discarded because retry limit was already exceeded: job=\(manifest.id) retryCount=\(manifest.retryCount)")
+                try? FileManager.default.removeItem(at: jobRoot)
+                return false
+            }
+
+            guard await isCurrentAccount(userID) else {
+                return false
+            }
+
+            do {
+                if manifest.archiveStrategyVersion != FeedbackOutbox.archiveStrategyVersion {
+                    AppLogInfo("Feedback V2 archive strategy changed; preparing job again: \(manifest.id)")
+                    FeedbackOutbox.removePreparedDirectory(jobRoot: jobRoot)
+                    manifest.preparedAttachments = []
+                    manifest.archiveStrategyVersion = FeedbackOutbox.archiveStrategyVersion
+                }
+
+                if !manifest.preparedAttachments.isEmpty,
+                   !preparedFilesExist(jobRoot: jobRoot, manifest: manifest) {
+                    AppLogWarn("Feedback V2 prepared files are incomplete; preparing job again: \(manifest.id)")
+                    FeedbackOutbox.removePreparedDirectory(jobRoot: jobRoot)
+                    manifest.preparedAttachments = []
+                }
+
+                if manifest.preparedAttachments.isEmpty {
+                    manifest.status = .preparing
+                    manifest.lastError = nil
+                    try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                    manifest.preparedAttachments = try FeedbackOutbox.prepareAttachments(
+                        jobRoot: jobRoot,
+                        manifest: manifest
+                    )
+                    manifest.archiveStrategyVersion = FeedbackOutbox.archiveStrategyVersion
+                    try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                }
+
+                manifest.status = .uploading
+                manifest.lastError = nil
+                try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+
+                try await uploadAttachments(jobRoot: jobRoot, manifest: &manifest, userID: userID)
+
+                guard manifest.preparedAttachments.filter(\.required).allSatisfy({ $0.status == .uploaded }) else {
+                    throw FeedbackOutboxError.requiredAttachmentUploadFailed("required attachments")
+                }
+
+                guard await isCurrentAccount(userID) else {
+                    return false
+                }
+
+                manifest.status = .submitting
+                try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+
+                let submitAttachments = manifest.preparedAttachments.compactMap(\.submitAttachment)
+                let response = try await retrying {
+                    try await APIClient.shared.submitFeedbackV2(FeedbackV2SubmitRequest(
+                        description: manifest.description,
+                        contactEmail: manifest.contactEmail,
+                        metadata: manifest.metadata,
+                        attachments: submitAttachments
+                    ))
+                }
+
+                AppLogInfo("Feedback V2 submitted: job=\(manifest.id) feedbackID=\(response.data.feedbackID)")
+                manifest.status = .submitted
+                manifest.nextAttemptAt = nil
+                manifest.lastError = nil
+                try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                try? FileManager.default.removeItem(at: jobRoot)
+                return false
+            } catch {
+                manifest.status = .failedWaitingRetry
+                manifest.retryCount += 1
+                manifest.lastError = error.localizedDescription
+                if FeedbackOutbox.shouldDiscardFailedJob(retryCount: manifest.retryCount) {
+                    AppLogError("Feedback V2 job discarded after retry limit: job=\(manifest.id) retryCount=\(manifest.retryCount) error=\(error.localizedDescription)")
+                    try? FileManager.default.removeItem(at: jobRoot)
+                    return false
+                }
+
+                manifest.nextAttemptAt = Date().addingTimeInterval(backoffDelay(for: manifest.retryCount))
+                try? FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                AppLogError("Feedback V2 job failed and will retry: job=\(manifest.id) error=\(error.localizedDescription)")
+                return true
+            }
+        } catch {
+            AppLogError("Feedback V2 job ignored because manifest is unreadable: \(jobRoot.path) error=\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private static func uploadAttachments(
+        jobRoot: URL,
+        manifest: inout FeedbackOutboxManifest,
+        userID: String
+    ) async throws {
+        let requiredIndices = manifest.preparedAttachments.indices.filter {
+            manifest.preparedAttachments[$0].required && manifest.preparedAttachments[$0].status != .uploaded
+        }
+        try await uploadBatches(indices: requiredIndices, jobRoot: jobRoot, manifest: &manifest, userID: userID, requiredBatch: true)
+
+        let optionalIndices = manifest.preparedAttachments.indices.filter {
+            !manifest.preparedAttachments[$0].required && manifest.preparedAttachments[$0].status != .uploaded
+        }
+        try await uploadBatches(indices: optionalIndices, jobRoot: jobRoot, manifest: &manifest, userID: userID, requiredBatch: false)
+    }
+
+    private static func uploadBatches(
+        indices: [Array<FeedbackOutboxUploadAttachment>.Index],
+        jobRoot: URL,
+        manifest: inout FeedbackOutboxManifest,
+        userID: String,
+        requiredBatch: Bool
+    ) async throws {
+        for batch in indices.chunked(into: 5) {
+            guard await isCurrentAccount(userID) else {
+                throw FeedbackOutboxError.requiredAttachmentUploadFailed("account changed")
+            }
+
+            let requests = batch.map { manifest.preparedAttachments[$0].presignRequest }
+            let presignedAttachments: [FeedbackV2PresignedAttachment]
+            do {
+                presignedAttachments = try await retrying {
+                    try await APIClient.shared.presignFeedbackV2Attachments(requests)
+                }
+                guard presignedAttachments.count == batch.count else {
+                    throw APIError.invalidResponse
+                }
+            } catch {
+                if requiredBatch {
+                    throw error
+                }
+                for index in batch {
+                    var attachment = manifest.preparedAttachments[index]
+                    attachment.retryCount += 1
+                    attachment.status = .failed
+                    manifest.preparedAttachments[index] = attachment
+                }
+                try? FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                AppLogWarn("Feedback V2 optional attachment batch skipped after presign retry: \(error.localizedDescription)")
+                continue
+            }
+
+            for (batchPosition, index) in batch.enumerated() {
+                var attachment = manifest.preparedAttachments[index]
+                let presigned = presignedAttachments[batchPosition]
+                do {
+                    try await retrying(attempts: 2) {
+                        try await upload(attachment, presigned: presigned, jobRoot: jobRoot)
+                    }
+                    attachment.status = .uploaded
+                    attachment.objectKey = presigned.objectKey
+                    attachment.retryCount = 0
+                } catch {
+                    do {
+                        let freshObjectKey = try await uploadWithFreshPresign(attachment, jobRoot: jobRoot)
+                        attachment.status = .uploaded
+                        attachment.objectKey = freshObjectKey
+                        attachment.retryCount = 0
+                    } catch {
+                        attachment.retryCount += 1
+                        attachment.status = .failed
+                        manifest.preparedAttachments[index] = attachment
+                        try? FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+                        if attachment.required {
+                            throw FeedbackOutboxError.requiredAttachmentUploadFailed(attachment.filename)
+                        }
+                        AppLogWarn("Feedback V2 optional attachment skipped after upload retry: \(attachment.filename)")
+                        continue
+                    }
+                }
+
+                manifest.preparedAttachments[index] = attachment
+                try FeedbackOutbox.writeManifest(manifest, jobRoot: jobRoot)
+            }
+        }
+    }
+
+    private static func preparedFilesExist(jobRoot: URL, manifest: FeedbackOutboxManifest) -> Bool {
+        manifest.preparedAttachments.allSatisfy {
+            FileManager.default.fileExists(atPath: jobRoot.appendingPathComponent($0.relativePath).path)
+        }
+    }
+
+    private static func uploadWithFreshPresign(
+        _ attachment: FeedbackOutboxUploadAttachment,
+        jobRoot: URL
+    ) async throws -> String {
+        let presigned = try await retrying {
+            try await APIClient.shared.presignFeedbackV2Attachments([attachment.presignRequest])
+        }
+        guard let first = presigned.first else {
+            throw APIError.invalidResponse
+        }
+        try await retrying(attempts: 2) {
+            try await upload(attachment, presigned: first, jobRoot: jobRoot)
+        }
+        return first.objectKey
+    }
+
+    private static func upload(
+        _ attachment: FeedbackOutboxUploadAttachment,
+        presigned: FeedbackV2PresignedAttachment,
+        jobRoot: URL
+    ) async throws {
+        try await APIClient.shared.uploadFeedbackV2Attachment(
+            fileURL: jobRoot.appendingPathComponent(attachment.relativePath),
+            mimeType: attachment.mimeType,
+            presignedAttachment: presigned
+        )
+    }
+
+    private static func retrying<T>(
+        attempts: Int = 3,
+        operation: () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        for attempt in 1...attempts {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                if attempt < attempts {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt * 2) * 1_000_000_000)
+                }
+            }
+        }
+        throw lastError ?? APIError.invalidResponse
+    }
+
+    private static func backoffDelay(for retryCount: Int) -> TimeInterval {
+        min(3600, pow(2.0, Double(min(retryCount, 6))) * 30)
+    }
+
+    private static func isCurrentAccount(_ userID: String) async -> Bool {
+        await MainActor.run {
+            AccountController.shared.account?.userID == userID
+        }
+    }
+}
+
+struct FeedbackOutboxManifest: Codable {
+    enum Status: String, Codable {
+        case queued
+        case preparing
+        case uploading
+        case submitting
+        case submitted
+        case failedWaitingRetry
+    }
+
+    var id: String
+    var createdAt: Date
+    var description: String
+    var contactEmail: String?
+    var metadata: FeedbackV2Metadata
+    var sourceImages: [FeedbackOutboxSourceAttachment]
+    var sourceFiles: [FeedbackOutboxSourceAttachment]
+    var preparedAttachments: [FeedbackOutboxUploadAttachment]
+    var archiveStrategyVersion: Int?
+    var status: Status
+    var retryCount: Int
+    var nextAttemptAt: Date?
+    var lastError: String?
+}
+
+struct FeedbackOutboxSourceAttachment: Codable {
+    let relativePath: String
+    let filename: String
+    let mimeType: String
+    let size: Int64
+}
+
+struct FeedbackOutboxUploadAttachment: Codable, Identifiable {
+    enum UploadStatus: String, Codable {
+        case queued
+        case uploaded
+        case failed
+    }
+
+    var id: String
+    var relativePath: String
+    var filename: String
+    var mimeType: String
+    var size: Int64
+    var attachmentType: FeedbackV2AttachmentType
+    var required: Bool
+    var status: UploadStatus
+    var retryCount: Int
+    var objectKey: String?
+
+    var presignRequest: FeedbackV2PresignAttachmentRequest {
+        FeedbackV2PresignAttachmentRequest(
+            filename: filename,
+            mimeType: mimeType,
+            size: size,
+            attachmentType: attachmentType
+        )
+    }
+
+    var submitAttachment: FeedbackV2SubmitAttachment? {
+        guard status == .uploaded, let objectKey else {
+            return nil
+        }
+        return FeedbackV2SubmitAttachment(
+            objectKey: objectKey,
+            filename: filename,
+            mimeType: mimeType,
+            size: size,
+            attachmentType: attachmentType
+        )
+    }
+}
+
+private struct PreparedFile {
+    let url: URL
+    let filename: String
+    let mimeType: String
+    let size: Int64
+}
+
+struct ArchiveItem {
+    let sourceURL: URL?
+    let inlineData: Data?
+    let offset: UInt64
+    let length: UInt64
+    let archivePath: String
+}
+
+private enum FeedbackImageEncoder {
+    static func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    static func jpegDataUnderLimit(from image: NSImage, maxBytes: Int64) -> Data? {
+        let dimensions: [CGFloat] = [8192, 6144, 4096, 3072, 2048, 1536, 1024]
+        let qualities: [CGFloat] = [0.92, 0.82, 0.72, 0.62, 0.52, 0.42]
+
+        for dimension in dimensions {
+            let scaledImage = image.scaledDown(maxDimension: dimension)
+            for quality in qualities {
+                guard let data = jpegData(from: scaledImage, quality: quality) else {
+                    continue
+                }
+                if Int64(data.count) <= maxBytes {
+                    return data
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func jpegData(from image: NSImage, quality: CGFloat) -> Data? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return nil
+        }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality])
+    }
+}
+
+private extension NSImage {
+    func scaledDown(maxDimension: CGFloat) -> NSImage {
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension, longest > 0 else {
+            return self
+        }
+
+        let ratio = maxDimension / longest
+        let targetSize = NSSize(width: size.width * ratio, height: size.height * ratio)
+        let image = NSImage(size: targetSize)
+        image.lockFocus()
+        draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: NSRect(origin: .zero, size: size),
+            operation: .copy,
+            fraction: 1
+        )
+        image.unlockFocus()
+        return image
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else {
+            return [self]
+        }
+        var chunks: [[Element]] = []
+        var index = startIndex
+        while index < endIndex {
+            let end = self.index(index, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            chunks.append(Array(self[index..<end]))
+            index = end
+        }
+        return chunks
+    }
+}
+
+private extension String {
+    func replacingPathExtension(with newExtension: String) -> String {
+        let nsString = self as NSString
+        let base = nsString.deletingPathExtension
+        return newExtension.isEmpty ? base : "\(base).\(newExtension)"
+    }
+}
+
+private extension URL {
+    func pathRelative(to baseURL: URL) -> String {
+        let basePath = baseURL.standardizedFileURL.path
+        let path = standardizedFileURL.path
+        guard path.hasPrefix(basePath) else {
+            return lastPathComponent
+        }
+        var relative = String(path.dropFirst(basePath.count))
+        if relative.hasPrefix("/") {
+            relative.removeFirst()
+        }
+        return relative
+    }
+}

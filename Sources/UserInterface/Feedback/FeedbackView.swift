@@ -5,22 +5,33 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 struct FeedbackView: View {
-    @State private var descriptionText: String = ""
     @Binding var urlString: String
-    @State private var selectedFilename: String?
-    @State private var selectedFileURL: URL?
     @ObservedObject var viewModel: FeedbackViewModel
     @State private var isShowingFileImporter: Bool = false
-    @State private var sendSystemInfo: Bool = true
-    @State private var showFileSizeAlert: Bool = false
     private let maxDescriptionLength = 4096
     
     var onPrivacyPolicyTap: (() -> Void)?
     var onTermsOfServiceTap: (() -> Void)?
     var onCancel: (() -> Void)?
-    var onSend: (([String: AnyHashable]) -> Void)?
+    var onSend: (() -> Void)?
+
+    private let attachmentRowHeight: CGFloat = 22
+    private let attachmentRowSpacing: CGFloat = 6
+    private let attachmentScrollIndicatorInset: CGFloat = 16
+    private let maxVisibleAttachmentRows = 4
+
+    private var attachmentListHeight: CGFloat {
+        let count = CGFloat(min(viewModel.attachments.count, maxVisibleAttachmentRows))
+        guard count > 0 else { return 0 }
+        return count * attachmentRowHeight + max(0, count - 1) * attachmentRowSpacing
+    }
+
+    private var shouldScrollAttachments: Bool {
+        viewModel.attachments.count > maxVisibleAttachmentRows
+    }
     
     private var legalText: AttributedString {
         var string = AttributedString(NSLocalizedString("Some account and system information may be sent to Phinomenon. We will use the information you give us to help address technical issues and to improve our services, subject to our Privacy Policy and Terms of Service.", comment: "Feedback form - Legal disclaimer text explaining data usage, contains links to Privacy Policy and Terms of Service"))
@@ -42,7 +53,7 @@ struct FeedbackView: View {
          onPrivacyPolicyTap: (() -> Void)? = nil,
          onTermsOfServiceTap: (() -> Void)? = nil,
          onCancel: (() -> Void)? = nil,
-         onSend: (([String: AnyHashable]) -> Void)? = nil) {
+         onSend: (() -> Void)? = nil) {
         self.viewModel = viewModel
         self._urlString = Binding(
             get: { viewModel.urlString },
@@ -66,30 +77,30 @@ struct FeedbackView: View {
                 Spacer()
                     .frame(height: 16)
                 
-                TextEditor(text: $descriptionText)
+                TextEditor(text: $viewModel.descriptionText)
                     .scrollContentBackground(.hidden)
                     .font(.body)
                     .frame(height: 144)
                     .padding(4)
                     .background(Color(NSColor.black.withAlphaComponent(0.02)))
-                    .cornerRadius(8)
+                    .clipShape(.rect(cornerRadius: 8))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(Color(NSColor.separatorColor), lineWidth: 1)
                     )
-                    .onChange(of: descriptionText, { oldValue, newValue in
+                    .onChange(of: viewModel.descriptionText, { oldValue, newValue in
                         if newValue.count > maxDescriptionLength {
-                            descriptionText = String(newValue.prefix(maxDescriptionLength))
+                            viewModel.descriptionText = String(newValue.prefix(maxDescriptionLength))
                         }
                     })
                 
-                if descriptionText.count >= 3000 {
+                if viewModel.descriptionText.count >= 3000 {
                     Spacer()
                         .frame(height: 5)
                     
-                    Text("\(descriptionText.count)/\(maxDescriptionLength)")
+                    Text("\(viewModel.descriptionText.count)/\(maxDescriptionLength)")
                         .font(.caption)
-                        .foregroundColor(descriptionText.count > 4500 ? .red : .yellow)
+                        .foregroundStyle(viewModel.descriptionText.count >= maxDescriptionLength ? .red : .yellow)
                 }
             }
             
@@ -113,33 +124,31 @@ struct FeedbackView: View {
                     
                     Divider()
                     
-                    HStack {
-                        Text(NSLocalizedString("Attach file", comment: "Feedback form - Label for file attachment section"))
-                            .foregroundColor(.primary)
-                        
-                        if let filename = selectedFilename {
-                            Text(filename)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .padding(.leading, 8)
-                        }
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            isShowingFileImporter = true
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "plus")
-                                Text(NSLocalizedString("Choose File", comment: "Feedback form - Button to open file picker for attachment"))
+                    attachmentPickerRow
+
+                    if !viewModel.attachments.isEmpty {
+                        Divider()
+                        if shouldScrollAttachments {
+                            ScrollViewReader { proxy in
+                                ScrollView {
+                                    attachmentList(trailingInset: attachmentScrollIndicatorInset)
+                                }
+                                .frame(height: attachmentListHeight)
+                                .onAppear {
+                                    scrollToLastAttachment(proxy)
+                                }
+                                .onChange(of: viewModel.attachments.count, { _, _ in
+                                    scrollToLastAttachment(proxy)
+                                })
                             }
+                        } else {
+                            attachmentList()
                         }
                     }
                 }
                 .padding()
                 .background(Color(NSColor.black.withAlphaComponent(0.02)))
-                .cornerRadius(8)
+                .clipShape(.rect(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color(NSColor.separatorColor), lineWidth: 1)
@@ -177,13 +186,13 @@ struct FeedbackView: View {
                     .keyboardShortcut(.cancelAction)
                     
                     Button(NSLocalizedString("Send", comment: "Feedback form - Send button to submit feedback")) {
-                        guard !descriptionText.isEmpty else {
+                        guard viewModel.canSend else {
                             onCancel?()
                             return
                         }
-                        onSend?(buildPayload())
+                        onSend?()
                     }
-                    .disabled(descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!viewModel.canSend)
                     .buttonStyle(SendButtonStyle())
                     .keyboardShortcut(.defaultAction)
                     Spacer()
@@ -194,36 +203,99 @@ struct FeedbackView: View {
         }
         .padding(36)
         .frame(width: 520)
+        .background(FeedbackPasteImageMonitor { image in
+            viewModel.addPastedImage(image)
+        })
         .fileImporter(
             isPresented: $isShowingFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
+            allowedContentTypes: [.data],
+            allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first {
-                    // Check file size (limit 2MB)
-                    do {
-                        let resources = try url.resourceValues(forKeys: [.fileSizeKey])
-                        if let fileSize = resources.fileSize, fileSize > 2 * 1024 * 1024 {
-                            showFileSizeAlert = true
-                            return
-                        }
-                        
-                        selectedFilename = url.lastPathComponent
-                        selectedFileURL = url
-                    } catch {
-                        AppLogError("Error checking file size: \(error.localizedDescription)")
-                    }
-                }
+                viewModel.addFileURLs(urls)
             case .failure(let error):
                 AppLogError("File selection error: \(error.localizedDescription)")
             }
         }
-        .alert(NSLocalizedString("File too large", comment: "Feedback form - Alert title when selected file exceeds size limit"), isPresented: $showFileSizeAlert) {
-            Button(NSLocalizedString("OK", comment: "Feedback form - OK button to dismiss file size alert"), role: .cancel) { }
+        .alert(
+            NSLocalizedString("Could Not Save Feedback", comment: "Feedback form - Alert title when local outbox save fails"),
+            isPresented: Binding(
+                get: { viewModel.localSaveError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.localSaveError = nil
+                    }
+                }
+            )
+        ) {
+            Button(NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"), role: .cancel) { }
         } message: {
-            Text(NSLocalizedString("Please select a file smaller than 2MB.", comment: "Feedback form - Alert message explaining file size limit"))
+            Text(viewModel.localSaveError ?? "")
+        }
+        .alert(
+            NSLocalizedString("Could Not Add Attachment", comment: "Feedback form - Alert title when selected attachments cannot be added"),
+            isPresented: Binding(
+                get: { viewModel.attachmentError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.attachmentError = nil
+                    }
+                }
+            )
+        ) {
+            Button(NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"), role: .cancel) { }
+        } message: {
+            Text(viewModel.attachmentError ?? "")
+        }
+    }
+
+    private var attachmentPickerRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(NSLocalizedString("Attach files", comment: "Feedback form - Label for file attachment section"))
+                    .foregroundStyle(.primary)
+
+                Text(NSLocalizedString("Or paste an image", comment: "Feedback form - Hint explaining pasted images can be added as attachments"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(action: {
+                isShowingFileImporter = true
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                    Text(NSLocalizedString("Choose Files", comment: "Feedback form - Button to open file picker for attachments"))
+                }
+            }
+        }
+    }
+
+    private func attachmentList(trailingInset: CGFloat = 0) -> some View {
+        VStack(spacing: attachmentRowSpacing) {
+            ForEach(viewModel.attachments) { attachment in
+                FeedbackAttachmentRow(attachment: attachment) {
+                    viewModel.removeAttachment(id: attachment.id)
+                }
+                .padding(.trailing, trailingInset)
+                .frame(height: attachmentRowHeight)
+                .id(attachment.id)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func scrollToLastAttachment(_ proxy: ScrollViewProxy) {
+        guard let lastID = viewModel.attachments.last?.id else {
+            return
+        }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(lastID, anchor: .bottom)
+            }
         }
     }
     
@@ -234,33 +306,87 @@ struct FeedbackView: View {
     private func openTermsOfService() {
         onTermsOfServiceTap?()
     }
-    
-    private func buildPayload() -> [String: AnyHashable] {
-        var payload: [String: AnyHashable] = [
-            "description": descriptionText,
-            "page_url": urlString,
-            "sendSystemInfo": sendSystemInfo,
-            "user_email": AccountController.shared.account?.userInfo?.email ?? "",
-            "category_tag": "issue-report"
-        ]
-        
-        // Read attachment data
-        if let fileURL = selectedFileURL,
-           let filename = selectedFilename {
-            // Start accessing security scoped resource if needed (for sandboxed apps)
-            let gotAccess = fileURL.startAccessingSecurityScopedResource()
-            
-            if let fileData = try? Data(contentsOf: fileURL) {
-                // Passing as a dictionary [FileName: FileDataString]
-                payload["attachments"] = [filename: fileData]
+}
+
+private struct FeedbackAttachmentRow: View {
+    let attachment: FeedbackDraftAttachment
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: attachment.kind == .image ? "photo" : "doc")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(attachment.filename)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 8)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
             }
-            
-            if gotAccess {
-                fileURL.stopAccessingSecurityScopedResource()
+            .buttonStyle(.plain)
+            .help(NSLocalizedString("Remove attachment", comment: "Feedback form - Tooltip for removing an attachment"))
+        }
+        .font(.system(size: 12))
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct FeedbackPasteImageMonitor: NSViewRepresentable {
+    let onPasteImage: (NSImage) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPasteImage: onPasteImage)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.view = view
+        context.coordinator.installIfNeeded()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.view = nsView
+    }
+
+    final class Coordinator {
+        weak var view: NSView?
+        private var monitor: Any?
+        private let onPasteImage: (NSImage) -> Void
+
+        init(onPasteImage: @escaping (NSImage) -> Void) {
+            self.onPasteImage = onPasteImage
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
             }
         }
-        
-        return payload
+
+        func installIfNeeded() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self,
+                      self.isCommandPaste(event),
+                      event.window === self.view?.window,
+                      let image = NSImage(pasteboard: .general) else {
+                    return event
+                }
+                onPasteImage(image)
+                return nil
+            }
+        }
+
+        private func isCommandPaste(_ event: NSEvent) -> Bool {
+            event.charactersIgnoringModifiers?.lowercased() == "v" &&
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+        }
     }
 }
 
