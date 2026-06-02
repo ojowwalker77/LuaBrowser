@@ -35,7 +35,7 @@ extension AppController: SPUUpdaterDelegate {
         updater.automaticallyDownloadsUpdates = true
        
         #if !DEBUG
-        updater.checkForUpdatesInBackground()
+        // updater.checkForUpdatesInBackground()
         #endif
     }
     
