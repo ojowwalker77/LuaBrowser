@@ -201,6 +201,12 @@ class PinnedTabViewController: NSViewController {
     private var isExternalDrag = false
     private var hasAppliedInitialContentSnapshot = false
     private var isActive = false
+    /// Last applied left|right DB-guid pair per splitId. `PinnedSplitGroupItem`
+    /// hashes on `splitId` alone (so a Tab-instance churn doesn't recycle the
+    /// cell), which means `apply()` skips items whose pair flipped via
+    /// `reverseTabsInSplit`. We compare against this and reconfigure the
+    /// affected items so the icons follow the rendered pane order.
+    private var lastSplitItemPairs: [String: String] = [:]
 
     @Published var contentHeight: CGFloat = 10
     
@@ -480,9 +486,15 @@ class PinnedTabViewController: NSViewController {
                let partnerLive = state.tabs.first(where: { $0.guid == partnerLiveId }),
                let partnerDBGuid = partnerLive.guidInLocalDB,
                let partnerPinned = pinnedByDB[partnerDBGuid] {
+                // Mirror the rendered pane order: `SplitPaneHostView` puts
+                // `primaryTabId` on the left (vertical) / top (horizontal),
+                // so `leftTab` must be the pinned record of the primary pane.
+                // Iteration order alone would lock the icons to `pinnedTabs`
+                // order and desync after `reverseTabsInSplit`.
+                let currentIsPrimary = liveTab.guid == group.primaryTabId
                 combined = PinnedSplitGroupItem(splitId: group.id,
-                                                leftTab: tab,
-                                                rightTab: partnerPinned)
+                                                leftTab: currentIsPrimary ? tab : partnerPinned,
+                                                rightTab: currentIsPrimary ? partnerPinned : tab)
                 consumedDBGuids.insert(partnerDBGuid)
             } else if let partnerDBGuid = tab.splitPartnerGuid,
                       !partnerDBGuid.isEmpty,
@@ -519,6 +531,24 @@ class PinnedTabViewController: NSViewController {
         if !tabSectionItems.isEmpty {
             snapshot.appendItems(tabSectionItems, toSection: .tabs)
         }
+
+        var newSplitPairs: [String: String] = [:]
+        var splitItemsToReconfigure: [Item] = []
+        for item in tabSectionItems {
+            guard case .splitItem(let group) = item else { continue }
+            let pairKey = "\(group.leftTab.guidInLocalDB ?? "")|\(group.rightTab.guidInLocalDB ?? "")"
+            newSplitPairs[group.splitId] = pairKey
+            if let previous = lastSplitItemPairs[group.splitId], previous != pairKey {
+                splitItemsToReconfigure.append(item)
+            }
+        }
+        if !splitItemsToReconfigure.isEmpty {
+            // AppKit's `NSDiffableDataSourceSnapshot` only exposes
+            // `reloadItems` (no `reconfigureItems`), which is fine here:
+            // we only land in this branch for the rare reverse path.
+            snapshot.reloadItems(splitItemsToReconfigure)
+        }
+        lastSplitItemPairs = newSplitPairs
 
         let hasAnyContent = !pinnedTabs.isEmpty || !pinnedExtensionItems.isEmpty
         let shouldAnimate = animatingDifferences && (hasAppliedInitialContentSnapshot || !hasAnyContent)
