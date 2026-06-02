@@ -16,6 +16,16 @@ enum SidebarNewTabStickyResolver {
     static func shouldShowFloatingNewTab(rowRect: CGRect, visibleRect: CGRect) -> Bool {
         rowRect.minY < visibleRect.minY
     }
+
+    static func visibleRectExcludingTopOverlay(visibleRect: CGRect, overlayHeight: CGFloat) -> CGRect {
+        let hiddenHeight = max(0, min(overlayHeight, visibleRect.height))
+        return CGRect(
+            x: visibleRect.origin.x,
+            y: visibleRect.origin.y + hiddenHeight,
+            width: visibleRect.width,
+            height: visibleRect.height - hiddenHeight
+        )
+    }
 }
 
 class SidebarTabListViewController: NSViewController {
@@ -1929,6 +1939,16 @@ extension SidebarTabListViewController {
         cell.isHidden = hidden
     }
 
+    private var floatingNewTabTopOverlayHeight: CGFloat {
+        guard floatingNewTabView?.superview != nil else { return 0 }
+        if let height = floatingNewTabView?.bounds.height, height > 0 {
+            return height
+        }
+        guard let item = newTabButtonItem else { return 0 }
+        let row = outlineView.row(forItem: item)
+        return row >= 0 ? outlineView.rect(ofRow: row).height : 0
+    }
+
     private func setVisibleTabHoverSuppressed(_ suppressed: Bool) {
         for row in 0..<outlineView.numberOfRows {
             guard let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarTabCellView else {
@@ -1991,11 +2011,16 @@ extension SidebarTabListViewController {
 
         let rowRect = outlineView.rect(ofRow: row)
         let visibleRect = clipView.documentVisibleRect
+        let topOverlayHeight = floatingNewTabTopOverlayHeight
+        let unobscuredVisibleRect = SidebarNewTabStickyResolver.visibleRectExcludingTopOverlay(
+            visibleRect: visibleRect,
+            overlayHeight: topOverlayHeight
+        )
 
         var targetY = visibleRect.origin.y
-        if rowRect.minY < visibleRect.minY {
-            targetY = rowRect.minY
-        } else if rowRect.maxY > visibleRect.maxY {
+        if rowRect.minY < unobscuredVisibleRect.minY {
+            targetY = rowRect.minY - topOverlayHeight
+        } else if rowRect.maxY > unobscuredVisibleRect.maxY {
             targetY = rowRect.maxY - visibleRect.height
         } else {
             return
