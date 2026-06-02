@@ -1570,8 +1570,18 @@ class BrowserState {
     }
 
     func closeTabs(keeping: Set<Int>) {
+        // Expand the keep-set to cover the partner pane of any split the user
+        // is keeping — "Close Other Tabs" should leave the whole splitview
+        // intact rather than dissolve it into a single pane.
+        var keep = keeping
+        for tabId in keeping {
+            if let group = splitGroup(forTabId: tabId) {
+                keep.insert(group.primaryTabId)
+                keep.insert(group.secondaryTabId)
+            }
+        }
         for tab in tabs {
-            if !keeping.contains(tab.guid) {
+            if !keep.contains(tab.guid) {
                 tab.close()
             }
         }
