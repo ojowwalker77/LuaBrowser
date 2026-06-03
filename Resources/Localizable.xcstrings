@@ -161,17 +161,32 @@
     "Add Download" : {
 
     },
+    "Add Left Split" : {
+      "comment" : "Drop-zone hint shown when dragging a tab over the left third of the page"
+    },
     "Add New" : {
       "comment" : "Shortcuts settings - Placeholder text when no shortcut is assigned"
     },
+    "Add Right Split" : {
+      "comment" : "Drop-zone hint shown when dragging a tab over the right third of the page"
+    },
+    "Add Split to Bookmark" : {
+      "comment" : "Tab context menu - Save both panes of the split as a bookmark folder"
+    },
+    "Add Split to Folder" : {
+      "comment" : "Tab context menu - Save both panes of the split into a chosen bookmark folder"
+    },
+    "Add Tabs to New Group" : {
+      "comment" : "Tab multi-selection context menu - create a new tab group from selected tabs"
+    },
     "Add to Bookmark" : {
-      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar"
+      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar\nTab multi-selection context menu - add selected tabs to the root bookmark location"
     },
     "Add to Bookmark Bar" : {
       "comment" : "Tab context menu - Add current tab to root bookmark bar"
     },
     "Add to Folder" : {
-      "comment" : "Tab context menu - Menu item to add tab to bookmarks"
+      "comment" : "Tab context menu - Menu item to add tab to bookmarks\nTab multi-selection context menu - submenu to add selected tabs to a bookmark folder"
     },
     "Add to Group" : {
       "comment" : "Tab context menu - Submenu to add this tab to an existing tab group"
@@ -345,8 +360,8 @@
     "Click " : {
       "comment" : "Phi Link - Custom bot guide prefix"
     },
-    "Click to collapse or expand group" : {
-      "comment" : "Tab Groups - cursor tooltip for horizontal-strip group chip"
+    "Click the title for overview. Click the arrow to expand or collapse." : {
+      "comment" : "Tab Groups - tooltip for horizontal-strip group chip interactions"
     },
     "Click to install update" : {
       "comment" : "Phi menu - Menu item text when update is ready to install"
@@ -357,8 +372,17 @@
     "Close Group" : {
       "comment" : "Tab group context menu - Close the group and all its tabs"
     },
+    "Close Group Overview" : {
+      "comment" : "Tab group overview - Accessibility label for the button that closes the overview"
+    },
     "Close Other Tabs" : {
-      "comment" : "Tab context menu - Menu item to close all tabs except the selected one"
+      "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
+    },
+    "Close Tab" : {
+      "comment" : "Tab group overview - Accessibility label for the button that closes one tab card"
+    },
+    "Close Tabs" : {
+      "comment" : "Tab multi-selection context menu - close all selected tabs"
     },
     "Code Examples" : {
 
@@ -411,8 +435,17 @@
     "Cookies" : {
       "comment" : "Import data type - Cookies toggle label"
     },
+    "Copy Left URL" : {
+      "comment" : "Bookmark context menu - Copy the left (primary) URL of a split-view bookmark\nTab context menu - Copy the left pane's URL for a split"
+    },
     "Copy Link" : {
       "comment" : "Address bar menu - Copy link menu item\nBookmark Copy Link menu item\nDownload item row - Tooltip for copy link button\nSidebar address bar - Copy current page URL button tooltip\nTab context menu - Menu item to copy the tab URL to clipboard\nTooltip for button to copy download URL in living downloads toast"
+    },
+    "Copy Links" : {
+      "comment" : "Tab multi-selection context menu - copy links of all selected tabs"
+    },
+    "Copy Right URL" : {
+      "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
     },
     "Coral" : {
       "comment" : "Coral theme color name"
@@ -474,6 +507,12 @@
     "Duplicate" : {
       "comment" : "Tab context menu - Menu item to duplicate the selected tab"
     },
+    "Duplicate Split" : {
+      "comment" : "Tab context menu - Duplicate both panes of a split as a new split"
+    },
+    "Duplicate Tabs" : {
+      "comment" : "Tab multi-selection context menu - duplicate all selected tabs"
+    },
     "e.g. 123456:ABC-DEF..." : {
 
     },
@@ -483,14 +522,26 @@
     "Edit Folder" : {
       "comment" : "Folder editor - Title of the sheet to edit a folder"
     },
+    "Edit Pinned Split" : {
+      "comment" : "Favorite editor - Title of the sheet to edit a pinned split-view tab"
+    },
     "Edit Pinned Tab" : {
       "comment" : "Favorite editor - Title of the sheet to edit a pin"
+    },
+    "Edit Split Bookmark" : {
+      "comment" : "Bookmark editor - Title of the sheet when editing a split-view bookmark"
     },
     "Edit the name and address for this bookmark." : {
       "comment" : "Bookmark editor - Subtitle explaining bookmark editing"
     },
     "Edit the name and address for this pinned tab." : {
       "comment" : "Pinned tab editor - Subtitle explaining pinned tab editing"
+    },
+    "Edit the name and both addresses for this split-view bookmark." : {
+      "comment" : "Bookmark editor - Subtitle explaining split-view bookmark editing"
+    },
+    "Edit the names and addresses for both panes of this pinned split." : {
+      "comment" : "Pinned tab editor - Subtitle explaining pinned split editing"
     },
     "Edit..." : {
       "comment" : "Edit bookmark url menu item title\nPinned tab context menu - Edit pinned tab menu item"
@@ -705,6 +756,12 @@
     "Leave empty to use the auto-generated name." : {
       "comment" : "Tab group rename alert - Hint that empty title clears to auto-name"
     },
+    "Left Name" : {
+      "comment" : "Bookmark editor - Label for the left (primary) title input field on a split-view bookmark"
+    },
+    "Left URL" : {
+      "comment" : "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
+    },
     "Light" : {
       "comment" : "Appearance choice: always light mode"
     },
@@ -753,6 +810,9 @@
     "More Settings" : {
       "comment" : "Address bar menu - Settings submenu item to open settings page\nExtension list - Website settings item to open more settings"
     },
+    "Move Tabs to Group" : {
+      "comment" : "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"
+    },
     "Move to Group" : {
       "comment" : "Tab context menu - Submenu to move this tab to another tab group"
     },
@@ -771,11 +831,14 @@
     "Name cannot exceed %d characters" : {
       "comment" : "Account settings - Error message when user name is too long"
     },
+    "Name group" : {
+      "comment" : "Tab group overview editor - Placeholder for the editable group title field"
+    },
     "Name is too long (maximum 100 characters)" : {
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
     },
     "New Folder" : {
-      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder"
+      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder\nTab multi-selection context menu - bookmark selected tabs into a newly created folder"
     },
     "New Folder…" : {
       "comment" : "Bookmark editor - Create new folder option in folder picker"
@@ -784,7 +847,7 @@
       "comment" : "Bookmark New Folder menu item"
     },
     "New Tab" : {
-      "comment" : "Sidebar tab list - Button title to create a new browser tab\nTab area context menu - Open a new browser tab\nside bar new tab button text"
+      "comment" : "Sidebar tab list - Button title to create a new browser tab\nTab area context menu - Open a new browser tab\nTitle for the group overview card that creates a new tab in the selected group\nside bar new tab button text"
     },
     "New tab behavior" : {
       "comment" : "General settings - Row title for configuring new tab behavior"
@@ -861,6 +924,9 @@
     "Opacity" : {
       "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency"
     },
+    "Open as Split" : {
+      "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab"
+    },
     "Open in New Tab" : {
       "comment" : "Open in New Tab menu item"
     },
@@ -920,6 +986,9 @@
     },
     "Pin extension" : {
       "comment" : "Extension list - Tooltip for pinning an extension"
+    },
+    "Pin Split" : {
+      "comment" : "Tab context menu - Pin the split that contains this tab"
     },
     "Pink" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
@@ -981,6 +1050,9 @@
     "Remove from list" : {
       "comment" : "Download item row - Menu option to remove download from list"
     },
+    "Remove from Split" : {
+      "comment" : "Tab context menu - Dissolve the split that contains this tab"
+    },
     "Rename" : {
       "comment" : "Rename folder or bookmark dialog title"
     },
@@ -1014,6 +1086,15 @@
     "Return" : {
       "comment" : "Import data type selection - Return button to go back"
     },
+    "Reverse Panes" : {
+      "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
+    },
+    "Right Name" : {
+      "comment" : "Bookmark editor - Label for the right (secondary) title input field on a split-view bookmark"
+    },
+    "Right URL" : {
+      "comment" : "Bookmark editor - Label for the right (secondary) URL input field on a split-view bookmark"
+    },
     "Run" : {
       "comment" : "Notification card run button - Executes the suggested action"
     },
@@ -1027,7 +1108,7 @@
       "comment" : "Omnibox - Accessibility description for search icon"
     },
     "Search or Enter URL" : {
-      "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query"
+      "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"
     },
     "Select Phi User Data Backup" : {
       "comment" : "Debug import user data - NSOpenPanel title for choosing a Phi user data zip"
@@ -1107,6 +1188,9 @@
     "System" : {
       "comment" : "Appearance choice: follow system setting"
     },
+    "Tab Group" : {
+      "comment" : "Fallback title shown in the group overview header when group metadata is unavailable\nTab Groups - Fallback bookmark folder title when converting a tab group"
+    },
     "Tab Name" : {
       "comment" : "Pinned tab editor - Placeholder for pinned tab name input"
     },
@@ -1169,6 +1253,9 @@
     },
     "Unpin extension" : {
       "comment" : "Extension list - Tooltip for unpinning an extension"
+    },
+    "Unpin Split" : {
+      "comment" : "Tab context menu - Remove the pin from the split that contains this tab"
     },
     "Unsupported image format" : {
       "comment" : "Image preview error"

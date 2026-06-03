@@ -127,6 +127,35 @@ struct UnifiedTabMuteButton: View {
     }
 }
 
+/// Standalone mute toggle used by the split-pair sidebar cell. Mirrors
+/// `UnifiedTabMuteButton`'s appearance but is parameter-driven so the
+/// merged cell can drive two of them without running a full TabViewModel
+/// per pane.
+struct SplitPaneMuteButton: View {
+    let isMuted: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(isMuted ? .speakerMute : .speakerWave)
+                .renderingMode(.template)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .themedFill(.hover)
+                .opacity(isHovered ? 1 : 0)
+        )
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .ignoresSafeArea()
+    }
+}
+
 struct UnifiedTabRecordingIcon: View {
     private let iconSize: CGFloat = 8
     @State private var isAnimating = false

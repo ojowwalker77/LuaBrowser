@@ -29,6 +29,7 @@ final class TabGroupHeaderViewModel {
     /// Mirrors `WebContentGroupInfo.isCollapsed` so the inline chevron
     /// in `TabGroupHeaderView` can rotate without driving the state.
     var isCollapsed: Bool = false
+    var isOverviewSelected: Bool = false
 
     private var configuredToken: String?
     private var cancellables = Set<AnyCancellable>()
@@ -113,10 +114,7 @@ struct TabGroupHeaderView: View {
                 .animation(.easeInOut(duration: 0.15), value: viewModel.isCollapsed)
 
             HStack(spacing: 6) {
-                Circle()
-                    .fill(Color(nsColor: viewModel.color.nsColor))
-                    .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
-                    .frame(width: 10, height: 10)
+                TabGroupHeaderColorIndicator(color: viewModel.color)
 
                 Text(viewModel.displayTitle)
                     .font(.system(size: 13, weight: .semibold))
@@ -152,6 +150,12 @@ struct TabGroupHeaderView: View {
         .padding(.leading, 4)
         .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(viewModel.isOverviewSelected
+                      ? Color(nsColor: NSColor(resource: .sidebarTabSelected))
+                      : Color.clear)
+        )
         // `contentShape` makes the empty horizontal space between the
         // chevron / title / close button hit-testable so `.onHover`
         // fires across the entire header strip, not just on the
@@ -163,14 +167,36 @@ struct TabGroupHeaderView: View {
     }
 }
 
+/// Colored center with a white ring — no colored stroke on the edge.
+private struct TabGroupHeaderColorIndicator: View {
+    var color: GroupColor
+
+    private static let outerDiameter: CGFloat = 10
+    private static let ringWidth: CGFloat = 1
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+            Circle()
+                .fill(Color(nsColor: color.nsColor))
+                .frame(
+                    width: Self.outerDiameter - 2 * Self.ringWidth,
+                    height: Self.outerDiameter - 2 * Self.ringWidth
+                )
+        }
+        .frame(width: Self.outerDiameter, height: Self.outerDiameter)
+    }
+}
+
 enum TabGroupHeaderHitTarget {
+    case toggleCollapse
     case closeGroup
 }
 
-/// Resolves the close-button hit zone on the header. The rest of the
-/// header strip (chevron, color dot, title, empty space) is treated as
-/// a single "toggle / drag" surface by `TabGroupHeaderHostingView` —
-/// click toggles collapse, drag starts a whole-group drag.
+/// Resolves explicit control zones on the header. The title/body zone
+/// stays nil so it can request overview on single click, toggle collapse
+/// on double click, and start a group drag.
 struct TabGroupHeaderHitTargetResolver {
     static let controlSize: CGFloat = 24
     static let horizontalInset: CGFloat = 6
@@ -183,6 +209,24 @@ struct TabGroupHeaderHitTargetResolver {
             width: controlSize,
             height: controlSize
         )
-        return closeRect.contains(point) ? .closeGroup : nil
+        if closeRect.contains(point) {
+            return .closeGroup
+        }
+
+        let collapseRect = CGRect(
+            x: 0,
+            y: originY,
+            width: controlSize,
+            height: controlSize
+        )
+        if collapseRect.contains(point) {
+            return .toggleCollapse
+        }
+
+        return nil
+    }
+
+    static func canToggleCollapseWithDoubleClick(at point: CGPoint, in bounds: CGRect) -> Bool {
+        bounds.contains(point) && target(at: point, in: bounds) == nil
     }
 }

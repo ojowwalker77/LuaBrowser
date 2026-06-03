@@ -24,12 +24,24 @@ class WebContentContainerViewController: NSViewController {
     /// Currently displayed WebContentViewController
     private weak var currentWebContentController: WebContentViewController?
 
+    /// Owned by this controller while in placeholder mode; released on exit.
+    /// Mutually exclusive with the active tab's WCVC (only one is visible
+    /// in contentContainer at a time).
+    private var placeholderShell: PlaceholderShellViewController?
+
     /// Shared bookmark bar owned once per window and moved between controllers.
     private var sharedBookmarkBar: BookmarkBar?
     /// Current host for the shared bookmark bar.
     private weak var sharedBookmarkBarHostController: WebContentViewController?
 
-    var addressBarAnchorView: NSView? { currentWebContentController?.addressBarAnchorView }
+    var addressBarAnchorView: NSView? {
+        // In placeholder mode the shell owns the anchor — needed for the
+        // omnibox popup when invoked via cmd+L.
+        if let shell = placeholderShell {
+            return shell.addressBarAnchorView
+        }
+        return currentWebContentController?.addressBarAnchorView
+    }
 
     // =========================================================================
     // Tab switch
@@ -106,12 +118,25 @@ class WebContentContainerViewController: NSViewController {
     private var topBarHeightConstraint: Constraint?
     private var topBarTopConstraint: Constraint?
     
-    /// Container view for the current WebContentViewController
-    private lazy var contentContainer: NSView = {
-        let view = NSView()
+    /// Container view for the current WebContentViewController. Also serves
+    /// as the drop target for "drag a tab onto the left third → make a split".
+    private lazy var contentContainer: SplitTabDropContainer = {
+        let view = SplitTabDropContainer()
         view.wantsLayer = true
+        view.browserState = self.browserState
+        view.pageAreaProvider = { [weak self, weak view] in
+            guard let self, let view,
+                  let current = self.currentWebContentController else { return nil }
+            return current.pageContentAreaFrame(in: view)
+        }
         return view
     }()
+
+    /// Exposed so the horizontal TabStrip (comfortable layout) can show the
+    /// split-drop hint while a tab is being torn out — TabStrip drives drags
+    /// with raw mouse events, not an NSDraggingSession, so the container's
+    /// NSDraggingDestination callbacks never fire in that mode.
+    var splitTabDropContainer: SplitTabDropContainer { contentContainer }
 
     /// Single CAShapeLayer that strokes a unified path covering the active
     /// tab's outline (top + sides + inverse curves) AND splitViewContainer's
@@ -344,6 +369,25 @@ class WebContentContainerViewController: NSViewController {
             }
             .store(in: &cancellables)
 
+        // Placeholder mode attach/detach.
+        //
+        // SYNCHRONOUS by design (no `.receive(on:)`, no `Task { @MainActor }`).
+        // See spec §9.1: the UAF contract requires the NSView to be detached
+        // from the AppKit hierarchy before `exitPlaceholderMode` returns to
+        // Chromium, which then resets `placeholder_web_contents_` and destroys
+        // the underlying NSView. Any async hop here would dangle.
+        browserState?.$isInPlaceholderMode
+            .removeDuplicates()
+            .sink { [weak self] isPlaceholder in
+                guard let self else { return }
+                if isPlaceholder {
+                    self.attachPlaceholderShell()
+                } else {
+                    self.detachPlaceholderShell()
+                }
+            }
+            .store(in: &cancellables)
+
         browserState?.$sidebarCollapsed
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -410,6 +454,13 @@ class WebContentContainerViewController: NSViewController {
                 self.updateContentOuterBorder()
             }
             .store(in: &cancellables)
+
+        browserState?.$groupOverviewState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateContentOuterBorder()
+            }
+            .store(in: &cancellables)
     }
 
     private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
@@ -447,6 +498,7 @@ class WebContentContainerViewController: NSViewController {
         controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
         guard isComfortableLayout else {
             outerBorderLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
 
@@ -472,7 +524,9 @@ class WebContentContainerViewController: NSViewController {
         // path, focusingTab updates before currentWebContentController is
         // promoted; using the visible tab keeps the outline attached to the
         // tab whose page is actually onscreen.
-        let activeFrame = tabStripBarController?.tabFrame(for: controller.associatedTab, in: view)
+        let overviewActive = browserState?.groupOverviewState != nil
+        let activeTabForBorder = overviewActive ? nil : controller.associatedTab
+        let activeFrame = tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
 
         let path = CGMutablePath()
 
@@ -558,7 +612,7 @@ class WebContentContainerViewController: NSViewController {
         outerBorderLayer.path = path
         outerBorderLayer.strokeColor = ThemedColor.border.resolve(in: view).cgColor
 
-        updateGroupBoundaryLayers(apexY: topY, invR: invR)
+        updateGroupBoundaryLayers(apexY: topY, invR: invR, activeTab: activeTabForBorder)
 
         CATransaction.commit()
     }
@@ -573,9 +627,8 @@ class WebContentContainerViewController: NSViewController {
     ///
     /// Single path means the seam at the inverse-curve apex no longer
     /// exists by construction — stroke is one continuous shape.
-    private func updateGroupBoundaryLayers(apexY: CGFloat, invR: CGFloat) {
+    private func updateGroupBoundaryLayers(apexY: CGFloat, invR: CGFloat, activeTab: Tab?) {
         let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
-        let activeTab = currentWebContentController?.associatedTab
         guard traditionalLayout,
               let geometries = tabStripBarController?.groupGeometries(in: view,
                                                                        activeTab: activeTab) else {
@@ -839,6 +892,65 @@ class WebContentContainerViewController: NSViewController {
         controller.updateBookmarkBarVisibility(bookmarkCount: bookmarkBar.bookmarkCount)
     }
     
+    // MARK: - Placeholder Shell
+
+    /// Mount the placeholder shell inside `contentContainer` and ask it to
+    /// host the placeholder WebContents NSView. Idempotent: re-mounts the
+    /// nativeView on the existing shell if one is already attached.
+    @MainActor
+    private func attachPlaceholderShell() {
+        guard let wrapper = browserState?.placeholderWrapper,
+              let nativeView = wrapper.nativeView else {
+            AppLogWarn("🦖 [Container] attachPlaceholderShell: no wrapper/nativeView")
+            return
+        }
+
+        let shell: PlaceholderShellViewController
+        if let existing = placeholderShell {
+            shell = existing
+        } else {
+            shell = PlaceholderShellViewController(browserState: browserState)
+            addChild(shell)
+            contentContainer.addSubview(shell.view)
+            shell.view.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            placeholderShell = shell
+        }
+        shell.mountPlaceholderNativeView(nativeView)
+
+        // Focus the placeholder so the user can immediately press Space to
+        // start the dino game without first clicking the canvas.
+        // Two-step focus matches WebContentViewController.focusWebContent:
+        //   1. Cocoa-level: window.makeFirstResponder routes Cocoa events.
+        //   2. Chromium-level: wrapper.focus() routes Chromium's internal
+        //      focus tracker so the renderer receives keystrokes. Without
+        //      it, makeFirstResponder alone may leave the renderer in a
+        //      "not focused" state and keyDown events go nowhere.
+        // wrapper.focus() may silently fail if chrome://dino hasn't
+        // committed navigation yet (URL=nil), but the page loads fast
+        // enough that the first user keystroke arrives after commit.
+        nativeView.window?.makeFirstResponder(nativeView)
+        if wrapper.responds(to: #selector(WebContentWrapper.focus)) {
+            wrapper.focus()
+        }
+
+        AppLogInfo("🦖 [Container] attached placeholder shell + focused")
+    }
+
+    /// Tear down the placeholder shell. Synchronous structural cleanup —
+    /// `BrowserState.exitPlaceholderMode` already removed the underlying
+    /// NSView from the hierarchy (the Combine sink fires synchronously).
+    /// See spec §9.1.
+    @MainActor
+    private func detachPlaceholderShell() {
+        placeholderShell?.unmountPlaceholderNativeView()
+        placeholderShell?.view.removeFromSuperview()
+        placeholderShell?.removeFromParent()
+        placeholderShell = nil
+        AppLogInfo("🦖 [Container] detached placeholder shell")
+    }
+
     /// Scenario 1: Switch to an already-painted tab (immediate switch, bring to front)
     private func switchToWebContentController(_ controller: WebContentViewController) {
         // Flicker fix: Don't remove old view immediately, defer until Chromium confirms.
@@ -868,6 +980,19 @@ class WebContentContainerViewController: NSViewController {
         }
 
         attachSharedBookmarkBar(to: controller)
+
+        // Re-mount content before we mark this controller as current.
+        // For split tabs, the partner's webContentView may have been
+        // reparented into another controller's split host. For tabs whose
+        // split was dissolved while they were inactive, a stale split host
+        // may still be hanging around. In both cases this reconciles.
+        //
+        // NB: code reachable from `refreshContentForCurrentTab` must NOT read
+        // `currentWebContentController` — it still points at the outgoing VC
+        // until the assignment below. Today the reachable code stays inside
+        // the controller's own host; if you add a container-level lookup,
+        // consult the `controller` parameter explicitly instead.
+        controller.refreshContentForCurrentTab()
 
         currentWebContentController = controller
         // Force a full layout sweep before reading splitViewContainer's frame.
@@ -1120,8 +1245,30 @@ class WebContentContainerViewController: NSViewController {
         webContentControllers.values.first { $0.associatedTab?.guid == tabId }
     }
 
+    /// True when the inspected tab is part of a split currently mounted by
+    /// the visible WebContentViewController. In that case DevTools must dock
+    /// into the matching pane's container — routing through the inspected
+    /// tab's own (offscreen) controller would dump DevTools into a hostView
+    /// that isn't in the window hierarchy.
+    private func mountedSplitPane(forInspectedTabId tabId: Int)
+        -> (controller: WebContentViewController, pane: SplitPaneHostView.Pane)? {
+        guard let state = browserState,
+              let group = state.splitGroup(forTabId: tabId),
+              let mounted = currentWebContentController,
+              let mountedTabId = mounted.associatedTab?.guid,
+              group.contains(tabId: mountedTabId) else { return nil }
+        let pane: SplitPaneHostView.Pane = group.primaryTabId == tabId ? .primary : .secondary
+        return (mounted, pane)
+    }
+
     /// Called when Chromium attaches docked DevTools to a tab.
     func handleDevToolsDidAttach(tabId: Int, devToolsView: NSView) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.attachDevToolsToPane(tabId: tabId,
+                                                   pane: target.pane,
+                                                   devToolsView: devToolsView)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else {
             AppLogInfo("[DevTools] No controller found for tabId=\(tabId)")
             return
@@ -1131,6 +1278,10 @@ class WebContentContainerViewController: NSViewController {
 
     /// Called when Chromium detaches DevTools from a tab (closed or undocked).
     func handleDevToolsDidDetach(tabId: Int) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.detachDevToolsFromPane(tabId: tabId, pane: target.pane)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else {
             AppLogInfo("[DevTools] No controller found for tabId=\(tabId)")
             return
@@ -1140,6 +1291,13 @@ class WebContentContainerViewController: NSViewController {
 
     /// Called when DevTools JS updates the inspected page bounds.
     func handleUpdateInspectedPageBounds(tabId: Int, bounds: CGRect, hide: Bool) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.updateInspectedPageBoundsForPane(tabId: tabId,
+                                                               pane: target.pane,
+                                                               bounds: bounds,
+                                                               hide: hide)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else { return }
         controller.updateInspectedPageBounds(bounds, hide: hide)
     }

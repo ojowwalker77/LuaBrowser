@@ -23,6 +23,7 @@ class WebContentHeaderState: ObservableObject {
     @Published var isProgressVisible: Bool = false
     @Published var isDownloadPopoverShown: Bool = false
     @Published var isIncognito: Bool = false
+    @Published var isInPlaceholderMode: Bool = false
 
     init() {
         let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
@@ -203,6 +204,16 @@ class WebContentHeader: NSView {
                 self?.updateLayoutVisibility()
             }
             .store(in: &cancellables)
+
+        // Re-run layout visibility when entering/leaving placeholder mode so
+        // navigation + chat buttons hide alongside the placeholder shell.
+        unsafeBrowserState.$isInPlaceholderMode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
     }
 
     private func setupObservers() {
@@ -211,6 +222,13 @@ class WebContentHeader: NSView {
         setupConfigObserver()
 
         unsafeBrowserState?.$sidebarCollapsed
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
+
+        unsafeBrowserState?.$groupOverviewState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateLayoutVisibility()
@@ -263,19 +281,22 @@ class WebContentHeader: NSView {
         let traditionalLayout = layoutMode.isTraditional
         let isCollapsed = unsafeBrowserState?.sidebarCollapsed ?? false
         let isIncognito = unsafeBrowserState?.isIncognito ?? false
-        let aiChatEnabled = currentTab?.aiChatEnabled ?? false
+        let overviewActive = unsafeBrowserState?.groupOverviewState != nil
+        let aiChatEnabled = overviewActive || (currentTab?.aiChatEnabled ?? false)
+        let isInPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.state.showAddressBar = navigationAtTop
-            self.state.showNavigationButtons = navigationAtTop
-            self.state.showChatButton = navigationAtTop && !isIncognito && aiChatEnabled && phiAIEnabled
-            self.state.showFeedbackButton = traditionalLayout || (navigationAtTop && isCollapsed)
-            self.state.showDownloadButton = traditionalLayout || (navigationAtTop && isCollapsed)
-            self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito
+            self.state.showNavigationButtons = navigationAtTop && !isInPlaceholder
+            self.state.showChatButton = navigationAtTop && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
+            self.state.showFeedbackButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
+            self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
+            self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
             self.state.showSidebarButton = !traditionalLayout && navigationAtTop && isCollapsed
             self.state.isIncognito = isIncognito
+            self.state.isInPlaceholderMode = isInPlaceholder
         }
     }
 
@@ -302,6 +323,13 @@ class WebContentHeader: NSView {
     }
 
     @objc private func aiChatButtonClicked() {
+        // Defense in depth: chat button should already be hidden in placeholder
+        // mode (see updateLayoutVisibility). Belt-and-braces guard avoids
+        // toggling chat if a stale tap somehow reaches this handler.
+        guard unsafeBrowserState?.isInPlaceholderMode != true else {
+            NSSound.beep()
+            return
+        }
         unsafeBrowserState?.toggleAIChat()
     }
 

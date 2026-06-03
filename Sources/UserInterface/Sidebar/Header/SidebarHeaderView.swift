@@ -199,10 +199,14 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     /// Update view visibility based on configuration
     private func updateLayoutVisibility(layoutMode: LayoutMode) {
         let showInSidebar = isSidebarLayout(layoutMode)
-        AppLogDebug("[SidebarHeader] updateLayoutVisibility showInSidebar=\(showInSidebar)")
+        let inPlaceholder = browserState?.isInPlaceholderMode ?? false
+        AppLogDebug("[SidebarHeader] updateLayoutVisibility showInSidebar=\(showInSidebar) inPlaceholder=\(inPlaceholder)")
 
-        // Default layout: navigation buttons and address bar in sidebar
-        stackView.isHidden = !showInSidebar
+        // Default layout: navigation buttons and address bar in sidebar.
+        // Hide the back/forward/reload stack when in placeholder mode (no tab
+        // to act on). Address bar visibility is delegated to SideAddressBar's
+        // own placeholder-mode sink (blanks the text field).
+        stackView.isHidden = !showInSidebar || inPlaceholder
         addressView.isHidden = !showInSidebar
 
         // Update addressView height constraint
@@ -244,6 +248,18 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                     return
                 }
                 updateLayoutVisibility(layoutMode: mode)
+            }
+            .store(in: &cancellables)
+
+        // Re-run layout visibility on placeholder-mode transitions so the
+        // back/forward/reload stack hides alongside the placeholder shell.
+        // Reuse the same method to avoid overshadowing stackView.isHidden.
+        browserState.$isInPlaceholderMode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateLayoutVisibility(layoutMode: PhiPreferences.GeneralSettings.loadLayoutMode())
             }
             .store(in: &cancellables)
     }

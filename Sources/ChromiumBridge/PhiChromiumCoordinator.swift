@@ -402,6 +402,49 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
 
     // =========================================================================
+    // Placeholder mode (last-tab close → chrome://dino shell)
+    //
+    // Mirrors the Chromium-side bridge in
+    // chrome/browser/phinomenon/phi_app_bridge/PhiChromiumBridgeHeader.h.
+    // The synchronous detach contract (spec §9.1) requires the BrowserState
+    // state flip + NSView detach to complete BEFORE returning to Chromium,
+    // hence MainActor.assumeIsolated rather than Task { @MainActor in ... }.
+    // =========================================================================
+
+    func windowDidEnterPlaceholderMode(_ windowId: Int64,
+                                       placeholderView wrapper: any WebContentWrapper) {
+        AppLogInfo("🦖 [Coordinator] enterPlaceholderMode windowId=\(windowId)")
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
+            return
+        }
+        guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
+            AppLogWarn("🦖 [Coordinator] wrapper cast failed")
+            return
+        }
+        // Synchronous (NOT Task { @MainActor in ... }) so state flips before
+        // returning to Chromium.
+        MainActor.assumeIsolated {
+            windowController.browserState.enterPlaceholderMode(wrapper: nsWrapper)
+        }
+    }
+
+    func windowDidExitPlaceholderMode(_ windowId: Int64) {
+        AppLogInfo("🦖 [Coordinator] exitPlaceholderMode windowId=\(windowId)")
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
+            return
+        }
+        MainActor.assumeIsolated {
+            windowController.browserState.exitPlaceholderMode()
+        }
+    }
+
+    // =========================================================================
     // Tab groups (Chromium → Mac)
     //
     // Forwards all 5 bridge callbacks through EventBus, matching the
@@ -564,6 +607,62 @@ extension PhiChromiumCoordinator {
         EventBus.shared.send(OmniEvent(browserId: Int(windowId),
                                        action: .searchSuggestionResultChanged(suggestions: infos,
                                                                               originalInput: originalInput)))
+    }
+}
+
+// MARK: - Split view notifications
+
+extension PhiChromiumCoordinator {
+    func splitCreated(_ splitId: String,
+                      primaryTabId: Int64,
+                      secondaryTabId: Int64,
+                      layout: String,
+                      ratio: Double,
+                      windowId: Int64) {
+        AppLogDebug("[Split] created: id=\(splitId) primary=\(primaryTabId) secondary=\(secondaryTabId) layout=\(layout) ratio=\(ratio) window=\(windowId)")
+        EventBus.shared.send(SplitEvent(
+            browserId: windowId.intValue,
+            action: .created(splitId: splitId,
+                             primaryTabId: primaryTabId.intValue,
+                             secondaryTabId: secondaryTabId.intValue,
+                             layout: parseBridgeLayout(layout),
+                             ratio: ratio)))
+    }
+
+    func splitVisualsChanged(_ splitId: String,
+                             layout: String,
+                             ratio: Double,
+                             windowId: Int64) {
+        EventBus.shared.send(SplitEvent(
+            browserId: windowId.intValue,
+            action: .visualsChanged(splitId: splitId,
+                                    layout: parseBridgeLayout(layout),
+                                    ratio: ratio)))
+    }
+
+    private func parseBridgeLayout(_ raw: String) -> SplitLayout {
+        if let layout = SplitLayout(bridgeString: raw) { return layout }
+        AppLogError("[Split] unknown bridge layout string '\(raw)' — defaulting to vertical")
+        return .vertical
+    }
+
+    func splitContentsChanged(_ splitId: String,
+                              primaryTabId: Int64,
+                              secondaryTabId: Int64,
+                              windowId: Int64) {
+        AppLogDebug("[Split] contentsChanged: id=\(splitId) primary=\(primaryTabId) secondary=\(secondaryTabId) window=\(windowId)")
+        EventBus.shared.send(SplitEvent(
+            browserId: windowId.intValue,
+            action: .contentsChanged(splitId: splitId,
+                                     primaryTabId: primaryTabId.intValue,
+                                     secondaryTabId: secondaryTabId.intValue)))
+    }
+
+    func splitRemoved(_ splitId: String, windowId: Int64) {
+        AppLogDebug("[Split] removed: id=\(splitId) window=\(windowId)")
+        EventBus.shared.send(SplitEvent(
+            browserId: windowId.intValue,
+            action: .removed(splitId: splitId)))
     }
 }
 

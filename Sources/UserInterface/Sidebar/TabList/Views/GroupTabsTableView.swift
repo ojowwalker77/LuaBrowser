@@ -12,8 +12,11 @@ import AppKit
 /// from the outer outline view instead of AppKit's embedded-table drag
 /// pipeline.
 final class GroupTabsTableView: NSTableView {
+    private static let dragThreshold: CGFloat = 5
+
     weak var phiTableDelegate: GroupTabsTableViewDelegate?
     private var pendingDragRow: Int?
+    private var pendingDragStartPoint: NSPoint?
     /// When the user presses inside the SwiftUI close or mute control areas, `NSHostingView` may
     /// receive the mouse sequence but the SwiftUI `Button` actions do not run reliably in this
     /// embedded inner-table path. We detect control hits in `mouseDown`, store the target here,
@@ -43,6 +46,7 @@ final class GroupTabsTableView: NSTableView {
         let point = convert(event.locationInWindow, from: nil)
         let row = row(at: point)
         pendingDragRow = row
+        pendingDragStartPoint = point
         pendingInteractionTarget = interactionTarget(at: point, row: row)
         pendingMouseDownEvent = event
         manualDragInProgress = false
@@ -59,7 +63,9 @@ final class GroupTabsTableView: NSTableView {
         )
         guard !manualDragInProgress,
               let row = pendingDragRow,
+              let startPoint = pendingDragStartPoint,
               row >= 0,
+              row < numberOfRows,
               let mouseDownEvent = pendingMouseDownEvent else {
             return
         }
@@ -68,11 +74,32 @@ final class GroupTabsTableView: NSTableView {
             return
         }
 
+        let currentPoint = convert(event.locationInWindow, from: nil)
+        let dx = abs(currentPoint.x - startPoint.x)
+        let dy = abs(currentPoint.y - startPoint.y)
+        guard dx > Self.dragThreshold || dy > Self.dragThreshold else {
+            return
+        }
+
         manualDragInProgress = true
         AppLogDebug("[TAB_GROUPS][INNER_DRAG] inner.beginManualDrag row=\(row)")
         phiTableDelegate?.tableView(self,
                                     beginDraggingRow: row,
                                     with: mouseDownEvent)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else {
+            super.otherMouseDown(with: event)
+            return
+        }
+
+        let clickLocation = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: clickLocation)
+        guard clickedRow >= 0 else { return }
+
+        resetPendingDragState()
+        phiTableDelegate?.tableView(self, didMiddleClickRow: clickedRow)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -92,11 +119,16 @@ final class GroupTabsTableView: NSTableView {
                 phiTableDelegate?.tableView(self, didClickRow: clickedRow)
             }
         }
+        resetPendingDragState()
+        AppLogDebug("[TAB_GROUPS][INNER_DRAG] inner.mouseUp")
+    }
+
+    private func resetPendingDragState() {
         pendingDragRow = nil
+        pendingDragStartPoint = nil
         pendingInteractionTarget = nil
         pendingMouseDownEvent = nil
         manualDragInProgress = false
-        AppLogDebug("[TAB_GROUPS][INNER_DRAG] inner.mouseUp")
     }
 
     private func interactionTarget(at point: NSPoint, row: Int) -> GroupTabsTableInteractionTarget? {
@@ -145,6 +177,8 @@ protocol GroupTabsTableViewDelegate: AnyObject {
                    with event: NSEvent)
     func tableView(_ tableView: GroupTabsTableView,
                    didClickRow row: Int)
+    func tableView(_ tableView: GroupTabsTableView,
+                   didMiddleClickRow row: Int)
     func tableView(_ tableView: GroupTabsTableView,
                    didRequest target: GroupTabsTableInteractionTarget,
                    row: Int)

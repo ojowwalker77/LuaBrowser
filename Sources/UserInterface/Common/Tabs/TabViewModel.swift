@@ -19,6 +19,10 @@ final class TabViewModel {
     /// when viewModel is briefly reconfigured with a nil-url tab during layout.
     private(set) var faviconLoadURL: String?
     var isActive: Bool = false
+    var isActiveSuppressed: Bool = false
+    /// True when this tab is part of the temporary multi-selection (the active
+    /// tab is implicitly included but never carries this flag).
+    var isMultiSelected: Bool = false
     var isHovered: Bool = false
     var isHoverSuppressed: Bool = false
     var isPressed: Bool = false
@@ -40,7 +44,7 @@ final class TabViewModel {
     /// flag is the authoritative signal for layout decisions like
     /// indentation that should not flicker on color settling.
     var isInGroup: Bool = false
-    
+
     var onToggleMute: (() -> Void)?
     var onToolTipUpdated: (() -> Void)?
     
@@ -75,6 +79,8 @@ final class TabViewModel {
         liveFaviconImage = nil
         liveFaviconRevision = 0
         isActive = false
+        isActiveSuppressed = false
+        isMultiSelected = false
         isHovered = false
         isHoverSuppressed = false
         isPressed = false
@@ -100,6 +106,11 @@ final class TabViewModel {
         }
     }
 
+    func setActiveSuppressed(_ suppressed: Bool, activeValue: Bool? = nil) {
+        isActiveSuppressed = suppressed
+        isActive = (activeValue ?? isActive) && !suppressed
+    }
+
     private var configuredTabGuid: Int?
 
     func configure(with tab: Tab, in browserState: BrowserState? = nil) {
@@ -110,7 +121,7 @@ final class TabViewModel {
         self.faviconLoadURL = (tab.url?.isEmpty == false) ? tab.url : nil
         self.faviconUrl = tab.faviconUrl
         updateLiveFavicon(data: tab.liveFaviconData, revision: tab.liveFaviconRevision)
-        self.isActive = tab.isActive
+        self.isActive = tab.isActive && !isActiveSuppressed
         self.isLoading = tab.isLoading
         self.loadingProgress = Double(tab.loadingProgress)
         self.isCurrentlyAudible = tab.isCurrentlyAudible
@@ -185,7 +196,7 @@ final class TabViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 guard let self, self.configuredTabGuid == expectedGuid else { return }
-                self.isActive = $0
+                self.isActive = $0 && !self.isActiveSuppressed
             }
             .store(in: &cancellables)
             
@@ -269,6 +280,19 @@ final class TabViewModel {
                     self.groupColor = color
                 }
                 .store(in: &cancellables)
+        }
+
+        if let browserState {
+            self.isMultiSelected = browserState.multiSelection.contains(expectedGuid)
+            browserState.$multiSelection
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] selection in
+                    guard let self, self.configuredTabGuid == expectedGuid else { return }
+                    self.isMultiSelected = selection.contains(expectedGuid)
+                }
+                .store(in: &cancellables)
+        } else {
+            self.isMultiSelected = false
         }
     }
 
