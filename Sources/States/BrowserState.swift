@@ -2892,12 +2892,23 @@ class BrowserState {
             splits[splitIdx].isPinned = false
         }
 
+        // When a live SplitGroup already covers the pair, the per-tab
+        // `syncChromiumOrder` path would call `bridge.moveTab` for each
+        // pane in turn. Chromium's `MaybeRemoveSplitsForMove` then trips
+        // on the first move — relocating one split member outside its
+        // adjacency dissolves the SplitTabId — and the user is left
+        // with two standalone tabs at the drop site. Defer the
+        // Chromium-side reorder to a single `moveSplit` below so the
+        // pair travels as a unit. When no live group exists yet the
+        // per-tab sync is safe (nothing to tear) and we fall through to
+        // `createSplit` after the inserts.
+        let preserveLiveSplit = existingGroup != nil
         insertIntoNormalTabOrder(tabGuid: primary.live.guid,
                                  at: insertIndex,
-                                 syncChromiumOrder: true)
+                                 syncChromiumOrder: !preserveLiveSplit)
         insertIntoNormalTabOrder(tabGuid: secondary.live.guid,
                                  at: insertIndex + 1,
-                                 syncChromiumOrder: true)
+                                 syncChromiumOrder: !preserveLiveSplit)
 
         // Drop the partner refs on the in-memory pinned records *before*
         // removing them. The store delete is async; any synchronous code
@@ -2911,9 +2922,11 @@ class BrowserState {
         localStore.removePinnedTab(handlePinned)
         localStore.removePinnedTab(partnerPinned)
 
-        // If Chromium hadn't yet paired the two live tabs into a split,
-        // recreate one now so the unpinned pair renders as a merged cell.
-        if existingGroup == nil {
+        if let group = existingGroup {
+            moveSplit(group.id, toIndex: insertIndex)
+        } else {
+            // Chromium hadn't yet paired the two live tabs into a split,
+            // recreate one now so the unpinned pair renders as a merged cell.
             createSplit(leftTabId: primary.live.guid,
                         rightTabId: secondary.live.guid,
                         layout: .vertical)
@@ -3439,12 +3452,19 @@ class BrowserState {
             // filter keyed off `splitBookmarkBoundTabIds`).
             splitBookmarkBindings.removeValue(forKey: bookmarkGuid)
 
+            // Per-tab `syncChromiumOrder` calls would relocate one pane
+            // through Chromium's `moveTab`, tripping
+            // `MaybeRemoveSplitsForMove` and dissolving the SplitTabId.
+            // Insert locally without syncing, then move the whole split
+            // as a unit via `moveSplit`. Mirrors `unpinSplitPanesIntoNormalList`
+            // and `moveSplitPairOrderLocally`.
             insertIntoNormalTabOrder(tabGuid: primaryTabGuid,
                                      at: index,
-                                     syncChromiumOrder: true)
+                                     syncChromiumOrder: false)
             insertIntoNormalTabOrder(tabGuid: secondaryTabGuid,
                                      at: index + 1,
-                                     syncChromiumOrder: true)
+                                     syncChromiumOrder: false)
+            moveSplit(splitId, toIndex: index)
 
             bookmarkManager.removeBookmark(bookmark)
             return
