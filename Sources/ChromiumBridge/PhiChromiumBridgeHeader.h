@@ -55,6 +55,14 @@ typedef NS_ENUM(NSUInteger, DownloadEventType) {
     DownloadEventTypeOpened
 };
 
+typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
+    PhiOmniboxSuggestionDispositionDefault = 0,
+    PhiOmniboxSuggestionDispositionCurrentTab,
+    PhiOmniboxSuggestionDispositionNewForegroundTab,
+    PhiOmniboxSuggestionDispositionNewBackgroundTab,
+    PhiOmniboxSuggestionDispositionSwitchToTab
+};
+
 @protocol PhiChromiumBridgeDelegate <NSObject>
 @property (nonatomic, copy, readonly, nullable) void (^extensionChangedCallback)(NSArray<NSDictionary *> *list, int64_t windowId);
 - (NSView * _Nullable)getWebContentSuperView;
@@ -278,6 +286,9 @@ typedef NS_ENUM(NSUInteger, DownloadEventType) {
 // Autocomplete
 - (void)requestAutoCompleteSuggestionsForText:(NSString *)text preventInlineAutoComplete:(BOOL)preventInlineAutoComplete windowId:(int64_t)windowId;
 - (void)stopAutoCompleteSuggestions:(int64_t)windowId;
+- (void)selectSuggestionAtLine:(size_t)line
+                       windowId:(int64_t)windowId
+                    disposition:(PhiOmniboxSuggestionDisposition)disposition;
 - (void)deleteSuggestionAtLine:(size_t)line windowId:(int64_t)windowId;
 
 // ==========================================================================

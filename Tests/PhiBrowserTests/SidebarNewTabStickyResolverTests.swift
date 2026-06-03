@@ -27,4 +27,37 @@ final class SidebarNewTabStickyResolverTests: XCTestCase {
 
         XCTAssertFalse(SidebarNewTabStickyResolver.shouldShowFloatingNewTab(rowRect: rowRect, visibleRect: visibleRect))
     }
+
+    func testVisibleRectExcludesTopOverlayHeight() {
+        let visibleRect = CGRect(x: 0, y: 80, width: 240, height: 400)
+
+        let result = SidebarNewTabStickyResolver.visibleRectExcludingTopOverlay(
+            visibleRect: visibleRect,
+            overlayHeight: 36
+        )
+
+        XCTAssertEqual(result, CGRect(x: 0, y: 116, width: 240, height: 364))
+    }
+
+    func testVisibleRectExcludingTopOverlayClampsToVisibleHeight() {
+        let visibleRect = CGRect(x: 0, y: 80, width: 240, height: 40)
+
+        let result = SidebarNewTabStickyResolver.visibleRectExcludingTopOverlay(
+            visibleRect: visibleRect,
+            overlayHeight: 80
+        )
+
+        XCTAssertEqual(result, CGRect(x: 0, y: 120, width: 240, height: 0))
+    }
+
+    func testVisibleRectExcludingTopOverlayIgnoresNegativeHeight() {
+        let visibleRect = CGRect(x: 0, y: 80, width: 240, height: 400)
+
+        let result = SidebarNewTabStickyResolver.visibleRectExcludingTopOverlay(
+            visibleRect: visibleRect,
+            overlayHeight: -12
+        )
+
+        XCTAssertEqual(result, visibleRect)
+    }
 }
