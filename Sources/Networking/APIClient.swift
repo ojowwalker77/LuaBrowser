@@ -553,6 +553,10 @@ class APIClient {
     }
 
     func submitFeedbackV2(_ submitRequest: FeedbackV2SubmitRequest) async throws -> Response<FeedbackV2SubmitData> {
+        guard submitRequest.attachments.count <= 5 else {
+            throw APIError.invalidRequest(message: "Feedback V2 submit supports at most five attachments")
+        }
+
         let url = URL(string: "\(accountBaseURL)/api/auth/feedback/v2/submit")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

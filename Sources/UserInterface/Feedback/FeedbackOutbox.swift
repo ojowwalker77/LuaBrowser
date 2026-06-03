@@ -168,11 +168,12 @@ enum FeedbackOutboxError: LocalizedError {
 }
 
 enum FeedbackOutbox {
+    static let maxSubmitAttachments = 5
     static let maxSelectedAttachmentBytes: Int64 = 10 * 1024 * 1024
     static let maxAttachmentBytes: Int64 = 20 * 1024 * 1024
     static let zipPlanningBytes: Int64 = maxAttachmentBytes - 512 * 1024
     static let maxJobRetryCount = 5
-    static let archiveStrategyVersion = 2
+    static let archiveStrategyVersion = 3
     private static let directoryName = "feedbackOutbox"
     private static let manifestFilename = "manifest.json"
 
@@ -323,44 +324,71 @@ enum FeedbackOutbox {
         let preparedDir = jobRoot.appendingPathComponent("prepared", isDirectory: true)
         try FileManager.default.createDirectory(at: preparedDir, withIntermediateDirectories: true)
 
-        var attachments: [FeedbackOutboxUploadAttachment] = []
-        attachments.append(contentsOf: try prepareImageAttachments(
+        let imageAttachments = try prepareImageAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
             sources: manifest.sourceImages
-        ))
-        attachments.append(contentsOf: try prepareLogZipAttachments(
+        )
+        let logAttachments = try prepareLogZipAttachments(
             preparedDir: preparedDir
-        ))
-        attachments.append(contentsOf: try prepareUserFileZipAttachments(
+        )
+        let requiredAttachments = imageAttachments + logAttachments
+
+        let fileAttachments = try prepareUserFileAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
-            sources: manifest.sourceFiles
-        ))
-        return attachments
+            sources: manifest.sourceFiles,
+            requiredAttachmentCount: requiredAttachments.count
+        )
+
+        return try attachmentsWithinSubmitLimit(required: requiredAttachments, optional: fileAttachments)
     }
 
-    private static func prepareImageAttachments(
+    static func prepareImageAttachments(
         jobRoot: URL,
         preparedDir: URL,
         sources: [FeedbackOutboxSourceAttachment]
     ) throws -> [FeedbackOutboxUploadAttachment] {
-        try sources.map { source in
+        guard sources.count > 1 else {
+            return try sources.map { source in
+                let sourceURL = jobRoot.appendingPathComponent(source.relativePath)
+                let prepared = try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
+                return FeedbackOutboxUploadAttachment(
+                    id: UUID().uuidString,
+                    relativePath: prepared.url.pathRelative(to: jobRoot),
+                    filename: prepared.filename,
+                    mimeType: prepared.mimeType,
+                    size: prepared.size,
+                    attachmentType: .screenshot,
+                    required: true,
+                    status: .queued,
+                    retryCount: 0,
+                    objectKey: nil
+                )
+            }
+        }
+
+        let items = try sources.map { source in
             let sourceURL = jobRoot.appendingPathComponent(source.relativePath)
             let prepared = try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
-            return FeedbackOutboxUploadAttachment(
-                id: UUID().uuidString,
-                relativePath: prepared.url.pathRelative(to: jobRoot),
-                filename: prepared.filename,
-                mimeType: prepared.mimeType,
-                size: prepared.size,
-                attachmentType: .screenshot,
-                required: true,
-                status: .queued,
-                retryCount: 0,
-                objectKey: nil
+            return ArchiveItem(
+                sourceURL: prepared.url,
+                inlineData: nil,
+                offset: 0,
+                length: UInt64(max(prepared.size, 0)),
+                archivePath: "images/\(prepared.filename)"
             )
         }
+
+        return try makeZipAttachments(
+            items: items,
+            preparedDir: preparedDir,
+            singleFilename: "images.zip",
+            numberedPrefix: "images",
+            attachmentType: .screenshot,
+            required: true,
+            preferSingleArchiveWhenPossible: true
+        )
     }
 
     private static func normalizedImageIfNeeded(
@@ -396,10 +424,43 @@ enum FeedbackOutbox {
         )
     }
 
-    private static func prepareUserFileZipAttachments(
+    static func prepareUserFileAttachments(
         jobRoot: URL,
         preparedDir: URL,
-        sources: [FeedbackOutboxSourceAttachment]
+        sources: [FeedbackOutboxSourceAttachment],
+        requiredAttachmentCount: Int
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        var attachments = try prepareUserFileZipAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: sources,
+            forceSingleArchive: false
+        )
+
+        if requiredAttachmentCount + attachments.count > maxSubmitAttachments {
+            removePreparedAttachments(attachments, jobRoot: jobRoot)
+            attachments = try prepareUserFileZipAttachments(
+                jobRoot: jobRoot,
+                preparedDir: preparedDir,
+                sources: sources,
+                forceSingleArchive: true
+            )
+        }
+
+        return attachments
+    }
+
+    private static func removePreparedAttachments(_ attachments: [FeedbackOutboxUploadAttachment], jobRoot: URL) {
+        for attachment in attachments {
+            try? FileManager.default.removeItem(at: jobRoot.appendingPathComponent(attachment.relativePath))
+        }
+    }
+
+    static func prepareUserFileZipAttachments(
+        jobRoot: URL,
+        preparedDir: URL,
+        sources: [FeedbackOutboxSourceAttachment],
+        forceSingleArchive: Bool
     ) throws -> [FeedbackOutboxUploadAttachment] {
         let items: [ArchiveItem] = sources.compactMap { source in
             guard source.size <= maxAttachmentBytes else {
@@ -422,11 +483,27 @@ enum FeedbackOutbox {
         return try makeZipAttachments(
             items: items,
             preparedDir: preparedDir,
-            singleFilename: nil,
-            numberedPrefix: "feedback-files",
+            singleFilename: forceSingleArchive ? "others.zip" : nil,
+            numberedPrefix: forceSingleArchive ? "others" : "feedback-files",
             attachmentType: .other,
-            required: false
+            required: false,
+            preferSingleArchiveWhenPossible: forceSingleArchive
         )
+    }
+
+    static func attachmentsWithinSubmitLimit(
+        required: [FeedbackOutboxUploadAttachment],
+        optional: [FeedbackOutboxUploadAttachment]
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        guard required.count <= maxSubmitAttachments else {
+            throw FeedbackOutboxError.zipCreationFailed("Required feedback attachments exceed the five attachment submit limit.")
+        }
+
+        let remainingSlots = maxSubmitAttachments - required.count
+        if optional.count > remainingSlots {
+            AppLogWarn("Feedback V2 optional attachments trimmed to satisfy submit limit: kept=\(remainingSlots) total=\(optional.count)")
+        }
+        return required + Array(optional.prefix(remainingSlots))
     }
 
     private static func collectLogArchiveItems() throws -> [ArchiveItem] {

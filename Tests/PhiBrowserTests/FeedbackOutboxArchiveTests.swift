@@ -245,6 +245,103 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         XCTAssertTrue(attachments.allSatisfy { FileManager.default.fileExists(atPath: root.appendingPathComponent($0.relativePath).path) })
     }
 
+    func testPrepareImageAttachmentsZipsMultipleImages() throws {
+        let jobRoot = try makeJobDirectory()
+        let preparedDir = try makePreparedDirectory(in: jobRoot)
+        let imagesDir = jobRoot.appendingPathComponent("images", isDirectory: true)
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+
+        let sources = try ["first.png", "second.png"].map { filename in
+            let fileURL = imagesDir.appendingPathComponent(filename)
+            let data = Data(filename.utf8)
+            try data.write(to: fileURL)
+            return FeedbackOutboxSourceAttachment(
+                relativePath: "images/\(filename)",
+                filename: filename,
+                mimeType: "image/png",
+                size: Int64(data.count)
+            )
+        }
+
+        let attachments = try FeedbackOutbox.prepareImageAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: sources
+        )
+
+        XCTAssertEqual(attachments.count, 1)
+        XCTAssertEqual(attachments[0].filename, "images.zip")
+        XCTAssertEqual(attachments[0].mimeType, "application/zip")
+        XCTAssertEqual(attachments[0].attachmentType, .screenshot)
+        XCTAssertTrue(attachments[0].required)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jobRoot.appendingPathComponent(attachments[0].relativePath).path))
+    }
+
+    func testPrepareUserFileAttachmentsUsesOthersZipWhenSubmitSlotsAreLimited() throws {
+        let jobRoot = try makeJobDirectory()
+        let preparedDir = try makePreparedDirectory(in: jobRoot)
+        let filesDir = jobRoot.appendingPathComponent("files", isDirectory: true)
+        try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+
+        let firstURL = filesDir.appendingPathComponent("first.bin")
+        FileManager.default.createFile(atPath: firstURL.path, contents: nil)
+        let firstHandle = try FileHandle(forWritingTo: firstURL)
+        try firstHandle.truncate(atOffset: UInt64(FeedbackOutbox.zipPlanningBytes))
+        try firstHandle.close()
+
+        let secondURL = filesDir.appendingPathComponent("second.bin")
+        try Data("x".utf8).write(to: secondURL)
+
+        let sources = [
+            FeedbackOutboxSourceAttachment(
+                relativePath: "files/first.bin",
+                filename: "first.bin",
+                mimeType: "application/octet-stream",
+                size: FeedbackOutbox.zipPlanningBytes
+            ),
+            FeedbackOutboxSourceAttachment(
+                relativePath: "files/second.bin",
+                filename: "second.bin",
+                mimeType: "application/octet-stream",
+                size: 1
+            )
+        ]
+
+        let attachments = try FeedbackOutbox.prepareUserFileAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: sources,
+            requiredAttachmentCount: FeedbackOutbox.maxSubmitAttachments - 1
+        )
+
+        XCTAssertEqual(attachments.map(\.filename), ["others.zip"])
+        XCTAssertEqual(attachments[0].attachmentType, .other)
+        XCTAssertFalse(attachments[0].required)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: preparedDir.appendingPathComponent("feedback-files-1.zip").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: preparedDir.appendingPathComponent("feedback-files-2.zip").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jobRoot.appendingPathComponent(attachments[0].relativePath).path))
+    }
+
+    func testAttachmentsWithinSubmitLimitTrimsOptionalAttachments() throws {
+        let required = (0..<4).map { index in
+            uploadAttachment(filename: "required-\(index).zip", required: true)
+        }
+        let optional = (0..<3).map { index in
+            uploadAttachment(filename: "optional-\(index).zip", required: false)
+        }
+
+        let attachments = try FeedbackOutbox.attachmentsWithinSubmitLimit(required: required, optional: optional)
+
+        XCTAssertEqual(attachments.count, FeedbackOutbox.maxSubmitAttachments)
+        XCTAssertEqual(attachments.map(\.filename), [
+            "required-0.zip",
+            "required-1.zip",
+            "required-2.zip",
+            "required-3.zip",
+            "optional-0.zip"
+        ])
+    }
+
     func testOptionalZipOverLimitIsSkippedAfterActualZipSizeCheck() throws {
         let preparedDir = try makePreparedDirectory()
         let data = try randomData(byteCount: Int(FeedbackOutbox.maxAttachmentBytes + 1024 * 1024))
@@ -269,10 +366,31 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: preparedDir.appendingPathComponent("feedback-files-1.zip").path))
     }
 
-    private func makePreparedDirectory() throws -> URL {
-        let preparedDir = root.appendingPathComponent("prepared", isDirectory: true)
+    private func makeJobDirectory() throws -> URL {
+        let jobRoot = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: jobRoot, withIntermediateDirectories: true)
+        return jobRoot
+    }
+
+    private func makePreparedDirectory(in parent: URL? = nil) throws -> URL {
+        let preparedDir = (parent ?? root).appendingPathComponent("prepared", isDirectory: true)
         try FileManager.default.createDirectory(at: preparedDir, withIntermediateDirectories: true)
         return preparedDir
+    }
+
+    private func uploadAttachment(filename: String, required: Bool) -> FeedbackOutboxUploadAttachment {
+        FeedbackOutboxUploadAttachment(
+            id: UUID().uuidString,
+            relativePath: "prepared/\(filename)",
+            filename: filename,
+            mimeType: "application/zip",
+            size: 1,
+            attachmentType: required ? .log : .other,
+            required: required,
+            status: .queued,
+            retryCount: 0,
+            objectKey: nil
+        )
     }
 
     private func archiveItem(path: String, plannedBytes: UInt64) -> ArchiveItem {
