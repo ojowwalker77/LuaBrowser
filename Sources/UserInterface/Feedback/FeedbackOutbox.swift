@@ -173,7 +173,7 @@ enum FeedbackOutbox {
     static let maxAttachmentBytes: Int64 = 20 * 1024 * 1024
     static let zipPlanningBytes: Int64 = maxAttachmentBytes - 512 * 1024
     static let maxJobRetryCount = 5
-    static let archiveStrategyVersion = 3
+    static let archiveStrategyVersion = 4
     private static let directoryName = "feedbackOutbox"
     private static let manifestFilename = "manifest.json"
 
@@ -324,59 +324,103 @@ enum FeedbackOutbox {
         let preparedDir = jobRoot.appendingPathComponent("prepared", isDirectory: true)
         try FileManager.default.createDirectory(at: preparedDir, withIntermediateDirectories: true)
 
-        let imageAttachments = try prepareImageAttachments(
-            jobRoot: jobRoot,
-            preparedDir: preparedDir,
-            sources: manifest.sourceImages
-        )
         let logAttachments = try prepareLogZipAttachments(
             preparedDir: preparedDir
         )
-        let requiredAttachments = imageAttachments + logAttachments
+        let slotsAfterLogs = max(maxSubmitAttachments - logAttachments.count, 0)
+        let reserveOtherSlot = !manifest.sourceFiles.isEmpty && slotsAfterLogs > 1
+        let preferredImageSlots = max(slotsAfterLogs - (reserveOtherSlot ? 1 : 0), 0)
+
+        let imageAttachments = try prepareImageAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: manifest.sourceImages,
+            preferredSlots: preferredImageSlots,
+            maxSlots: slotsAfterLogs
+        )
 
         let fileAttachments = try prepareUserFileAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
             sources: manifest.sourceFiles,
-            requiredAttachmentCount: requiredAttachments.count
+            availableSlots: maxSubmitAttachments - logAttachments.count - imageAttachments.count
         )
 
+        let requiredAttachments = imageAttachments + logAttachments
         return try attachmentsWithinSubmitLimit(required: requiredAttachments, optional: fileAttachments)
     }
 
     static func prepareImageAttachments(
         jobRoot: URL,
         preparedDir: URL,
-        sources: [FeedbackOutboxSourceAttachment]
+        sources: [FeedbackOutboxSourceAttachment],
+        preferredSlots: Int,
+        maxSlots: Int
     ) throws -> [FeedbackOutboxUploadAttachment] {
-        guard sources.count > 1 else {
-            return try sources.map { source in
-                let sourceURL = jobRoot.appendingPathComponent(source.relativePath)
-                let prepared = try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
-                return FeedbackOutboxUploadAttachment(
-                    id: UUID().uuidString,
-                    relativePath: prepared.url.pathRelative(to: jobRoot),
-                    filename: prepared.filename,
-                    mimeType: prepared.mimeType,
-                    size: prepared.size,
-                    attachmentType: .screenshot,
-                    required: true,
-                    status: .queued,
-                    retryCount: 0,
-                    objectKey: nil
-                )
+        guard maxSlots > 0 else {
+            if !sources.isEmpty {
+                AppLogWarn("Feedback V2 image attachments skipped because no submit slots are available")
             }
+            return []
         }
 
-        let items = try sources.map { source in
+        let preparedImages = try sources.map { source in
             let sourceURL = jobRoot.appendingPathComponent(source.relativePath)
-            let prepared = try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
+            return try normalizedImageIfNeeded(sourceURL: sourceURL, source: source, preparedDir: preparedDir)
+        }
+
+        let effectivePreferredSlots = min(max(preferredSlots, 0), maxSlots)
+        guard preparedImages.count > effectivePreferredSlots else {
+            return preparedImages.map { directImageAttachment($0, jobRoot: jobRoot) }
+        }
+
+        let directImageCount = effectivePreferredSlots > 1 ? min(effectivePreferredSlots - 1, preparedImages.count) : 0
+        var attachments = preparedImages.prefix(directImageCount).map {
+            directImageAttachment($0, jobRoot: jobRoot)
+        }
+
+        let zippedImages = Array(preparedImages.dropFirst(directImageCount))
+        let zipAttachments = try makeImageZipAttachments(
+            images: zippedImages,
+            preparedDir: preparedDir
+        )
+        let remainingSlots = max(maxSlots - attachments.count, 0)
+        let keptZipAttachments = trimPreparedAttachments(
+            zipAttachments,
+            to: remainingSlots,
+            jobRoot: preparedDir.deletingLastPathComponent(),
+            context: "image zip"
+        )
+        attachments.append(contentsOf: keptZipAttachments)
+        return attachments
+    }
+
+    private static func directImageAttachment(_ prepared: PreparedFile, jobRoot: URL) -> FeedbackOutboxUploadAttachment {
+        FeedbackOutboxUploadAttachment(
+            id: UUID().uuidString,
+            relativePath: prepared.url.pathRelative(to: jobRoot),
+            filename: prepared.filename,
+            mimeType: prepared.mimeType,
+            size: prepared.size,
+            attachmentType: .screenshot,
+            required: true,
+            status: .queued,
+            retryCount: 0,
+            objectKey: nil
+        )
+    }
+
+    private static func makeImageZipAttachments(
+        images: [PreparedFile],
+        preparedDir: URL
+    ) throws -> [FeedbackOutboxUploadAttachment] {
+        let items = images.map { image in
             return ArchiveItem(
-                sourceURL: prepared.url,
+                sourceURL: image.url,
                 inlineData: nil,
                 offset: 0,
-                length: UInt64(max(prepared.size, 0)),
-                archivePath: "images/\(prepared.filename)"
+                length: UInt64(max(image.size, 0)),
+                archivePath: "images/\(image.filename)"
             )
         }
 
@@ -428,32 +472,46 @@ enum FeedbackOutbox {
         jobRoot: URL,
         preparedDir: URL,
         sources: [FeedbackOutboxSourceAttachment],
-        requiredAttachmentCount: Int
+        availableSlots: Int
     ) throws -> [FeedbackOutboxUploadAttachment] {
-        var attachments = try prepareUserFileZipAttachments(
+        guard availableSlots > 0 else {
+            if !sources.isEmpty {
+                AppLogWarn("Feedback V2 optional file attachments skipped because no submit slots are available")
+            }
+            return []
+        }
+
+        let attachments = try prepareUserFileZipAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
             sources: sources,
-            forceSingleArchive: false
+            forceSingleArchive: true
         )
-
-        if requiredAttachmentCount + attachments.count > maxSubmitAttachments {
-            removePreparedAttachments(attachments, jobRoot: jobRoot)
-            attachments = try prepareUserFileZipAttachments(
-                jobRoot: jobRoot,
-                preparedDir: preparedDir,
-                sources: sources,
-                forceSingleArchive: true
-            )
-        }
-
-        return attachments
+        return trimPreparedAttachments(
+            attachments,
+            to: availableSlots,
+            jobRoot: jobRoot,
+            context: "optional file zip"
+        )
     }
 
-    private static func removePreparedAttachments(_ attachments: [FeedbackOutboxUploadAttachment], jobRoot: URL) {
-        for attachment in attachments {
+    private static func trimPreparedAttachments(
+        _ attachments: [FeedbackOutboxUploadAttachment],
+        to limit: Int,
+        jobRoot: URL,
+        context: String
+    ) -> [FeedbackOutboxUploadAttachment] {
+        guard attachments.count > limit else {
+            return attachments
+        }
+
+        let kept = Array(attachments.prefix(max(limit, 0)))
+        let skipped = Array(attachments.dropFirst(max(limit, 0)))
+        for attachment in skipped {
             try? FileManager.default.removeItem(at: jobRoot.appendingPathComponent(attachment.relativePath))
         }
+        AppLogWarn("Feedback V2 \(context) attachments trimmed to satisfy submit limit: kept=\(kept.count) total=\(attachments.count)")
+        return kept
     }
 
     static func prepareUserFileZipAttachments(

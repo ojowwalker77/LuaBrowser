@@ -245,13 +245,14 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         XCTAssertTrue(attachments.allSatisfy { FileManager.default.fileExists(atPath: root.appendingPathComponent($0.relativePath).path) })
     }
 
-    func testPrepareImageAttachmentsZipsMultipleImages() throws {
+    func testPrepareImageAttachmentsKeepsPreviewImagesBeforeImagesZip() throws {
         let jobRoot = try makeJobDirectory()
         let preparedDir = try makePreparedDirectory(in: jobRoot)
         let imagesDir = jobRoot.appendingPathComponent("images", isDirectory: true)
         try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
 
-        let sources = try ["first.png", "second.png"].map { filename in
+        let sources = try (1...5).map { index in
+            let filename = "image-\(index).png"
             let fileURL = imagesDir.appendingPathComponent(filename)
             let data = Data(filename.utf8)
             try data.write(to: fileURL)
@@ -266,18 +267,58 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         let attachments = try FeedbackOutbox.prepareImageAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
-            sources: sources
+            sources: sources,
+            preferredSlots: 3,
+            maxSlots: 4
         )
 
-        XCTAssertEqual(attachments.count, 1)
-        XCTAssertEqual(attachments[0].filename, "images.zip")
-        XCTAssertEqual(attachments[0].mimeType, "application/zip")
-        XCTAssertEqual(attachments[0].attachmentType, .screenshot)
-        XCTAssertTrue(attachments[0].required)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: jobRoot.appendingPathComponent(attachments[0].relativePath).path))
+        XCTAssertEqual(attachments.map(\.filename), ["image-1.png", "image-2.png", "images.zip"])
+        XCTAssertEqual(attachments.map(\.mimeType), ["image/png", "image/png", "application/zip"])
+        XCTAssertTrue(attachments.allSatisfy { $0.attachmentType == .screenshot })
+        XCTAssertTrue(attachments.allSatisfy(\.required))
+        XCTAssertTrue(attachments.allSatisfy { FileManager.default.fileExists(atPath: jobRoot.appendingPathComponent($0.relativePath).path) })
     }
 
-    func testPrepareUserFileAttachmentsUsesOthersZipWhenSubmitSlotsAreLimited() throws {
+    func testPrepareImageAttachmentsLetsSplitZipUseReservedSlot() throws {
+        let jobRoot = try makeJobDirectory()
+        let preparedDir = try makePreparedDirectory(in: jobRoot)
+        let imagesDir = jobRoot.appendingPathComponent("images", isDirectory: true)
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+
+        let sources = try (1...5).map { index in
+            let filename = "image-\(index).png"
+            let fileURL = imagesDir.appendingPathComponent(filename)
+            let data: Data
+            if index <= 2 {
+                data = Data(filename.utf8)
+            } else {
+                data = try randomData(byteCount: 8 * 1024 * 1024)
+            }
+            try data.write(to: fileURL)
+            return FeedbackOutboxSourceAttachment(
+                relativePath: "images/\(filename)",
+                filename: filename,
+                mimeType: "image/png",
+                size: Int64(data.count)
+            )
+        }
+
+        let attachments = try FeedbackOutbox.prepareImageAttachments(
+            jobRoot: jobRoot,
+            preparedDir: preparedDir,
+            sources: sources,
+            preferredSlots: 3,
+            maxSlots: 4
+        )
+
+        XCTAssertEqual(attachments.map(\.filename), ["image-1.png", "image-2.png", "images-1.zip", "images-2.zip"])
+        XCTAssertTrue(attachments.allSatisfy { $0.attachmentType == .screenshot })
+        XCTAssertTrue(attachments.allSatisfy(\.required))
+        XCTAssertTrue(attachments.allSatisfy { $0.size <= FeedbackOutbox.maxAttachmentBytes })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: preparedDir.appendingPathComponent("images.zip").path))
+    }
+
+    func testPrepareUserFileAttachmentsUsesOthersZip() throws {
         let jobRoot = try makeJobDirectory()
         let preparedDir = try makePreparedDirectory(in: jobRoot)
         let filesDir = jobRoot.appendingPathComponent("files", isDirectory: true)
@@ -311,7 +352,7 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
             jobRoot: jobRoot,
             preparedDir: preparedDir,
             sources: sources,
-            requiredAttachmentCount: FeedbackOutbox.maxSubmitAttachments - 1
+            availableSlots: 1
         )
 
         XCTAssertEqual(attachments.map(\.filename), ["others.zip"])
