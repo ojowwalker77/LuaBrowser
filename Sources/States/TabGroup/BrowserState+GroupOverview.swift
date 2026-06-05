@@ -17,11 +17,14 @@ extension BrowserState {
             clearGroupOverview()
             return
         }
-        groupOverviewState = GroupOverviewState(groupToken: token)
+        let nextState = GroupOverviewState(groupToken: token)
+        guard groupOverviewState != nextState else { return }
+        groupOverviewState = nextState
     }
 
     @MainActor
     func clearGroupOverview() {
+        guard groupOverviewState != nil else { return }
         groupOverviewState = nil
     }
 

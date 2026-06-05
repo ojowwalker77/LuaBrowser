@@ -388,6 +388,7 @@ class WebContentViewController: NSViewController {
             .store(in: &cancellables)
 
         browserState?.$groupOverviewState
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.updateGroupOverviewState(state)
@@ -946,6 +947,7 @@ class WebContentViewController: NSViewController {
         // pane stays blank. Defer until we have a window so the mount is a
         // stable in-window operation.
         if view.window == nil {
+            guard parent != nil || view.superview != nil else { return }
             DispatchQueue.main.async { [weak self, weak tab] in
                 guard let self, let tab else { return }
                 self.updateContentForTab(tab)
@@ -1199,10 +1201,13 @@ class WebContentViewController: NSViewController {
     private func updateGroupOverviewState(_ state: GroupOverviewState?) {
         guard let browserState else { return }
         guard let state else {
+            let wasShowingGroupOverview = groupOverviewController != nil
             hideGroupOverviewIfNeeded()
+            guard wasShowingGroupOverview, isViewLoaded, view.superview != nil else { return }
             updateContentForTab(associatedTab)
             return
         }
+        guard isViewLoaded, view.superview != nil else { return }
         showGroupOverview(token: state.groupToken, browserState: browserState)
     }
 
