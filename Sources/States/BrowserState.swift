@@ -682,6 +682,9 @@ class BrowserState {
         // path during placeholder mode would operate on a stale focusingTab.
         // Primary entry points are gated upstream; this is the safety net.
         guard !isInPlaceholderMode else { return }
+        // Overview owns the web content surface; allow forced collapse, but
+        // block stale actions from reopening chat while overview is visible.
+        if groupOverviewState != nil, collapse != true { return }
 
         // Dispatch to the focusing tab's AI Chat state, mirroring to its split
         // partner so both panes of a split share one expand/collapse state.

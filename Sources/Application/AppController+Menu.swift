@@ -588,7 +588,8 @@ extension AppController {
 
         if item.action == #selector(toggleChatbar(_:)) {
             let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-            if !phiAIEnabled || MainBrowserWindowControllersManager.shared.getActiveWindowState()?.isIncognito ?? false || MainBrowserWindowControllersManager.shared.getActiveWindowState()?.focusingTab?.aiChatEnabled == false {
+            let state = MainBrowserWindowControllersManager.shared.getActiveWindowState()
+            if !phiAIEnabled || state?.isIncognito ?? false || state?.groupOverviewState != nil || state?.focusingTab?.aiChatEnabled == false {
                 return false
             }
         }

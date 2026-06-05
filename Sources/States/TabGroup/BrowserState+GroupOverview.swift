@@ -18,6 +18,7 @@ extension BrowserState {
             return
         }
         let nextState = GroupOverviewState(groupToken: token)
+        collapseAIChatForGroupOverview()
         guard groupOverviewState != nextState else { return }
         groupOverviewState = nextState
     }
@@ -100,5 +101,12 @@ extension BrowserState {
             return (memberIndices.last ?? first) + 1
         }
         return memberIndices[groupIndex]
+    }
+
+    private func collapseAIChatForGroupOverview() {
+        if let tab = focusingTab {
+            setAIChatCollapsed(for: tab, collapsed: true)
+        }
+        aiChatCollapsed = true
     }
 }

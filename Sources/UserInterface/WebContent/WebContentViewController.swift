@@ -846,7 +846,10 @@ class WebContentViewController: NSViewController {
 
     /// Toggles the AI Chat panel when the associated tab allows it.
     func toggleAIChatInTraditionalLayout() {
-        guard associatedTab?.aiChatEnabled == true else { return }
+        guard browserState?.groupOverviewState == nil,
+              associatedTab?.aiChatEnabled == true else {
+            return
+        }
         // Updating the tab model is enough; observers drive the UI update.
         associatedTab?.toggleAIChat()
     }
@@ -1208,6 +1211,7 @@ class WebContentViewController: NSViewController {
             return
         }
         guard isViewLoaded, view.superview != nil else { return }
+        collapseAIChatIfNeeded()
         showGroupOverview(token: state.groupToken, browserState: browserState)
     }
 
@@ -1819,11 +1823,24 @@ class WebContentViewController: NSViewController {
         updateLeftContainerStyle(isAIChatExpanded: aiChatSplitViewItem?.isCollapsed == false)
     }
     
-    /// Collapses AI Chat when the associated tab disables it.
+    /// Collapses AI Chat when the current surface should suppress it.
     private func collapseAIChatIfNeeded() {
-        if aiChatSplitViewItem?.isCollapsed == false {
-            aiChatSplitViewItem?.animator().isCollapsed = true
+        if let tab = associatedTab {
+            browserState?.setAIChatCollapsed(for: tab, collapsed: true)
         }
+        browserState?.aiChatCollapsed = true
+
+        guard let splitViewItem = aiChatSplitViewItem else { return }
+        guard !splitViewItem.isCollapsed else {
+            updateLeftContainerStyle(isAIChatExpanded: false)
+            return
+        }
+
+        isUpdatingAIChatState = true
+        animateAIChatCollapseTransition(splitViewItem, collapsed: true)
+        isUpdatingAIChatState = false
+        updateLeftContainerStyle(isAIChatExpanded: false)
+        persistAIChatSidebarStateIfNeeded(for: associatedTab)
     }
 
     /// Animate AI Chat sidebar expand/collapse with proper width handling.

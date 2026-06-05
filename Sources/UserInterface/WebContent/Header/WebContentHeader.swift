@@ -282,7 +282,7 @@ class WebContentHeader: NSView {
         let isCollapsed = unsafeBrowserState?.sidebarCollapsed ?? false
         let isIncognito = unsafeBrowserState?.isIncognito ?? false
         let overviewActive = unsafeBrowserState?.groupOverviewState != nil
-        let aiChatEnabled = overviewActive || (currentTab?.aiChatEnabled ?? false)
+        let aiChatEnabled = currentTab?.aiChatEnabled ?? false
         let isInPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
 
@@ -290,7 +290,7 @@ class WebContentHeader: NSView {
             guard let self = self else { return }
             self.state.showAddressBar = navigationAtTop
             self.state.showNavigationButtons = navigationAtTop && !isInPlaceholder
-            self.state.showChatButton = navigationAtTop && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
+            self.state.showChatButton = navigationAtTop && !overviewActive && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
             self.state.showFeedbackButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
             self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
             self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
@@ -327,6 +327,10 @@ class WebContentHeader: NSView {
         // mode (see updateLayoutVisibility). Belt-and-braces guard avoids
         // toggling chat if a stale tap somehow reaches this handler.
         guard unsafeBrowserState?.isInPlaceholderMode != true else {
+            NSSound.beep()
+            return
+        }
+        guard unsafeBrowserState?.groupOverviewState == nil else {
             NSSound.beep()
             return
         }

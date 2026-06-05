@@ -41,7 +41,8 @@ class SidebarViewController: NSViewController {
             guard let self else { return }
             // Defense in depth: chat entry should be hidden in placeholder
             // mode. Early-return if a stale tap reaches this handler.
-            guard self.state.isInPlaceholderMode == false else {
+            guard self.state.isInPlaceholderMode == false,
+                  self.state.groupOverviewState == nil else {
                 NSSound.beep()
                 return
             }
@@ -162,13 +163,12 @@ class SidebarViewController: NSViewController {
         let navigationAtTop = PhiPreferences.GeneralSettings.loadLayoutMode().showsNavigationAtTop
         let overviewActive = state.groupOverviewState != nil
         let focusedAIChat = state.focusingTab?.aiChatEnabled ?? false
-        // In a split, chat is shared with the partner pane — keep the button
-        // visible as long as either pane has chat enabled, otherwise the
-        // sidebar that the partner is using has no way to be toggled.
+        // Outside overview, split chat is shared with the partner pane. Keep
+        // the button visible while either pane has chat enabled.
         let partnerAIChat = focusingTabSplitPartner()?.aiChatEnabled ?? false
-        let aiChatEnabled = overviewActive || focusedAIChat || partnerAIChat
+        let aiChatEnabled = focusedAIChat || partnerAIChat
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        let shouldHideChat = state.isIncognito || navigationAtTop || !aiChatEnabled || !phiAIEnabled
+        let shouldHideChat = overviewActive || state.isIncognito || navigationAtTop || !aiChatEnabled || !phiAIEnabled
         bottomBarSwiftUI.setChatHidden(shouldHideChat)
     }
 

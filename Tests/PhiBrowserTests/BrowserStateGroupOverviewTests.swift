@@ -68,6 +68,45 @@ final class BrowserStateGroupOverviewTests: XCTestCase {
         XCTAssertEqual(state.activeGroupOverviewToken, "A")
     }
 
+    func testShowGroupOverviewCollapsesFocusedAIChatAndSplitPartner() throws {
+        let state = try makeBrowserState()
+        let tabs = seed(state: state, tabs: [
+            (guid: 200, url: "https://a1.example", token: "A"),
+            (guid: 201, url: "https://a2.example", token: "A"),
+        ])
+        state.splits = [
+            SplitGroup(id: "split-1",
+                       primaryTabId: 200,
+                       secondaryTabId: 201,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        tabs[0].toggleAIChat(false)
+        tabs[1].toggleAIChat(false)
+        state.focuseTab(tabs[0])
+
+        state.showGroupOverview(token: "A")
+
+        XCTAssertTrue(tabs[0].aiChatCollapsed)
+        XCTAssertTrue(tabs[1].aiChatCollapsed)
+        XCTAssertTrue(state.aiChatCollapsed)
+    }
+
+    func testToggleAIChatDoesNotExpandWhileOverviewIsActive() throws {
+        let state = try makeBrowserState()
+        let tabs = seed(state: state, tabs: [
+            (guid: 200, url: "https://a1.example", token: "A"),
+        ])
+        tabs[0].aiChatEnabled = true
+        state.focuseTab(tabs[0])
+        state.showGroupOverview(token: "A")
+
+        state.toggleAIChat(false)
+
+        XCTAssertTrue(tabs[0].aiChatCollapsed)
+        XCTAssertTrue(state.aiChatCollapsed)
+    }
+
     func testShowGroupOverviewIgnoresUnknownTokenAndLeavesStateNil() throws {
         let state = try makeBrowserState()
         seed(state: state, tabs: [
