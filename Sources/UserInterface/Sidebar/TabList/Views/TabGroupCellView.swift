@@ -188,7 +188,7 @@ private final class TabGroupHeaderHostingView: NSHostingView<TabGroupHeaderView>
     /// Shorter than the system double-click interval so overview still
     /// feels responsive while quick double-clicks can cancel the pending
     /// single-click action.
-    private static let singleClickConfirmationDelay: TimeInterval = 0.15
+    private static let singleClickConfirmationDelay: TimeInterval = 0.1
 
     weak var dragDelegate: TabGroupHeaderHostingViewDelegate?
 
