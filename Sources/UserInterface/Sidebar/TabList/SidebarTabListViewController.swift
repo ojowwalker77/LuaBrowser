@@ -1770,7 +1770,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             cell.innerTable.setDropRow(-1, dropOperation: .on)
         }
     }
-    
+
     private func findBookmark(withId id: String) -> Bookmark? {
         return browserState.bookmarkManager.bookmark(withGuid: id)
     }
@@ -2166,7 +2166,9 @@ extension SidebarTabListViewController: NSOutlineViewDelegate {
         }
         
         switch sidebarItem.itemType {
-        case .tab, .newTabButton, .separator, .tabGroup, .splitPair:
+        case .tab, .newTabButton, .separator, .tabGroup:
+            return InsetTableRowView(insets: NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0))
+        case .splitPair:
             return InsetTableRowView(insets: NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0))
         case .bookmark, .bookmarkFolder:
             return BookmarkRowView(/*insets:  NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)*/)
