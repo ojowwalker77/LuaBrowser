@@ -161,6 +161,10 @@ struct UnifiedTabFaviconView: View {
                 Image(nsImage: liveFaviconImage)
                     .resizable()
                     .scaledToFit()
+            } else if let profileFaviconImage = viewModel.profileFaviconImage {
+                Image(nsImage: profileFaviconImage)
+                    .resizable()
+                    .scaledToFit()
             } else {
                 Image.favicon(for: viewModel.faviconLoadURL ?? viewModel.url, configuration: .init(cornerRadius: 3))
                     .id(viewModel.faviconRevision)
