@@ -525,9 +525,12 @@ extension BrowserState {
     /// The source tab is `partnerTabId`; the linked URL becomes a new pane on
     /// its right. Defers to `openNewTabAsSplit` so the partner pane goes
     /// through the standard pendingSplitPartner marker dance and avoids the
-    /// blank-pane bounce.
+    /// blank-pane bounce. Normalizes the partner first — mirrors the
+    /// drag-onto-page and bookmark "Open as Split" flows so a pinned or
+    /// bookmark-bound source tab doesn't drag its binding into the split.
     @MainActor
     func handleOpenLinkAsSplitPartner(partnerTabId: Int, url: String) {
+        makeTabNormalOpened(tabId: partnerTabId)
         openNewTabAsSplit(partnerTabId: partnerTabId,
                           newTabSlot: .right,
                           partnerNavigateURL: url)
@@ -938,6 +941,150 @@ extension BrowserState {
 
     // MARK: - Open-new-tab-into-split
 
+    /// When the live tab `tabId` is currently pinned, unpins it into the
+    /// normal list and writes a fresh unopened pinned record at the
+    /// original pinned slot pointing at the same URL. No-op for non-pinned
+    /// tabs. Shared by every split-formation entry point — right-click
+    /// "Open as Split" on a pinned tab, drag-to-split from the pinned
+    /// grid, and drag-onto a pinned focused tab — so the resulting split
+    /// is always a normal-list split and the pinned slot keeps its visual
+    /// continuity via the placeholder.
+    func demotePinnedTabLeavingPlaceholder(forTabId tabId: Int) {
+        guard let liveTab = tabs.first(where: { $0.guid == tabId }),
+              let pinnedGuid = liveTab.guidInLocalDB, !pinnedGuid.isEmpty,
+              let pinnedRecord = pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
+              let pinnedIndex = pinnedTabs.firstIndex(where: { $0.guidInLocalDB == pinnedGuid })
+        else { return }
+        // Anchor for the placeholder: the pinned guid that currently sits
+        // immediately before the partner. Captured BEFORE the unpin removes
+        // the partner from `pinnedTabs` and shifts indices.
+        let afterGuid: String? = pinnedIndex > 0
+            ? pinnedTabs[pinnedIndex - 1].guidInLocalDB
+            : nil
+        // Prefer `pinnedUrl` — that's the canonical URL the user committed
+        // through the "Edit Pinned Tab" form (`applyPinnedTabEdit` writes
+        // it). The live tab's `url` reflects whatever the user has since
+        // navigated to inside the pane and would make the placeholder
+        // point at the wrong page after a single in-tab click.
+        let placeholderURL = pinnedRecord.pinnedUrl ?? pinnedRecord.url ?? liveTab.url ?? ""
+        let placeholderTitle = pinnedRecord.storedTitle
+            ?? (pinnedRecord.title.isEmpty ? liveTab.title : pinnedRecord.title)
+        guard !placeholderURL.isEmpty else { return }
+        // Move the live tab to the top of the normal list. The exact landing
+        // slot doesn't matter much — the split adjacency pass in
+        // `consumePendingSplitPartner` (`placeTabAdjacent`) will reposition
+        // the two panes together once the new tab arrives.
+        movePinnedTabOut(pinnedGuid: pinnedGuid, to: 0)
+        // Recreate an unopened pinned record at the original slot. A bare
+        // Tab carrying just url+title is enough — `moveOrCreatePinnedTab`
+        // mints a fresh DB guid and persists it as a closed pinned entry.
+        let placeholder = Tab(url: placeholderURL,
+                              isActive: false,
+                              index: pinnedIndex,
+                              title: placeholderTitle)
+        localStore.moveOrCreatePinnedTab(placeholder,
+                                         after: afterGuid,
+                                         profileId: profileId,
+                                         newGuid: UUID().uuidString)
+    }
+
+    /// Normalizes `tabId` into the plain opened tab list: unpins a pinned
+    /// tab (leaving a placeholder via `demotePinnedTabLeavingPlaceholder`)
+    /// and clears any bookmark binding. No-op when the tab is already a
+    /// plain entry. Callers must not invoke this on a tab that is part of
+    /// a live split — the participating split-formation entry points reject
+    /// those cases before calling here.
+    func makeTabNormalOpened(tabId: Int) {
+        guard let tab = tabs.first(where: { $0.guid == tabId }) else { return }
+        // Pinned membership is detected via the pinned-records lookup, NOT
+        // `tab.isPinned`. The live flag isn't reliably set on the
+        // auto-reattach path that runs when a pinned slot's tab opens at
+        // launch / session-restore — `toggleTabPinStatus` is the only flip.
+        // The DB-guid presence in `pinnedTabs` is the canonical signal.
+        if let dbGuid = tab.guidInLocalDB, !dbGuid.isEmpty,
+           pinnedTabs.contains(where: { $0.guidInLocalDB == dbGuid }) {
+            demotePinnedTabLeavingPlaceholder(forTabId: tabId)
+            return
+        }
+        if let dbGuid = tab.guidInLocalDB, !dbGuid.isEmpty {
+            // Bookmark-bound (non-pinned). Drop both the Swift mirror and
+            // the Chromium customGuid marker so
+            // `CrossDomainNewTabNavigationThrottle` stops treating the tab
+            // as bookmark-bound, then re-sync bookmark state so the
+            // bookmark cell stops rendering as opened.
+            tab.guidInLocalDB = nil
+            tab.webContentWrapper?.updateTabCustomValue("")
+            syncAllBookmarksOpenedState()
+        }
+    }
+
+    /// Forms a vertical split between a bookmark and `partnerTabId`. If the
+    /// bookmark currently has an attached live tab that is distinct from
+    /// the partner and not already in a split, detaches that tab from the
+    /// bookmark binding and uses it as the new pane directly — the user
+    /// keeps the open page instead of getting a fresh duplicate. Otherwise
+    /// opens a new tab on the bookmark URL via `openNewTabAsSplit`. Shared
+    /// by the drag-onto-page flow, the bookmark "Open as Split" menu, and
+    /// any future entry point so all three behave identically.
+    /// - Returns: `true` when a split was attempted, `false` when the
+    ///   bookmark could not be resolved (deleted mid-action, folder, or
+    ///   empty URL). The caller may fall back to other entry points.
+    @discardableResult
+    func formSplitFromBookmark(bookmarkGuid: String,
+                               partnerTabId: Int,
+                               newTabSlot: SplitSlot) -> Bool {
+        guard let bookmark = bookmarkManager.bookmark(withGuid: bookmarkGuid),
+              !bookmark.isFolder,
+              let url = bookmark.url, !url.isEmpty else { return false }
+        // Resolve the bookmark's attached live tab BEFORE the partner
+        // normalization below — `makeTabNormalOpened(partnerTabId)` clears
+        // the partner tab's `guidInLocalDB`, so if the attached
+        // representation IS the partner pane the post-detach lookup would
+        // miss and we'd fall through to opening a duplicate URL tab.
+        let attachedLiveTab = tabs.first(where: { $0.guidInLocalDB == bookmarkGuid })
+        // Normalize the partner (the split's other pane). Otherwise the
+        // resulting split would inherit pinned-ness or a bookmark binding
+        // unrelated to the new split — contrary to user intent.
+        makeTabNormalOpened(tabId: partnerTabId)
+        // Attached-and-distinct: detach the bookmark's live tab into the
+        // normal tab list, then pair it directly with the partner. The
+        // bookmark cell stops rendering as opened once
+        // `syncAllBookmarksOpenedState` runs inside `makeTabNormalOpened`.
+        if let attachedLiveTab,
+           attachedLiveTab.guid != partnerTabId,
+           splitGroup(forTabId: attachedLiveTab.guid) == nil {
+            makeTabNormalOpened(tabId: attachedLiveTab.guid)
+            switch newTabSlot {
+            case .left:
+                createSplit(leftTabId: attachedLiveTab.guid,
+                            rightTabId: partnerTabId,
+                            layout: .vertical)
+            case .right:
+                createSplit(leftTabId: partnerTabId,
+                            rightTabId: attachedLiveTab.guid,
+                            layout: .vertical)
+            }
+            return true
+        }
+        // Attached-and-IS-partner: the partner tab was the bookmark's live
+        // representation and is now detached above. Opening another tab on
+        // the same URL would just duplicate the partner pane's content, so
+        // use a blank NTP partner instead. The detached (formerly
+        // attached) partner keeps the dropped slot; the new NTP takes the
+        // opposite side.
+        if attachedLiveTab?.guid == partnerTabId {
+            let oppositeSlot: SplitSlot = (newTabSlot == .left) ? .right : .left
+            openNewTabAsSplit(partnerTabId: partnerTabId, newTabSlot: oppositeSlot)
+            return true
+        }
+        // Bookmark has no live representation: materialize a fresh unbound
+        // tab on the bookmark URL as the new pane.
+        openNewTabAsSplit(partnerTabId: partnerTabId,
+                          newTabSlot: newTabSlot,
+                          partnerNavigateURL: URLProcessor.processUserInput(url))
+        return true
+    }
+
     /// Opens a fresh new-tab-page tab and, once Chromium echoes it back,
     /// pairs it with `partnerTabId` into a vertical split.
     /// - Parameters:
@@ -957,6 +1104,12 @@ extension BrowserState {
                            partnerNavigateURL: String? = nil,
                            boundBookmarkGuid: String? = nil) {
         guard splitGroup(forTabId: partnerTabId) == nil else { return }
+        // Splits never live in the pinned strip. If the partner is currently
+        // pinned, demote it to the normal list first and leave a fresh
+        // unopened pinned placeholder pointing at the same URL at the
+        // original pinned slot, so the user sees the pinned entry stay put
+        // while the live tab participates in the new split below.
+        demotePinnedTabLeavingPlaceholder(forTabId: partnerTabId)
         let pendingGuid = SplitPendingGuid.partner.mint()
         pendingSplitPartnerByCustomGuid[pendingGuid] = PendingSplitPartner(
             partnerTabId: partnerTabId,
@@ -991,6 +1144,19 @@ extension BrowserState {
                 .clearPendingSplitPartner(withTabId: partnerId.int64Value,
                                           windowId: wid.int64Value)
         }
+    }
+
+    /// Right-click "Open as Split" on an *unopened* pinned cell. The pinned
+    /// record's synthetic `guid` is not a live Chromium tab id, so it can't be
+    /// fed directly to `openNewTabAsSplit`. Instead, record the intent against
+    /// the DB guid and materialize the pinned tab via `createTab` with the
+    /// pinned `customGuid`; `handleNewTabFromChromium` drains
+    /// `pendingSplitAfterPinnedOpen` once the live counterpart arrives and
+    /// then runs the standard split-formation path.
+    func openNewTabAsSplitFromUnopenedPinned(pinnedDBGuid: String, url: String) {
+        guard !pinnedDBGuid.isEmpty, !url.isEmpty else { return }
+        pendingSplitAfterPinnedOpen.insert(pinnedDBGuid)
+        createTab(url, customGuid: pinnedDBGuid, focusAfterCreate: true)
     }
 
     /// Called from `handleNewTabFromChromium`. If the arriving tab matches a

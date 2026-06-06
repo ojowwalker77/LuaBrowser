@@ -185,7 +185,11 @@ extension Tab: ContextMenuRepresentable {
                     items.append(removeSplitItem)
                     items.append(.separator())
                 }
-            } else if !isPinned {
+            } else if splitMembership == nil {
+                // Pinned tabs are allowed here; `openNewTabAsSplit` demotes a
+                // pinned partner to the normal list (leaving an unopened
+                // pinned placeholder behind) before creating the split, so
+                // splits never live inside the pinned strip.
                 let splitItem = NSMenuItem(
                     title: NSLocalizedString("Open as Split", comment: "Tab context menu - Open a new tab as the second pane in a split with this tab"),
                     action: #selector(openAsSplit),
@@ -799,6 +803,19 @@ extension Tab: ContextMenuRepresentable {
     @MainActor
     @objc private func openAsSplit() {
         guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else { return }
+        // Unopened pinned cell: `guid` here is the synthetic id on the
+        // pinned record, not a live Chromium tab. Route through the
+        // pinned-URL materialization path so a real partner tab exists
+        // by the time the split is formed.
+        if !isOpenned,
+           let pinnedDBGuid = guidInLocalDB, !pinnedDBGuid.isEmpty {
+            let pinnedURLString = pinnedUrl ?? url ?? ""
+            if !pinnedURLString.isEmpty {
+                state.openNewTabAsSplitFromUnopenedPinned(pinnedDBGuid: pinnedDBGuid,
+                                                          url: pinnedURLString)
+                return
+            }
+        }
         state.openNewTabAsSplit(partnerTabId: guid)
     }
 

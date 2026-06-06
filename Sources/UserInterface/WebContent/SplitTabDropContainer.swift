@@ -331,7 +331,7 @@ final class SplitTabDropContainer: NSView {
             // Normalize the focused tab (the split partner) into the opened
             // tab list, otherwise the resulting split would inherit its
             // pinned-ness or bookmark binding — contrary to user intent.
-            makeTabNormalOpened(state: state, tabId: focusedTabId)
+            state.makeTabNormalOpened(tabId: focusedTabId)
             performSplitDropFromNormalTab(state: state,
                                           draggedTabId: tabId,
                                           focusedTabId: focusedTabId,
@@ -390,55 +390,24 @@ final class SplitTabDropContainer: NSView {
                                             focusedTabId: Int,
                                             zone: DropZone) {
         if let liveTab = state.tabs.first(where: { $0.guidInLocalDB == pinnedDBGuid }),
-           liveTab.guid != focusedTabId,
-           let focusedTab = state.tabs.first(where: { $0.guid == focusedTabId }) {
-            // Live pinned tab distinct from focused. Keep the dragged tab
-            // pinned and pin the focused tab next to it so the resulting
-            // split is itself a pinned split (the codebase's split model has
-            // no mixed pinned/unpinned state — see `pinSplitInsertingAtPinnedIndex`
-            // for the precedent). The previous behavior unpinned the dragged
-            // tab here, which contradicted "drag from pinned" intent.
-            //
-            // Snapshot the focused tab's prior state so a `createSplit`
-            // failure can roll the pin back instead of leaving the user
-            // with a focused tab silently pinned (and any bookmark binding
-            // dropped) but no split to show for it.
-            let priorFocusedIsPinned = focusedTab.isPinned
-            let priorFocusedDBGuid = focusedTab.guidInLocalDB
-            pinFocusedTabAdjacentToPinnedAnchor(state: state,
-                                                focusedTab: focusedTab,
-                                                anchorPinnedGuid: liveTab.guidInLocalDB)
-            let createdSplitId: String?
+           liveTab.guid != focusedTabId {
+            // Live pinned tab distinct from focused. Splits never live in
+            // the pinned strip: demote the dragged pinned tab into the
+            // normal list (leaving an unopened pinned placeholder at the
+            // original slot), normalize the focused partner, and form a
+            // normal split. Mirrors the right-click "Open as Split" path
+            // so every entry point behaves identically.
+            state.demotePinnedTabLeavingPlaceholder(forTabId: liveTab.guid)
+            state.makeTabNormalOpened(tabId: focusedTabId)
             switch zone {
             case .left:
-                createdSplitId = state.createSplit(leftTabId: liveTab.guid,
-                                                   rightTabId: focusedTabId,
-                                                   layout: .vertical)
+                state.createSplit(leftTabId: liveTab.guid,
+                                  rightTabId: focusedTabId,
+                                  layout: .vertical)
             case .right:
-                createdSplitId = state.createSplit(leftTabId: focusedTabId,
-                                                   rightTabId: liveTab.guid,
-                                                   layout: .vertical)
-            }
-            guard let createdSplitId else {
-                rollbackFocusedTabPin(state: state,
-                                      focusedTab: focusedTab,
-                                      priorIsPinned: priorFocusedIsPinned,
-                                      priorDBGuid: priorFocusedDBGuid)
-                return
-            }
-            // `handleSplitCreated`'s pinned-inference reads the async
-            // `pinnedTabs` publisher, which may not yet reflect the
-            // focused tab we just pinned. Flag the split so the handler
-            // forces `isPinned = true`.
-            state.pendingPinnedSplitMarkByCreateId.insert(createdSplitId)
-            // Persist the partner pairing only after `createSplit` confirms
-            // — otherwise a bridge failure leaves two unrelated pinned
-            // records cross-referenced via `splitPartnerGuid` in the local
-            // store, which the next-launch restore path would surface as a
-            // ghost closed pinned split.
-            if let primaryDB = liveTab.guidInLocalDB,
-               let secondaryDB = focusedTab.guidInLocalDB {
-                state.persistPinnedSplitPair(primaryDB: primaryDB, secondaryDB: secondaryDB)
+                state.createSplit(leftTabId: focusedTabId,
+                                  rightTabId: liveTab.guid,
+                                  layout: .vertical)
             }
             return
         }
@@ -451,143 +420,23 @@ final class SplitTabDropContainer: NSView {
         // saved URL would silently unpin/unbind the focused tab for nothing.
         guard let pinned = state.pinnedTabs.first(where: { $0.guidInLocalDB == pinnedDBGuid }),
               let url = pinned.url, !url.isEmpty else { return }
-        makeTabNormalOpened(state: state, tabId: focusedTabId)
+        state.makeTabNormalOpened(tabId: focusedTabId)
         let newTabSlot: SplitSlot = (zone == .left) ? .left : .right
         state.openNewTabAsSplit(partnerTabId: focusedTabId,
                                 newTabSlot: newTabSlot,
                                 partnerNavigateURL: URLProcessor.processUserInput(url))
-    }
-
-    /// Undo the side effects of `pinFocusedTabAdjacentToPinnedAnchor` when
-    /// the follow-up `createSplit` fails. Restores the focused tab to its
-    /// pre-pin state — back into the normal tab list if it wasn't pinned
-    /// before, and with its prior bookmark binding re-applied if it had one
-    /// — so the user isn't left with a silently-pinned-but-orphaned tab.
-    /// No-op when the tab was already pinned before the drop (the anchor
-    /// helper itself early-returned in that case).
-    private func rollbackFocusedTabPin(state: BrowserState,
-                                       focusedTab: Tab,
-                                       priorIsPinned: Bool,
-                                       priorDBGuid: String?) {
-        if priorIsPinned { return }
-        if let newPinnedGuid = focusedTab.guidInLocalDB, !newPinnedGuid.isEmpty {
-            state.movePinnedTabOut(pinnedGuid: newPinnedGuid,
-                                   to: state.normalTabs.count)
-        }
-        if let priorDBGuid, !priorDBGuid.isEmpty {
-            focusedTab.guidInLocalDB = priorDBGuid
-            focusedTab.webContentWrapper?.updateTabCustomValue(priorDBGuid)
-            state.syncAllBookmarksOpenedState()
-        }
-    }
-
-    /// Pin `focusedTab` so it ends up adjacent to the already-pinned anchor
-    /// in `pinnedTabs`. Handles the three states the focused tab can be in:
-    /// normal (just pin), bookmark-bound (drop the binding then pin), or
-    /// already pinned (no-op). The anchor is the dragged pinned tab's
-    /// `guidInLocalDB`; passing `nil` falls back to appending at the head of
-    /// the pinned list.
-    private func pinFocusedTabAdjacentToPinnedAnchor(state: BrowserState,
-                                                     focusedTab: Tab,
-                                                     anchorPinnedGuid: String?) {
-        if focusedTab.isPinned { return }
-        if let dbGuid = focusedTab.guidInLocalDB, !dbGuid.isEmpty {
-            // Bookmark-bound. Mirror the second branch of `makeTabNormalOpened`
-            // so the bookmark cell stops claiming this tab is open before we
-            // overwrite `guidInLocalDB` with a fresh pinned guid.
-            focusedTab.guidInLocalDB = nil
-            focusedTab.webContentWrapper?.updateTabCustomValue("")
-            state.syncAllBookmarksOpenedState()
-        }
-        state.moveNormalTabToPinned(focusedTab,
-                                    after: anchorPinnedGuid,
-                                    selectAfterMove: focusedTab.isActive)
-        focusedTab.isPinned = true
-        state.updateNormalTabs()
     }
 
     private func performSplitDropFromBookmark(state: BrowserState,
                                               bookmarkGuid: String,
                                               focusedTabId: Int,
                                               zone: DropZone) {
-        guard let bookmark = state.bookmarkManager.bookmark(withGuid: bookmarkGuid),
-              !bookmark.isFolder,
-              let url = bookmark.url, !url.isEmpty else { return }
-        // Resolve the bookmark's attached live tab BEFORE the focused-tab
-        // detach below — `makeTabNormalOpened(focusedTabId)` clears the
-        // focused tab's `guidInLocalDB`, so if the bookmark's attached
-        // representation IS the focused pane the post-detach lookup would
-        // miss and we'd fall through to opening a duplicate URL tab.
-        let attachedLiveTab = state.tabs.first(where: { $0.guidInLocalDB == bookmarkGuid })
-        // Normalize the focused tab (the split partner) into the opened
-        // tab list, otherwise the resulting split would inherit its
-        // pinned-ness or bookmark binding — contrary to user intent.
-        // Deferred until after the guard above so a stale-or-empty
-        // bookmark doesn't silently unpin/unbind the focused tab for nothing.
-        makeTabNormalOpened(state: state, tabId: focusedTabId)
-        // Attached-and-distinct: detach the bookmark's live tab into the
-        // normal tab list, then pair the (now-unbound) tab directly with
-        // the focused pane. The bookmark cell stops rendering as opened
-        // once `syncAllBookmarksOpenedState` runs inside
-        // `makeTabNormalOpened`.
-        if let attachedLiveTab,
-           attachedLiveTab.guid != focusedTabId,
-           state.splitGroup(forTabId: attachedLiveTab.guid) == nil {
-            makeTabNormalOpened(state: state, tabId: attachedLiveTab.guid)
-            switch zone {
-            case .left:
-                state.createSplit(leftTabId: attachedLiveTab.guid,
-                                  rightTabId: focusedTabId,
-                                  layout: .vertical)
-            case .right:
-                state.createSplit(leftTabId: focusedTabId,
-                                  rightTabId: attachedLiveTab.guid,
-                                  layout: .vertical)
-            }
-            return
-        }
-        // Attached-and-IS-focused: the focused tab was the bookmark's live
-        // representation and is now detached above. Opening another tab on
-        // the same URL would just duplicate the focused pane's content,
-        // so use a blank NTP partner instead — mirrors the
-        // dragged==focused branch of `performSplitDropFromNormalTab`. The
-        // detached (formerly attached) focused tab keeps the dropped slot;
-        // the new NTP takes the opposite side.
-        if attachedLiveTab?.guid == focusedTabId {
-            let newTabSlot: SplitSlot = (zone == .left) ? .right : .left
-            state.openNewTabAsSplit(partnerTabId: focusedTabId, newTabSlot: newTabSlot)
-            return
-        }
-        // Bookmark has no live representation: materialize a fresh unbound
-        // tab on the bookmark URL as the new pane. The new tab lands in
-        // the dropped zone; the focused pane takes the opposite slot.
+        // Single shared implementation on BrowserState — same path the
+        // bookmark "Open as Split" menu and any future entry point use.
         let newTabSlot: SplitSlot = (zone == .left) ? .left : .right
-        state.openNewTabAsSplit(partnerTabId: focusedTabId,
-                                newTabSlot: newTabSlot,
-                                partnerNavigateURL: URLProcessor.processUserInput(url))
-    }
-
-    /// Ensures the given tab is a plain entry in the normal opened tab list:
-    /// unpins a pinned tab and clears any bookmark binding. No-op if already
-    /// in that state. Callers must not invoke this on a tab that's part of a
-    /// live split — the evaluate-side guard rejects those before they reach
-    /// the drop handler.
-    private func makeTabNormalOpened(state: BrowserState, tabId: Int) {
-        guard let tab = state.tabs.first(where: { $0.guid == tabId }) else { return }
-        if tab.isPinned, let dbGuid = tab.guidInLocalDB, !dbGuid.isEmpty {
-            state.movePinnedTabOut(pinnedGuid: dbGuid, to: state.normalTabs.count)
-            return
-        }
-        if let dbGuid = tab.guidInLocalDB, !dbGuid.isEmpty {
-            // Bookmark-bound (non-pinned). Drop both the Swift mirror and
-            // the Chromium customGuid marker so
-            // `CrossDomainNewTabNavigationThrottle` stops treating the tab
-            // as bookmark-bound, then re-sync bookmark state so the
-            // bookmark cell stops rendering as opened.
-            tab.guidInLocalDB = nil
-            tab.webContentWrapper?.updateTabCustomValue("")
-            state.syncAllBookmarksOpenedState()
-        }
+        state.formSplitFromBookmark(bookmarkGuid: bookmarkGuid,
+                                    partnerTabId: focusedTabId,
+                                    newTabSlot: newTabSlot)
     }
 
     // MARK: - Drop validation

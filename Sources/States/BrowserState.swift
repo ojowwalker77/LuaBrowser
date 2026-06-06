@@ -185,6 +185,18 @@ class BrowserState {
     /// click on the merged cell can't fire two `createSplit` requests.
     var pinnedSplitRecreateInFlight: Set<String> = []
 
+    /// Pinned-tab DB guids waiting to be opened as live tabs so they can
+    /// immediately enter `openNewTabAsSplit` as the partner. Seeded by
+    /// `openNewTabAsSplitFromUnopenedPinned` (right-click "Open as Split"
+    /// on an unopened pinned cell — the pinned record's synthetic `guid`
+    /// can't be fed directly to `openNewTabAsSplit` because no live
+    /// Chromium tab carries that id). Drained per-guid in
+    /// `handleNewTabFromChromium` once the pinned tab's live counterpart
+    /// arrives, at which point the standard split-formation path runs and
+    /// `demotePinnedTabLeavingPlaceholder` moves the freshly-bound tab
+    /// out of the pinned strip while leaving a placeholder behind.
+    var pendingSplitAfterPinnedOpen: Set<String> = []
+
     /// bookmark.guid → splitId of the split that was opened from that
     /// split-view bookmark. Lets `openBookmark` detect that the bookmark is
     /// already open (and re-activate its primary pane) instead of creating
@@ -1158,6 +1170,17 @@ class BrowserState {
             // so the pair shows as one again. Skipped when a `SplitGroup`
             // already covers the pair (e.g. Chromium's own session restore).
             maybeRecreatePersistedPinnedSplit(forJustOpenedPinnedTab: pinnedTab)
+            // Drain a pending "Open as Split" intent recorded against this
+            // pinned guid. Deferred one runloop tick so the surrounding
+            // new-tab event finishes unwinding before `openNewTabAsSplit`
+            // calls back into Chromium (matches the same defer used by the
+            // pinned-split recreate path for the same reason).
+            if pendingSplitAfterPinnedOpen.remove(localGuid) != nil {
+                let liveTabId = tab.guid
+                DispatchQueue.main.async { [weak self] in
+                    self?.openNewTabAsSplit(partnerTabId: liveTabId)
+                }
+            }
         }
 
         // Reattach to a bookmark entry when the local guid matches.

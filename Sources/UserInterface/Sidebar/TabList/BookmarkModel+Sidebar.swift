@@ -182,6 +182,20 @@ extension Bookmark: ContextMenuRepresentable {
     @objc private func openInSplitView() {
         guard let url, !url.isEmpty,
               let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else { return }
+        // Pair the bookmark with the focused tab — same path as drag-to-split
+        // from the sidebar. If the bookmark already has an attached opened
+        // tab, `formSplitFromBookmark` detaches it into the normal list and
+        // uses that tab as one pane instead of opening a fresh duplicate.
+        // Fall back to the two-fresh-tabs `openURLAsSplit` when there is no
+        // valid partner (no focused tab, or the focused tab already lives
+        // inside a split — splits can't nest).
+        if let partnerTabId = state.focusingTab?.guid,
+           state.splitGroup(forTabId: partnerTabId) == nil {
+            state.formSplitFromBookmark(bookmarkGuid: guid,
+                                        partnerTabId: partnerTabId,
+                                        newTabSlot: .left)
+            return
+        }
         state.openURLAsSplit(url: url)
     }
     
