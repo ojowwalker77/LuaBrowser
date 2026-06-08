@@ -791,6 +791,8 @@ class SidebarSplitPairCellView: SidebarCellView {
 // MARK: - New Tab Button Cell View
 class NewTabButtonCellView: SidebarCellView {
     var clickAction: (() -> Void)?
+    private var iconHoverState = false
+    private var didPlayForwardAnimationForCurrentHover = false
 
     private lazy var iconView: LottieAnimationNSView = {
         let config = LottieAnimationViewConfig(
@@ -799,7 +801,8 @@ class NewTabButtonCellView: SidebarCellView {
             size: CGSize(width: 16, height: 16),
             animationTrigger: .manual,
             themedTintColor: .textTertiary,
-            reverseOnHoverExit: true
+            reverseOnHoverExit: true,
+            allowsHitTesting: false
         )
         return LottieAnimationNSView(config: config)
     }()
@@ -819,6 +822,12 @@ class NewTabButtonCellView: SidebarCellView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupViews()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        iconHoverState = false
+        didPlayForwardAnimationForCurrentHover = false
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -854,12 +863,18 @@ class NewTabButtonCellView: SidebarCellView {
         backgoundView.hoverStateChanged = { [weak self] hovered in
             guard let self else { return }
             AppLogDebug("hover changed: \(hovered) - \(self.backgoundView.responseToHoverAnimation)")
-            guard self.backgoundView.responseToHoverAnimation else {
+            let shouldAnimate = self.backgoundView.responseToHoverAnimation
+            let hoverChanged = hovered != self.iconHoverState
+            self.iconHoverState = hovered
+
+            guard shouldAnimate, hoverChanged else {
                 return
             }
             if hovered {
+                self.didPlayForwardAnimationForCurrentHover = true
                 self.iconView.triggerAnimation()
-            } else {
+            } else if self.didPlayForwardAnimationForCurrentHover {
+                self.didPlayForwardAnimationForCurrentHover = false
                 self.iconView.triggerReverseAnimation()
             }
         }
