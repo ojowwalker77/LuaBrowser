@@ -3464,6 +3464,133 @@ class BrowserState {
         bookmarkManager.removeBookmark(realBookmark)
     }
 
+    @discardableResult
+    @MainActor
+    func moveBookmarkOut(_ bookmark: Bookmark,
+                         toGroup tokenHex: String,
+                         groupIndex: Int,
+                         normalTabsIndex: Int,
+                         focusAfterCreate: Bool = false) -> Bool {
+        guard !bookmark.isFolder,
+              let url = bookmark.url, !url.isEmpty,
+              let realBookmark = bookmarkManager.bookmark(withGuid: bookmark.guid),
+              let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            return false
+        }
+
+        if let secondaryURL = realBookmark.secondaryUrl, !secondaryURL.isEmpty {
+            AppLogWarn(
+                "[TAB_GROUPS][SIDEBAR_DRAG] split bookmark group drop unsupported " +
+                "bookmark=\(realBookmark.guid) secondaryURL=\(secondaryURL)"
+            )
+            return false
+        }
+
+        if let chromiumTab = tabs.first(where: { $0.guidInLocalDB == realBookmark.guid }) {
+            migrateAIChatTab(for: chromiumTab, toNewIdentifier: nil)
+            chromiumTab.guidInLocalDB = nil
+            chromiumTab.applyStoredTitle(realBookmark.title)
+            chromiumTab.webContentWrapper?.updateTabCustomValue("")
+            applyOptimisticGroupMembership(tabId: chromiumTab.guid, newToken: tokenHex)
+            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
+                                     at: normalTabsIndex,
+                                     syncChromiumOrder: true)
+
+            let tabIds = [NSNumber(value: Int64(chromiumTab.guid))]
+            bridge.addTabsToGroup(withWindowId: windowId.int64Value,
+                                  tabIds: tabIds,
+                                  tokenHex: tokenHex)
+        } else {
+            scheduleNextNormalTabInsertion(at: normalTabsIndex,
+                                           syncChromiumOrder: false,
+                                           expectedGroupToken: tokenHex)
+            bridge.createTabInGroup(withWindowId: windowId.int64Value,
+                                    tokenHex: tokenHex,
+                                    url: url,
+                                    groupIndex: groupIndex,
+                                    focusAfterCreate: focusAfterCreate)
+        }
+
+        bookmarkManager.removeBookmark(realBookmark)
+        return true
+    }
+
+    @discardableResult
+    @MainActor
+    func movePinnedTabOut(pinnedGuid: String,
+                          toGroup tokenHex: String,
+                          groupIndex: Int,
+                          normalTabsIndex: Int,
+                          focusAfterCreate: Bool = false) -> Bool {
+        guard let pinnedTab = pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
+              let url = pinnedTab.url, !url.isEmpty,
+              let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            return false
+        }
+
+        if let partnerGuid = pinnedTab.splitPartnerGuid, !partnerGuid.isEmpty {
+            guard let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerGuid }),
+                  let handleLive = tabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
+                  let partnerLive = tabs.first(where: { $0.guidInLocalDB == partnerGuid }) else {
+                AppLogWarn(
+                    "[TAB_GROUPS][SIDEBAR_DRAG] unopened pinned split group drop unsupported " +
+                    "pinnedGuid=\(pinnedGuid) partnerGuid=\(partnerGuid)"
+                )
+                return false
+            }
+
+            applyOptimisticGroupMembership(updates: [
+                (handleLive.guid, tokenHex),
+                (partnerLive.guid, tokenHex)
+            ])
+            unpinSplitPanesIntoNormalList(handleLive: handleLive,
+                                          partnerLive: partnerLive,
+                                          handlePinned: pinnedTab,
+                                          partnerPinned: partnerPinned,
+                                          insertIndex: normalTabsIndex)
+            let tabIds = [
+                NSNumber(value: Int64(handleLive.guid)),
+                NSNumber(value: Int64(partnerLive.guid))
+            ]
+            bridge.addTabsToGroup(withWindowId: windowId.int64Value,
+                                  tabIds: tabIds,
+                                  tokenHex: tokenHex)
+            return true
+        }
+
+        if let normalTab = tabs.first(where: { $0.guidInLocalDB == pinnedGuid }) {
+            migrateAIChatTab(for: normalTab, toNewIdentifier: nil)
+            normalTab.guidInLocalDB = nil
+            normalTab.isPinned = false
+            if let storedTitle = pinnedTab.storedTitle {
+                normalTab.applyStoredTitle(storedTitle)
+            }
+            normalTab.webContentWrapper?.updateTabCustomValue("")
+            applyOptimisticGroupMembership(tabId: normalTab.guid, newToken: tokenHex)
+            insertIntoNormalTabOrder(tabGuid: normalTab.guid,
+                                     at: normalTabsIndex,
+                                     syncChromiumOrder: true)
+            localStore.removePinnedTab(pinnedTab)
+
+            let tabIds = [NSNumber(value: Int64(normalTab.guid))]
+            bridge.addTabsToGroup(withWindowId: windowId.int64Value,
+                                  tabIds: tabIds,
+                                  tokenHex: tokenHex)
+        } else {
+            scheduleNextNormalTabInsertion(at: normalTabsIndex,
+                                           syncChromiumOrder: false,
+                                           expectedGroupToken: tokenHex)
+            bridge.createTabInGroup(withWindowId: windowId.int64Value,
+                                    tokenHex: tokenHex,
+                                    url: url,
+                                    groupIndex: groupIndex,
+                                    focusAfterCreate: focusAfterCreate)
+            localStore.removePinnedTab(pinnedTab)
+        }
+
+        return true
+    }
+
     /// Detaches any live Chromium tab still backed by a bookmark that is about
     /// to be deleted, so the tab survives as a plain normal tab. Without this
     /// the tab keeps a stale `guidInLocalDB`, which keeps it out of tab groups.
