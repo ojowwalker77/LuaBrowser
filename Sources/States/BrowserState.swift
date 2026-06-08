@@ -2685,7 +2685,16 @@ class BrowserState {
         case .right: targetIdx = adjustedAnchorIdx + 1
         case .left:  targetIdx = adjustedAnchorIdx
         }
-        if currentIdx == targetIdx { return }
+        if currentIdx == targetIdx {
+            // The Swift order may already show the tab adjacent (the decision
+            // engine inserts an opener's child next to it with
+            // syncChromiumOrder: false), while the Chromium strip still has the
+            // bridge-created pane at the append slot. Push the relative order to
+            // Chromium so the imminent createSplit pivots on the pane in place
+            // instead of relocating the whole split to the strip's end.
+            syncNormalTabRelativeOrderToChromium(tabId: tabId)
+            return
+        }
         insertIntoNormalTabOrder(tabGuid: tabId, at: targetIdx, syncChromiumOrder: true)
     }
     
