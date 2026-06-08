@@ -2479,7 +2479,8 @@ class BrowserState {
         }
 
         if movedIndex + 1 < normalTabOrder.count {
-            let anchorTabId = normalTabOrder[movedIndex + 1]
+            let anchorTabId = splitSafeBeforeAnchorTabId(
+                normalTabOrder[movedIndex + 1])
             bridge.moveTab(withWindowId: windowId.int64Value,
                            tabId: tabId.int64Value,
                            beforeTabId: anchorTabId.int64Value)
@@ -2487,11 +2488,36 @@ class BrowserState {
         }
 
         if movedIndex > 0 {
-            let anchorTabId = normalTabOrder[movedIndex - 1]
+            let anchorTabId = splitSafeAfterAnchorTabId(
+                normalTabOrder[movedIndex - 1])
             bridge.moveTab(withWindowId: windowId.int64Value,
                            tabId: tabId.int64Value,
                            afterTabId: anchorTabId.int64Value)
         }
+    }
+
+    private func splitSafeBeforeAnchorTabId(_ anchorTabId: Int) -> Int {
+        guard let group = splitGroup(forTabId: anchorTabId),
+              let partnerId = group.partnerTabId(of: anchorTabId),
+              let anchorIndex = normalTabOrder.firstIndex(of: anchorTabId),
+              let partnerIndex = normalTabOrder.firstIndex(of: partnerId),
+              abs(partnerIndex - anchorIndex) == 1,
+              partnerIndex < anchorIndex else {
+            return anchorTabId
+        }
+        return partnerId
+    }
+
+    private func splitSafeAfterAnchorTabId(_ anchorTabId: Int) -> Int {
+        guard let group = splitGroup(forTabId: anchorTabId),
+              let partnerId = group.partnerTabId(of: anchorTabId),
+              let anchorIndex = normalTabOrder.firstIndex(of: anchorTabId),
+              let partnerIndex = normalTabOrder.firstIndex(of: partnerId),
+              abs(partnerIndex - anchorIndex) == 1,
+              partnerIndex > anchorIndex else {
+            return anchorTabId
+        }
+        return partnerId
     }
     
     func scheduleNormalTabInsertion(tabGuid: Int, at index: Int) {
