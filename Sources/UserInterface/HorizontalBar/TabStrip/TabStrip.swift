@@ -2651,6 +2651,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
            let activeDbId = activeTab.guidInLocalDB, !activeDbId.isEmpty {
             return dbId == activeDbId
         }
+        // The strip only renders the primary of a split. When focus moves to
+        // the secondary pane, `activeTab` is the partner — match by split
+        // group so the rendered primary cell still earns the active width.
+        if tab.guid > 0, activeTab.guid > 0,
+           let group = browserState.splitGroup(forTabId: tab.guid),
+           group.contains(tabId: activeTab.guid) {
+            return true
+        }
 
         return false
     }

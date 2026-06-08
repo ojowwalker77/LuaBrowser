@@ -303,10 +303,10 @@ final class TabItemView: NSView {
                 faviconHostingView.isHidden = true
                 secondaryFaviconHostingView.isHidden = true
                 recordingIconHostingView.isHidden = true
-            } else if pinnedSplitPartner != nil && mode == .pinned {
-                // Two favicons inside one pinned cell. Stack them horizontally
-                // around the cell's center so the cell still occupies a single
-                // pinned-tab slot in the strip's layout.
+            } else if pinnedSplitPartner != nil {
+                // Two favicons inside one pinned/compact cell. Stack them
+                // horizontally around the cell's center so the cell still
+                // occupies a single slot in the strip's layout.
                 let centerY = bounds.height / 2
                 let iconSize = metrics.faviconSize
                 let gap: CGFloat = 2
