@@ -453,8 +453,19 @@ class WebContentViewController: NSViewController {
             bindTabObservers(for: tab, splitViewItem: aiChatSplitViewItem)
         }
         
-        // Observe split-item collapse changes directly.
+        // Observe split-item collapse changes directly. Drop the initial KVO
+        // emit: with `.receive(on: .main)` the initial `isCollapsed=true`
+        // arrives on a later runloop iteration, and if `syncSplitAIChatCollapsed`
+        // has flipped this tab's `aiChatCollapsed` between subscription and
+        // delivery (the "open link in split view" / "open tab in split view"
+        // flows create the secondary's controller in that exact window), the
+        // handler reads the stale emit value, mirrors it back via
+        // `setAIChatCollapsed`, and starts an open/close cascade with the
+        // partner pane. The initial visual state is already established by
+        // `syncAIChatState` in `bindTabObservers`, so dropping the initial
+        // emit costs nothing.
         aiChatSplitViewItem.publisher(for: \.isCollapsed)
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }

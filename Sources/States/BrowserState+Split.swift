@@ -460,19 +460,26 @@ extension BrowserState {
     }
 
     /// Sync both panes of a freshly-created split to one AI Chat collapse
-    /// state (the foreground pane's), so switching the active pane does not
-    /// toggle the sidebar between collapsed and expanded.
+    /// state, so switching the active pane does not toggle the sidebar
+    /// between collapsed and expanded.
+    ///
+    /// Bias toward expanded: if either pane has chat open, keep both open.
+    /// The freshly-opened partner ("open in split view" / drag-to-split)
+    /// lands on NTP with `aiChatCollapsed = true` (the default) and is
+    /// often the focused pane when this runs, so picking the focused pane's
+    /// state would yank the other pane's open chat shut.
     @MainActor
     func syncSplitAIChatCollapsed(_ group: SplitGroup) {
         guard let primary = tabs.first(where: { $0.guid == group.primaryTabId }),
               let secondary = tabs.first(where: { $0.guid == group.secondaryTabId }) else {
             return
         }
-        let (source, target) = focusingTab?.guid == secondary.guid
-            ? (secondary, primary)
-            : (primary, secondary)
-        if target.aiChatCollapsed != source.aiChatCollapsed {
-            target.toggleAIChat(source.aiChatCollapsed)
+        let targetCollapsed = primary.aiChatCollapsed && secondary.aiChatCollapsed
+        if primary.aiChatCollapsed != targetCollapsed {
+            primary.toggleAIChat(targetCollapsed)
+        }
+        if secondary.aiChatCollapsed != targetCollapsed {
+            secondary.toggleAIChat(targetCollapsed)
         }
     }
 
