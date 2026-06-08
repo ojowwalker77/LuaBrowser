@@ -261,6 +261,14 @@ class WebContentViewController: NSViewController {
            savedHostViewSuperview == nil {
             applyContentFullscreenState(true)
         }
+        // A split partner's chat may have been uncollapsed while this VC was
+        // offscreen — at that time our splitView had zero bounds, so
+        // `preferredThicknessFraction` was skipped and NSSplitView fell back to
+        // minimumThickness (300). After layout settles, drive the divider to
+        // the shared chat width so a first-time pane switch doesn't shrink it.
+        DispatchQueue.main.async { [weak self] in
+            self?.resyncSplitChatWidthIfNeeded()
+        }
     }
     
     // MARK: - Focus Management
@@ -540,6 +548,54 @@ class WebContentViewController: NSViewController {
               let partner = container.findController(forTabId: partnerId),
               partner !== self else { return }
         partner.applyAIChatWidthFromPartner(width)
+    }
+
+    /// Re-drive the chat divider to the shared split width if it drifted while
+    /// this VC was offscreen. Covers the "first pane switch after partner
+    /// opened chat" case: B's `$aiChatCollapsed` KVO fires from the shared
+    /// collapse mirror while B's splitView still has zero bounds, so
+    /// `preferredThicknessFraction` and the minimumThickness expand trick
+    /// can't size it; NSSplitView lays out at minimumThickness when B finally
+    /// appears, and the visible chat snaps narrower than what the user saw.
+    private func resyncSplitChatWidthIfNeeded() {
+        guard let aiChatSplitViewItem,
+              !aiChatSplitViewItem.isCollapsed,
+              !isAnimatingAIChatExpansion,
+              let tab = associatedTab,
+              browserState?.splitGroup(forTabId: tab.guid) != nil else {
+            return
+        }
+        let targetWidth = clampAIChatWidth(splitPartnerCurrentChatWidth() ?? lastKnownAIChatWidth)
+        let splitView = contentSplitViewController.splitView
+        let total = splitView.bounds.width
+        guard total > 0 else { return }
+        let currentWidth = aiChatSplitViewItem.viewController.view.frame.width
+        guard abs(currentWidth - targetWidth) > 0.5 else { return }
+        let dividerThickness = splitView.dividerThickness
+        let position = max(0, total - targetWidth - dividerThickness)
+        splitView.setPosition(position, ofDividerAt: 0)
+        lastKnownAIChatWidth = targetWidth
+        AppLogDebug("[AIChatSidebarCache] viewDidAppear resync: drove divider current=\(currentWidth) → target=\(targetWidth)")
+    }
+
+    /// Returns the split partner pane's currently-expanded chat width, if any.
+    /// Used so a pane-focus flip within a split never snaps the visible chat
+    /// to a per-origin cached value — the chat is visually shared across both
+    /// panes, so we match what the user is already looking at.
+    private func splitPartnerCurrentChatWidth() -> CGFloat? {
+        guard let state = browserState,
+              let tab = associatedTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let container = parent as? WebContentContainerViewController,
+              let partner = container.findController(forTabId: partnerId),
+              partner !== self,
+              let partnerItem = partner.aiChatSplitViewItem,
+              !partnerItem.isCollapsed else {
+            return nil
+        }
+        let frameWidth = partnerItem.viewController.view.frame.width
+        return frameWidth > 0 ? frameWidth : nil
     }
 
     /// Apply a chat width pushed in from this controller's split partner.
@@ -1938,7 +1994,14 @@ class WebContentViewController: NSViewController {
         guard let url = tab.url else { return }
 
         let targetWidth: CGFloat
-        if !hasRestoredAIChatWidth,
+        if let partnerWidth = splitPartnerCurrentChatWidth() {
+            // Chat is visually shared across split panes. Match the partner's
+            // current width so flipping pane focus does not snap the chat to a
+            // different per-origin cached value.
+            targetWidth = clampAIChatWidth(partnerWidth)
+            hasRestoredAIChatWidth = true
+            AppLogDebug("[AIChatSidebarCache] expand — matching split partner width=\(targetWidth)")
+        } else if !hasRestoredAIChatWidth,
            browserState?.isIncognito != true,
            tab.aiChatEnabled,
            let cached = AIChatSidebarStateStore.shared.state(for: url) {
