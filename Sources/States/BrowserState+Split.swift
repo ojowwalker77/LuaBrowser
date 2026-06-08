@@ -280,7 +280,7 @@ extension BrowserState {
     /// non-pinned split — matching what `toggleSplitPinStatus` does for the
     /// active case where both panes were live.
     @MainActor
-    func unpinClosedPinnedSplit(leftDB: String, rightDB: String) {
+    func unpinClosedPinnedSplit(leftDB: String, rightDB: String, insertionIndex: Int? = nil) {
         guard let leftPinned = pinnedTabs.first(where: { $0.guidInLocalDB == leftDB }),
               let rightPinned = pinnedTabs.first(where: { $0.guidInLocalDB == rightDB }),
               let leftURL = leftPinned.url, !leftURL.isEmpty,
@@ -293,7 +293,7 @@ extension BrowserState {
         localStore.updateTabSplitPartner(rightDB, partnerGuid: nil)
         localStore.removePinnedTab(leftPinned)
         localStore.removePinnedTab(rightPinned)
-        openTwoURLsAsSplit(primaryURL: leftURL, secondaryURL: rightURL)
+        openTwoURLsAsSplit(primaryURL: leftURL, secondaryURL: rightURL, insertionIndex: insertionIndex)
     }
 
     /// True when one of the tabs in the split is currently the focusing tab.
@@ -351,18 +351,21 @@ extension BrowserState {
     /// a pair at positions (k, k+1) the only forbidden insertion index is k+1.
     /// Caller is responsible for the early-return when the dragged tab itself
     /// belongs to a split (those moves go through `moveSplit`, not this path).
+    ///
+    /// Reuses `splitPairLowerIndicesInNormalTabs` as the single source of the
+    /// pair-adjacency arithmetic; the tab-strip drag controller's
+    /// `snapGapOutsideSplitPair` consumes the same set, so the "where do the
+    /// pairs sit" logic lives in exactly one place on the Swift side.
     func snapDropOutsideSplitPair(toIndex: Int, fromIndex: Int) -> Int {
-        for group in splits {
-            guard let primaryIdx = normalTabs.firstIndex(where: { $0.guid == group.primaryTabId }),
-                  let secondaryIdx = normalTabs.firstIndex(where: { $0.guid == group.secondaryTabId }) else {
-                continue
-            }
-            let lo = min(primaryIdx, secondaryIdx)
-            let hi = max(primaryIdx, secondaryIdx)
-            guard hi == lo + 1, toIndex == lo + 1 else { continue }
-            return fromIndex <= lo ? hi + 1 : lo
+        // `toIndex` is the forbidden slot k+1 iff the index just before it (k)
+        // is a pair's lower member.
+        let lowerIndex = toIndex - 1
+        guard splitPairLowerIndicesInNormalTabs().contains(lowerIndex) else {
+            return toIndex
         }
-        return toIndex
+        // Snap past the pair (lowerIndex, lowerIndex+1) on whichever side
+        // matches the drag direction.
+        return fromIndex <= lowerIndex ? lowerIndex + 2 : lowerIndex
     }
 
     // MARK: - Chromium → Mac handlers
@@ -442,6 +445,22 @@ extension BrowserState {
             Task { @MainActor [weak self] in
                 guard let self, self.splitGroup(forId: splitId) != nil else { return }
                 self.reverseTabsInSplit(splitId)
+            }
+        }
+
+        // Closed-split drop relocation: a split opened from a closed bookmark
+        // or unopened pinned pair was materialized at the strip's end (its
+        // panes are bridge-created tabs with no insert hint). Now that the
+        // SplitGroup exists, move the pair as a unit to the drop index the
+        // user released on. Deferred for the same reason as the reverse above
+        // — running synchronously can land mid-Chromium-mutation and trip
+        // `MoveSplitTo`'s reentrancy guard — and scheduled after the reverse
+        // Task so the two strip mutations stay ordered. Re-resolve the group
+        // inside the Task since it may have been reversed or torn down.
+        if let targetIndex = pendingSplitMoveToNormalIndexByCreateId.removeValue(forKey: splitId) {
+            Task { @MainActor [weak self] in
+                guard let self, let liveGroup = self.splitGroup(forId: splitId) else { return }
+                self.moveSplitPairOrderLocally(group: liveGroup, to: targetIndex)
             }
         }
 
@@ -1105,7 +1124,8 @@ extension BrowserState {
     func openNewTabAsSplit(partnerTabId: Int,
                            newTabSlot: SplitSlot = .right,
                            partnerNavigateURL: String? = nil,
-                           boundBookmarkGuid: String? = nil) {
+                           boundBookmarkGuid: String? = nil,
+                           insertionIndex: Int? = nil) {
         guard splitGroup(forTabId: partnerTabId) == nil else { return }
         // Splits never live in the pinned strip. If the partner is currently
         // pinned, demote it to the normal list first and leave a fresh
@@ -1118,7 +1138,8 @@ extension BrowserState {
             partnerTabId: partnerTabId,
             newTabSlot: newTabSlot,
             navigateURL: partnerNavigateURL,
-            boundBookmarkGuid: boundBookmarkGuid
+            boundBookmarkGuid: boundBookmarkGuid,
+            insertionIndex: insertionIndex
         )
         // Mark the partner BEFORE `createTab`. Chromium's active-tab handler
         // runs synchronously inside the new-tab creation and would otherwise
@@ -1255,6 +1276,14 @@ extension BrowserState {
                                          rightTabId: pending.partnerTabId,
                                          layout: .vertical)
         }
+        // Closed-split drop: both panes were just materialized here, so they
+        // sit at the tail of the strip. Record the requested drop index
+        // against the new split id; `handleSplitCreated` relocates the pair
+        // once Chromium echoes the split back.
+        if let insertionIndex = pending.insertionIndex,
+           let splitId = createdSplitId {
+            pendingSplitMoveToNormalIndexByCreateId[splitId] = insertionIndex
+        }
         // Track the bookmark → split pairing so a second click on the same
         // split-view bookmark re-activates this split instead of opening
         // another duplicate. Cleared in `handleSplitRemoved`.
@@ -1304,12 +1333,14 @@ extension BrowserState {
     ///   pair instead of opening another one.
     func openTwoURLsAsSplit(primaryURL: String,
                             secondaryURL: String,
-                            bookmarkGuid: String? = nil) {
+                            bookmarkGuid: String? = nil,
+                            insertionIndex: Int? = nil) {
         let pendingGuid = SplitPendingGuid.primary.mint()
         pendingPrimarySplitTargetByGuid[pendingGuid] = PendingPrimarySplit(
             primaryURL: primaryURL,
             secondaryURL: secondaryURL,
-            boundBookmarkGuid: bookmarkGuid
+            boundBookmarkGuid: bookmarkGuid,
+            insertionIndex: insertionIndex
         )
         createTab("chrome://newtab", customGuid: pendingGuid, focusAfterCreate: true)
     }
@@ -1335,7 +1366,8 @@ extension BrowserState {
         openNewTabAsSplit(partnerTabId: tab.guid,
                           newTabSlot: .right,
                           partnerNavigateURL: pending.secondaryURL,
-                          boundBookmarkGuid: pending.boundBookmarkGuid)
+                          boundBookmarkGuid: pending.boundBookmarkGuid,
+                          insertionIndex: pending.insertionIndex)
     }
 
 }
@@ -1364,6 +1396,11 @@ struct PendingSplitPartner {
     /// marker is cleared. Used by the split-bookmark open flow so the
     /// bookmark cell stays in sync with the open split.
     var boundBookmarkGuid: String? = nil
+    /// Optional destination index (in `normalTabs` space) for the finished
+    /// split. Non-nil when a closed split was dropped into the tab list at a
+    /// specific spot; `consumePendingSplitPartner` forwards it so
+    /// `handleSplitCreated` can relocate the pair off the strip's end.
+    var insertionIndex: Int? = nil
 }
 
 /// Stored alongside a pending "open URL as primary pane" request. The
@@ -1376,4 +1413,8 @@ struct PendingPrimarySplit {
     /// Optional bookmark guid to rebind to both panes once they settle, so
     /// the originating split bookmark tracks the open split.
     var boundBookmarkGuid: String? = nil
+    /// Optional destination index (in `normalTabs` space) for the finished
+    /// split. Threaded through to `PendingSplitPartner.insertionIndex` so the
+    /// pair lands at the drop spot instead of the strip's end.
+    var insertionIndex: Int? = nil
 }

@@ -109,6 +109,14 @@ class BrowserState {
     /// `pinnedTabs` publisher feeding `isSplitMembersAllPinned`.
     var pendingPinnedSplitMarkByCreateId: Set<String> = []
 
+    /// splitId → destination index (in `normalTabs` space) the caller wants
+    /// the freshly-created split relocated to once it exists. Set by the
+    /// closed-split drop paths (`openSplitBookmarkAsTabs`,
+    /// `unpinClosedPinnedSplit`), whose two panes are materialized
+    /// asynchronously and therefore land at the end of the strip. Consumed in
+    /// `handleSplitCreated`, which then relocates the pair to the drop index.
+    var pendingSplitMoveToNormalIndexByCreateId: [String: Int] = [:]
+
     private var nativeRelationGraph: NativeTabRelationGraph = .empty
     private var pendingSelectionOverride: NativePendingSelectionOverride?
 
@@ -2376,7 +2384,7 @@ class BrowserState {
     /// `toIndex` is the destination index the drop layer requested for the
     /// dragged tab; drop positions that fall on or between the two pair
     /// members are treated as no-ops since "between" would mean splitting.
-    private func moveSplitPairOrderLocally(group: SplitGroup, to toIndex: Int) {
+    func moveSplitPairOrderLocally(group: SplitGroup, to toIndex: Int) {
         let primary = group.primaryTabId
         let secondary = group.secondaryTabId
         guard let primaryIdx = normalTabOrder.firstIndex(of: primary),
@@ -2420,6 +2428,38 @@ class BrowserState {
         }
         insertIndex = max(0, min(insertIndex, newOrder.count))
 
+        // `insertIndex` is a `normalTabOrder` index, which excludes pinned
+        // and bookmark-bound tabs even though those still occupy Chromium
+        // strip slots. `moveSplit` → `TabStripModel::MoveSplitTo` expects a
+        // full strip index (the block's final post-removal position), so the
+        // two spaces diverge whenever such tabs exist — passing the normal
+        // index straight through lands the split too far left (or, once
+        // `ConstrainMoveIndex` clamps it past the pinned region, at the start
+        // of the normal section). Translate via the anchor tab's
+        // authoritative Chromium index (`tab.index`, maintained by
+        // `UpdateTabIndices` over the entire strip). Resolving from a real
+        // tab is robust to whatever is hidden ahead of *or interspersed
+        // within* the normal section; a flat pinned-count offset would miss
+        // bookmark tabs sitting between visible normal tabs. The pair's own
+        // strip indices are subtracted when they sit left of the anchor
+        // because Chromium reports the destination after the pair is removed.
+        func stripIndexOf(_ guid: Int) -> Int? {
+            tabs.first(where: { $0.guid == guid })?.index
+        }
+        let pairStrips = [primary, secondary].compactMap { stripIndexOf($0) }
+        func removedLeftOf(_ stripIndex: Int) -> Int {
+            pairStrips.filter { $0 < stripIndex }.count
+        }
+        let stripToIndex: Int?
+        if insertIndex < newOrder.count, let anchor = stripIndexOf(newOrder[insertIndex]) {
+            stripToIndex = anchor - removedLeftOf(anchor)
+        } else if let last = newOrder.last, let anchor = stripIndexOf(last) {
+            stripToIndex = anchor - removedLeftOf(anchor) + 1
+        } else {
+            stripToIndex = nil
+        }
+        guard let stripToIndex else { return }
+
         newOrder.insert(contentsOf: pairGuidsInOrder, at: insertIndex)
         normalTabOrder = newOrder
         normalTabs = normalTabOrder.compactMap { guid in
@@ -2428,7 +2468,7 @@ class BrowserState {
 
         ChromiumLauncher.sharedInstance().bridge?.moveSplit(
             group.id,
-            to: Int32(insertIndex),
+            to: Int32(stripToIndex),
             windowId: windowId.int64Value)
     }
 
@@ -2898,7 +2938,7 @@ class BrowserState {
            tabs.first(where: { $0.guidInLocalDB == pinnedGuid }) == nil {
             let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedTab) ?? (pinnedGuid, partnerGuid)
             MainActor.assumeIsolated {
-                unpinClosedPinnedSplit(leftDB: leftDB, rightDB: rightDB)
+                unpinClosedPinnedSplit(leftDB: leftDB, rightDB: rightDB, insertionIndex: normalIndex)
             }
             return
         }
@@ -3552,11 +3592,13 @@ class BrowserState {
             return
         }
 
-        // Closed split bookmark: open both URLs as a fresh split. They
-        // arrive at the end of the strip and the user can reorder if
-        // needed — wiring a per-pane pending insertion would require two
-        // round-trips through the new-tab path.
-        openTwoURLsAsSplit(primaryURL: primaryURL, secondaryURL: secondaryURL)
+        // Closed split bookmark: open both URLs as a fresh split. The two
+        // panes are materialized asynchronously and land at the end of the
+        // strip, so pass the drop index through — `handleSplitCreated`
+        // relocates the finished pair to it.
+        openTwoURLsAsSplit(primaryURL: primaryURL,
+                           secondaryURL: secondaryURL,
+                           insertionIndex: index)
         bookmarkManager.removeBookmark(bookmark)
     }
 
