@@ -738,27 +738,23 @@ extension BrowserState {
     @MainActor
     func toggleSplitPinStatus(_ splitId: String) {
         guard let index = splits.firstIndex(where: { $0.id == splitId }) else { return }
-        let group = splits[index]
-        let primaryId = group.primaryTabId
-        let secondaryId = group.secondaryTabId
-        let primaryGuidInDB = tabs.first(where: { $0.guid == primaryId })?.guidInLocalDB
-        let secondaryGuidInDB = tabs.first(where: { $0.guid == secondaryId })?.guidInLocalDB
-
-        let willPin = !splits[index].isPinned
-        splits[index].isPinned.toggle()
-
-        toggleTabPinStatus(primaryId, guidInDB: primaryGuidInDB)
-        toggleTabPinStatus(secondaryId, guidInDB: secondaryGuidInDB)
-
-        guard willPin else { return }
-        // After pinning, each live tab now carries a freshly-issued
-        // guidInLocalDB. Capture both and persist the partner relationship so
-        // the pinned-split rendering can be reconstructed after a restart.
-        guard let primaryDB = tabs.first(where: { $0.guid == primaryId })?.guidInLocalDB,
-              let secondaryDB = tabs.first(where: { $0.guid == secondaryId })?.guidInLocalDB else {
+        if splits[index].isPinned {
+            let group = splits[index]
+            let primaryGuidInDB = tabs.first(where: { $0.guid == group.primaryTabId })?.guidInLocalDB
+            let secondaryGuidInDB = tabs.first(where: { $0.guid == group.secondaryTabId })?.guidInLocalDB
+            splits[index].isPinned = false
+            toggleTabPinStatus(group.primaryTabId, guidInDB: primaryGuidInDB)
+            toggleTabPinStatus(group.secondaryTabId, guidInDB: secondaryGuidInDB)
             return
         }
-        persistPinnedSplitPair(primaryDB: primaryDB, secondaryDB: secondaryDB)
+        // Pinning: delegate to the chained-anchor path so the secondary
+        // pane anchors off the primary's freshly-issued guidInLocalDB.
+        // The per-tab toggle path races the async pinnedTabs publisher and
+        // can land the secondary before the primary in the DB, which then
+        // binds the merged cell's left pane to the secondary tab — closing
+        // the cell would only close one pane and strand the other as a
+        // pinned placeholder.
+        pinSplitInsertingAtPinnedIndex(splitId, atIndex: pinnedTabs.count)
     }
 
     /// Persist the `splitPartnerGuid` field on two pinned-tab rows and
