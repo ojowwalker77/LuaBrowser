@@ -534,6 +534,82 @@ class SidebarTabListViewController: NSViewController {
         browserState.moveBookmarkOut(bookmark, toNormalTabs: destination)
         return true
     }
+
+    private struct FavoriteGroupDropDestination {
+        let token: String
+        let normalTabsIndex: Int
+        let groupIndex: Int
+    }
+
+    private func favoriteGroupDropDestination(
+        outlineView: NSOutlineView,
+        info: NSDraggingInfo,
+        resolvedItem: Any?,
+        resolvedIndex: Int
+    ) -> FavoriteGroupDropDestination? {
+        let dropCtx = buildDropContext(
+            outlineView: outlineView,
+            info: info,
+            proposedItem: resolvedItem,
+            proposedChildIndex: resolvedIndex
+        )
+        let intent = SidebarGroupDropResolver.resolve(dropCtx)
+        let tokenAndIndex: (token: String, index: Int)?
+        switch intent {
+        case .joinAtFront(let token, let index),
+             .reorderInGroup(let token, let index):
+            tokenAndIndex = (token, index)
+        case .rootInsert, .rejected:
+            tokenAndIndex = nil
+        }
+        guard let tokenAndIndex else { return nil }
+        return FavoriteGroupDropDestination(
+            token: tokenAndIndex.token,
+            normalTabsIndex: tokenAndIndex.index,
+            groupIndex: groupInsertionIndex(
+                token: tokenAndIndex.token,
+                normalTabsIndex: tokenAndIndex.index
+            )
+        )
+    }
+
+    private func groupInsertionIndex(token: String, normalTabsIndex: Int) -> Int {
+        let members = browserState.normalTabs.filter { $0.groupToken == token }
+        guard !members.isEmpty,
+              let groupLowerBound = browserState.normalTabs.firstIndex(where: { $0.groupToken == token }) else {
+            return 0
+        }
+        return max(0, min(normalTabsIndex - groupLowerBound, members.count))
+    }
+
+    private func draggedBookmark(from pasteboard: NSPasteboard) -> Bookmark? {
+        guard let guid = pasteboard.string(forType: .phiBookmark) else { return nil }
+        return findBookmark(withId: guid)
+    }
+
+    private func canMoveBookmarkToGroup(_ bookmark: Bookmark) -> Bool {
+        !bookmark.isFolder && (bookmark.secondaryUrl ?? "").isEmpty
+    }
+
+    private func canMovePinnedTabToGroup(pinnedGuid: String) -> Bool {
+        guard let pinnedTab = browserState.pinnedTabs.first(where: {
+            $0.guidInLocalDB == pinnedGuid
+        }) else {
+            return false
+        }
+        return (pinnedTab.splitPartnerGuid ?? "").isEmpty
+    }
+
+    private func canMoveDraggedBookmarkToGroup(from pasteboard: NSPasteboard) -> Bool {
+        guard pasteboard.string(forType: .phiBookmark) != nil else { return true }
+        guard let bookmark = draggedBookmark(from: pasteboard) else { return false }
+        return canMoveBookmarkToGroup(bookmark)
+    }
+
+    private func canMoveDraggedPinnedTabToGroup(from pasteboard: NSPasteboard) -> Bool {
+        guard let pinnedGuid = pasteboard.string(forType: .pinnedTab) else { return true }
+        return canMovePinnedTabToGroup(pinnedGuid: pinnedGuid)
+    }
 }
 
 // MARK: - NSOutlineViewDataSource
@@ -825,6 +901,11 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
 
             switch intent {
             case .joinAtFront(let token, _), .reorderInGroup(let token, _):
+                if !canMoveDraggedPinnedTabToGroup(from: pasteboard)
+                    || !canMoveDraggedBookmarkToGroup(from: pasteboard) {
+                    setDropFeedback(.none)
+                    return []
+                }
                 setDropFeedback(.tabGroup(token: token))
                 // Let AppKit's native line indicator coexist with our highlight.
                 return .move
@@ -1145,6 +1226,23 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         }
 
         if let pinnedTabId = pasteboard.string(forType: .pinnedTab) {
+            if let destination = favoriteGroupDropDestination(
+                outlineView: outlineView,
+                info: info,
+                resolvedItem: resolvedItem,
+                resolvedIndex: resolvedIndex) {
+                guard canMovePinnedTabToGroup(pinnedGuid: pinnedTabId) else {
+                    return false
+                }
+                return browserState.movePinnedTabOut(
+                    pinnedGuid: pinnedTabId,
+                    toGroup: destination.token,
+                    groupIndex: destination.groupIndex,
+                    normalTabsIndex: destination.normalTabsIndex,
+                    focusAfterCreate: false
+                )
+            }
+
             if isCrossWindowDrag(pasteboard), let sourceState = sourceBrowserState(for: pasteboard) {
                 if let targetBookmark = resolvedItem as? Bookmark, targetBookmark.isFolder {
                     sourceState.movePinnedTabOut(
@@ -1361,6 +1459,21 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
 
         if let draggedBookmarkId = pasteboard.string(forType: .phiBookmark),
            let draggedBookmark = findBookmark(withId: draggedBookmarkId) {
+
+            if let destination = favoriteGroupDropDestination(
+                outlineView: outlineView,
+                info: info,
+                resolvedItem: resolvedItem,
+                resolvedIndex: resolvedIndex) {
+                guard canMoveBookmarkToGroup(draggedBookmark) else { return false }
+                return browserState.moveBookmarkOut(
+                    draggedBookmark,
+                    toGroup: destination.token,
+                    groupIndex: destination.groupIndex,
+                    normalTabsIndex: destination.normalTabsIndex,
+                    focusAfterCreate: false
+                )
+            }
             
             #if DEBUG
             let itemDescription: String
@@ -3645,6 +3758,60 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
         }
         setDropFeedback(.none)
         return true
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      canAcceptBookmarkWithGuid guid: String) -> Bool {
+        guard let bookmark = findBookmark(withId: guid) else {
+            return false
+        }
+        return canMoveBookmarkToGroup(bookmark)
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      canAcceptPinnedTabWithGuid pinnedGuid: String) -> Bool {
+        canMovePinnedTabToGroup(pinnedGuid: pinnedGuid)
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptPinnedTabWithGuid pinnedGuid: String,
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int,
+                      groupIndex: Int) -> Bool {
+        guard canMovePinnedTabToGroup(pinnedGuid: pinnedGuid) else {
+            setDropFeedback(.none)
+            return false
+        }
+        let accepted = browserState.movePinnedTabOut(
+            pinnedGuid: pinnedGuid,
+            toGroup: token,
+            groupIndex: groupIndex,
+            normalTabsIndex: normalTabsIdx,
+            focusAfterCreate: false
+        )
+        setDropFeedback(.none)
+        return accepted
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptBookmarkWithGuid bookmarkGuid: String,
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int,
+                      groupIndex: Int) -> Bool {
+        guard let bookmark = findBookmark(withId: bookmarkGuid),
+              canMoveBookmarkToGroup(bookmark) else {
+            setDropFeedback(.none)
+            return false
+        }
+        let accepted = browserState.moveBookmarkOut(
+            bookmark,
+            toGroup: token,
+            groupIndex: groupIndex,
+            normalTabsIndex: normalTabsIdx,
+            focusAfterCreate: false
+        )
+        setDropFeedback(.none)
+        return accepted
     }
 }
 

@@ -41,8 +41,6 @@ enum SidebarGroupDropIntent: Equatable {
     enum RejectReason: Equatable {
         case crossWindowRefused
         case crossWindowGroupJoinUnsupported
-        case pinnedNotAllowedInGroup
-        case bookmarkNotAllowedInGroup
         case sameSlot
     }
 }
@@ -249,12 +247,6 @@ enum SidebarGroupDropResolver {
             if ctx.isCrossWindow {
                 return .rejected(reason: .crossWindowGroupJoinUnsupported)
             }
-            if ctx.pasteboardKind == .pinnedTab {
-                return .rejected(reason: .pinnedNotAllowedInGroup)
-            }
-            if ctx.pasteboardKind == .phiBookmark {
-                return .rejected(reason: .bookmarkNotAllowedInGroup)
-            }
             if ctx.draggingTab?.groupToken == token {
                 return .reorderInGroup(token: token, normalTabsIdx: normalTabsIdx)
             }
@@ -277,14 +269,6 @@ enum SidebarGroupDropResolver {
 
         if ctx.isCrossWindow && !upper {
             return .rejected(reason: .crossWindowGroupJoinUnsupported)
-        }
-        if !upper {
-            if ctx.pasteboardKind == .pinnedTab {
-                return .rejected(reason: .pinnedNotAllowedInGroup)
-            }
-            if ctx.pasteboardKind == .phiBookmark {
-                return .rejected(reason: .bookmarkNotAllowedInGroup)
-            }
         }
 
         if ctx.draggingTab?.groupToken == token {
@@ -329,12 +313,6 @@ enum SidebarGroupDropResolver {
     ) -> SidebarGroupDropIntent {
         if ctx.isCrossWindow {
             return .rejected(reason: .crossWindowGroupJoinUnsupported)
-        }
-        if ctx.pasteboardKind == .pinnedTab {
-            return .rejected(reason: .pinnedNotAllowedInGroup)
-        }
-        if ctx.pasteboardKind == .phiBookmark {
-            return .rejected(reason: .bookmarkNotAllowedInGroup)
         }
         let upper = isUpperHalf(
             cursorY: ctx.cursorYInOutline,

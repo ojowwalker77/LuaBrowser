@@ -79,6 +79,32 @@ protocol TabGroupCellViewDelegate: AnyObject {
                       intoGroupToken token: String,
                       atNormalTabsIdx normalTabsIdx: Int) -> Bool
 
+    /// Inner table can accept bookmarks that can become group members.
+    /// The controller owns bookmark lookup, so validation stays routed
+    /// through this boundary before the cell shows a drop indicator.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      canAcceptBookmarkWithGuid guid: String) -> Bool
+
+    /// Inner table can accept pinned tabs that can become group members.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      canAcceptPinnedTabWithGuid pinnedGuid: String) -> Bool
+
+    /// Drop landed in the inner table for a pinned tab. The controller
+    /// converts it to a normal group member and removes the pinned record.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptPinnedTabWithGuid pinnedGuid: String,
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int,
+                      groupIndex: Int) -> Bool
+
+    /// Drop landed in the inner table for a bookmark. The controller
+    /// converts it to a normal group member and removes the bookmark.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptBookmarkWithGuid bookmarkGuid: String,
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int,
+                      groupIndex: Int) -> Bool
+
     /// Inner table accepted or rejected a drag over this group. The
     /// controller maps this to `dropFeedbackTarget` container tinting.
     func tabGroupCell(_ cell: TabGroupCellView,
@@ -1200,9 +1226,6 @@ extension TabGroupCellView: GroupTabsDragSource {
             "types=\(pasteboard.types?.map(\.rawValue) ?? [])"
         )
         let result: NSDragOperation = {
-            // Pinned and bookmark drops never join a group.
-            if pasteboard.string(forType: .pinnedTab) != nil { return [] }
-            if pasteboard.string(forType: .phiBookmark) != nil { return [] }
             // Cross-window normal-tab joins are unsupported (mirrors the
             // outer resolver's `crossWindowGroupJoinUnsupported` reject).
             if let sourceIdString = pasteboard.string(forType: .sourceWindowId),
@@ -1210,6 +1233,20 @@ extension TabGroupCellView: GroupTabsDragSource {
                let state = configuredBrowserState,
                sourceId != state.windowId {
                 return []
+            }
+            if let pinnedGuid = pasteboard.string(forType: .pinnedTab) {
+                guard !pinnedGuid.isEmpty,
+                      groupCellDelegate?.tabGroupCell(
+                        self,
+                        canAcceptPinnedTabWithGuid: pinnedGuid) == true else {
+                    return []
+                }
+                return .move
+            }
+            if let bookmarkGuid = pasteboard.string(forType: .phiBookmark),
+               !bookmarkGuid.isEmpty,
+               groupCellDelegate?.tabGroupCell(self, canAcceptBookmarkWithGuid: bookmarkGuid) == true {
+                return .move
             }
             return pasteboard.string(forType: .normalTab) != nil ? .move : []
         }()
@@ -1243,10 +1280,7 @@ extension TabGroupCellView: GroupTabsDragSource {
             "resolvedRow=\(insertionRow) op=\(dropOperation.rawValue)"
         )
         guard let state = configuredBrowserState,
-              let group = configuredGroup,
-              let guidString = info.draggingPasteboard.string(forType: .normalTab),
-              let guid = Int(guidString),
-              let tab = state.tabs.first(where: { $0.guid == guid })
+              let group = configuredGroup
         else { return false }
 
         // `insertionRow` is in visible inner-table row space. Merged split
@@ -1264,12 +1298,40 @@ extension TabGroupCellView: GroupTabsDragSource {
             members: members,
             groupLowerBound: groupLowerBound,
             state: state)
+        let groupIndex = max(
+            0,
+            min(normalTabsIdx - groupLowerBound, members.count)
+        )
 
-        let accepted = groupCellDelegate?.tabGroupCell(
-            self,
-            didAcceptTab: tab,
-            intoGroupToken: group.token,
-            atNormalTabsIdx: normalTabsIdx) ?? false
+        let pasteboard = info.draggingPasteboard
+        let accepted: Bool
+        if let pinnedGuid = pasteboard.string(forType: .pinnedTab),
+           !pinnedGuid.isEmpty {
+            accepted = groupCellDelegate?.tabGroupCell(
+                self,
+                didAcceptPinnedTabWithGuid: pinnedGuid,
+                intoGroupToken: group.token,
+                atNormalTabsIdx: normalTabsIdx,
+                groupIndex: groupIndex) ?? false
+        } else if let bookmarkGuid = pasteboard.string(forType: .phiBookmark),
+                  !bookmarkGuid.isEmpty {
+            accepted = groupCellDelegate?.tabGroupCell(
+                self,
+                didAcceptBookmarkWithGuid: bookmarkGuid,
+                intoGroupToken: group.token,
+                atNormalTabsIdx: normalTabsIdx,
+                groupIndex: groupIndex) ?? false
+        } else if let guidString = pasteboard.string(forType: .normalTab),
+                  let guid = Int(guidString),
+                  let tab = state.tabs.first(where: { $0.guid == guid }) {
+            accepted = groupCellDelegate?.tabGroupCell(
+                self,
+                didAcceptTab: tab,
+                intoGroupToken: group.token,
+                atNormalTabsIdx: normalTabsIdx) ?? false
+        } else {
+            accepted = false
+        }
         AppLogDebug("[TAB_GROUPS][INNER_DRAG] inner.acceptDrop -> \(accepted)")
         return accepted
     }

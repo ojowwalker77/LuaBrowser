@@ -396,7 +396,7 @@ final class SidebarGroupDropResolverTests: XCTestCase {
         )
     }
 
-    func test_resolver_pinnedTab_groupHeaderLowerHalf_rejectsPinnedInGroup() {
+    func test_resolver_pinnedTab_groupHeaderLowerHalf_joinsGroup() {
         let wrapper = stubGroupWrapper(token: "A")
         let ctx = ctxWithWrapper(
             wrapper: wrapper,
@@ -405,11 +405,11 @@ final class SidebarGroupDropResolverTests: XCTestCase {
             pasteboard: .pinnedTab)
         XCTAssertEqual(
             SidebarGroupDropResolver.resolve(ctx),
-            .rejected(reason: .pinnedNotAllowedInGroup)
+            .joinAtFront(token: "A", normalTabsIdx: 1)
         )
     }
 
-    func test_resolver_bookmark_memberRow_rejectsBookmarkInGroup() {
+    func test_resolver_bookmark_memberRow_reordersIntoGroup() {
         let n1 = stubTab(guid: 1001, token: nil)
         let a1 = stubTab(guid: 2001, token: "A")
         let ctx = ctxWithMember(
@@ -418,7 +418,7 @@ final class SidebarGroupDropResolverTests: XCTestCase {
             pasteboard: .phiBookmark)
         XCTAssertEqual(
             SidebarGroupDropResolver.resolve(ctx),
-            .rejected(reason: .bookmarkNotAllowedInGroup)
+            .reorderInGroup(token: "A", normalTabsIdx: 1)
         )
     }
 
@@ -623,8 +623,7 @@ final class SidebarGroupDropResolverTests: XCTestCase {
         )
     }
 
-    func test_resolver_caseHeaderChildIdx_pinnedRejected() {
-        // Pinned tab cannot enter a group via expanded-children drop.
+    func test_resolver_caseHeaderChildIdx_pinnedReordersIntoGroup() {
         let wrapper = stubGroupWrapper(token: "A")
         let n1 = stubTab(guid: 1001, token: nil, idxInNormalTabs: 0)
         let ctx = ctxWithWrapperChildIndex(
@@ -634,7 +633,7 @@ final class SidebarGroupDropResolverTests: XCTestCase {
             pasteboard: .pinnedTab)
         XCTAssertEqual(
             SidebarGroupDropResolver.resolve(ctx),
-            .rejected(reason: .pinnedNotAllowedInGroup)
+            .reorderInGroup(token: "A", normalTabsIdx: 2)
         )
     }
 
