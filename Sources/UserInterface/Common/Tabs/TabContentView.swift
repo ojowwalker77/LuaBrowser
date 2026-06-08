@@ -9,14 +9,16 @@ import SwiftUI
 
 struct UnifiedTabTitleView: View {
     let viewModel: TabViewModel
+
+    private static let titleFontSize: CGFloat = 13
+    private static let titleFont = NSFont.systemFont(ofSize: titleFontSize)
+    private static let titleHeight = ceil(titleFont.ascender - titleFont.descender + titleFont.leading)
+    private static let fadeWidth: CGFloat = 24
     
     var body: some View {
-        Text(viewModel.displayTitle)
-            .font(.system(size: 13))
-            .lineLimit(1)
-            .truncationMode(.tail)
+        titleContent
+            .frame(height: Self.titleHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
             .shimmering(
                 active: viewModel.isShimmering,
                 gradient: Gradient(colors: [
@@ -26,9 +28,47 @@ struct UnifiedTabTitleView: View {
                 ]),
                 bandSize: 0.5
             )
+            .mask(
+                TabTitleTrailingFadeMask(
+                    fadeWidth: Self.fadeWidth
+                )
+            )
             .scaleEffect(viewModel.isPressed ? 0.985 : 1.0)
             .animation(.easeOut(duration: 0.1), value: viewModel.isPressed)
             .ignoresSafeArea()
+    }
+
+    private var titleContent: some View {
+        GeometryReader { proxy in
+            titleText
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+                .clipped()
+        }
+    }
+
+    private var titleText: some View {
+        Text(viewModel.displayTitle)
+            .font(.system(size: Self.titleFontSize))
+            .lineLimit(1)
+    }
+}
+
+private struct TabTitleTrailingFadeMask: View {
+    let fadeWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                Rectangle().fill(.black)
+                LinearGradient(
+                    colors: [.black, .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: min(fadeWidth, proxy.size.width))
+            }
+        }
     }
 }
 

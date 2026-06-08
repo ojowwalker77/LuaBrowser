@@ -107,6 +107,70 @@ extension NSView {
     }
 }
 
+private final class SidebarTrailingFadeTextField: NSTextField {
+    private static let fadeWidth: CGFloat = 10
+
+    private let fadeMaskLayer = CAGradientLayer()
+
+    init() {
+        super.init(frame: .zero)
+        configureLabel()
+        configureFadeMask()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureLabel()
+        configureFadeMask()
+    }
+
+    override func layout() {
+        super.layout()
+        updateFadeMask()
+    }
+
+    private func configureLabel() {
+        isBordered = false
+        isEditable = false
+        isSelectable = false
+        drawsBackground = false
+        backgroundColor = .clear
+        lineBreakMode = .byClipping
+        maximumNumberOfLines = 1
+        cell?.lineBreakMode = .byClipping
+        cell?.truncatesLastVisibleLine = false
+    }
+
+    private func configureFadeMask() {
+        wantsLayer = true
+        fadeMaskLayer.startPoint = CGPoint(x: 0, y: 0.5)
+        fadeMaskLayer.endPoint = CGPoint(x: 1, y: 0.5)
+        fadeMaskLayer.colors = [
+            NSColor.black.cgColor,
+            NSColor.black.cgColor,
+            NSColor.clear.cgColor
+        ]
+        layer?.mask = fadeMaskLayer
+    }
+
+    private func updateFadeMask() {
+        guard bounds.width > 0, bounds.height > 0 else {
+            layer?.mask = nil
+            return
+        }
+
+        let opaqueEnd = max(0, (bounds.width - Self.fadeWidth) / bounds.width)
+        fadeMaskLayer.frame = bounds
+        fadeMaskLayer.locations = [
+            0,
+            NSNumber(value: Double(opaqueEnd)),
+            1
+        ]
+        fadeMaskLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        layer?.mask = fadeMaskLayer
+    }
+}
+
 // MARK: - Tab Hover Region
 
 /// Transparent overlay that owns hover tracking for sidebar tabs.
@@ -333,20 +397,27 @@ class SidebarTabCellView: SidebarCellView {
 /// cell hover. The pane whose tab is focused gets a solid white pill,
 /// the other half stays at the cell-level hover tint.
 class SidebarSplitPairCellView: SidebarCellView {
+    private static let closeButtonSize: CGFloat = 24
+    private static let titleTrailingSpacing: CGFloat = 5
     private let outerBackground = HoverableView()
     private let leftPane = HoverableView()
     private let rightPane = HoverableView()
     private let leftIconView = NSImageView()
     private let rightIconView = NSImageView()
-    private let leftTitleLabel = NSTextField(labelWithString: "")
-    private let rightTitleLabel = NSTextField(labelWithString: "")
+    private let leftTitleLabel = SidebarTrailingFadeTextField()
+    private let rightTitleLabel = SidebarTrailingFadeTextField()
     private var leftCloseHost: ZeroSafeAreaHostingView<AnyView>!
     private var rightCloseHost: ZeroSafeAreaHostingView<AnyView>!
     private var leftMuteHost: ZeroSafeAreaHostingView<AnyView>!
     private var rightMuteHost: ZeroSafeAreaHostingView<AnyView>!
     private var leftMuteWidth: Constraint?
     private var rightMuteWidth: Constraint?
+    private var leftTitlePaneTrailing: Constraint?
+    private var leftTitleCloseTrailing: Constraint?
+    private var rightTitlePaneTrailing: Constraint?
+    private var rightTitleCloseTrailing: Constraint?
     private let dividerView = NSView()
+    private var themeObserver = ThemeObserver.shared
     private var leftFaviconHandle: ProfileScopedFaviconLoadHandle?
     private var rightFaviconHandle: ProfileScopedFaviconLoadHandle?
     private weak var configuredLeftTab: Tab?
@@ -396,6 +467,9 @@ class SidebarSplitPairCellView: SidebarCellView {
         configuredSplitId = nil
         outerBackground.isSelected = false
         isCellHovered = false
+        setCloseButtonSpaceReserved(false)
+        leftCloseHost.isHidden = true
+        rightCloseHost.isHidden = true
         leftMuteHost.isHidden = true
         rightMuteHost.isHidden = true
         leftMuteWidth?.update(offset: 0)
@@ -403,6 +477,7 @@ class SidebarSplitPairCellView: SidebarCellView {
     }
 
     private func setupViews() {
+        themeObserver = ThemeObserver(themeSource: themeStateProvider)
         outerBackground.backgroundColor = .clear
         outerBackground.hoveredColor = NSColor(resource: .sidebarTabHovered)
         outerBackground.selectedColor = NSColor(resource: .sidebarTabSelected)
@@ -421,9 +496,11 @@ class SidebarSplitPairCellView: SidebarCellView {
         // SwiftUI button receives its own hover events independently.
         leftCloseHost = ZeroSafeAreaHostingView(rootView: AnyView(
             UnifiedTabCloseButton { [weak self] in self?.leftCloseTapped() }
+                .phiThemeObserver(themeObserver)
         ))
         rightCloseHost = ZeroSafeAreaHostingView(rootView: AnyView(
             UnifiedTabCloseButton { [weak self] in self?.rightCloseTapped() }
+                .phiThemeObserver(themeObserver)
         ))
         leftCloseHost.isHidden = true
         rightCloseHost.isHidden = true
@@ -437,15 +514,19 @@ class SidebarSplitPairCellView: SidebarCellView {
         rightMuteHost.isHidden = true
 
         leftMuteWidth = configurePane(leftPane,
-                                       icon: leftIconView,
-                                       title: leftTitleLabel,
-                                       mute: leftMuteHost,
-                                       close: leftCloseHost)
+                                      icon: leftIconView,
+                                      title: leftTitleLabel,
+                                      mute: leftMuteHost,
+                                      close: leftCloseHost,
+                                      paneTrailing: &leftTitlePaneTrailing,
+                                      closeTrailing: &leftTitleCloseTrailing)
         rightMuteWidth = configurePane(rightPane,
-                                        icon: rightIconView,
-                                        title: rightTitleLabel,
-                                        mute: rightMuteHost,
-                                        close: rightCloseHost)
+                                       icon: rightIconView,
+                                       title: rightTitleLabel,
+                                       mute: rightMuteHost,
+                                       close: rightCloseHost,
+                                       paneTrailing: &rightTitlePaneTrailing,
+                                       closeTrailing: &rightTitleCloseTrailing)
         outerBackground.addSubview(leftPane)
         outerBackground.addSubview(rightPane)
 
@@ -496,7 +577,9 @@ class SidebarSplitPairCellView: SidebarCellView {
                                icon: NSImageView,
                                title: NSTextField,
                                mute: NSView,
-                               close: NSView) -> Constraint? {
+                               close: NSView,
+                               paneTrailing: inout Constraint?,
+                               closeTrailing: inout Constraint?) -> Constraint? {
         // Selection is owned by the outer background — the whole cell
         // becomes the white pill when either pane is active, not just
         // the active half. Leave the pane's own background tints clear
@@ -522,17 +605,11 @@ class SidebarSplitPairCellView: SidebarCellView {
 
         title.font = NSFont.systemFont(ofSize: 13)
         title.phi.setTextColor(.textPrimary)
-        title.lineBreakMode = .byTruncatingTail
+        title.lineBreakMode = .byClipping
         title.maximumNumberOfLines = 1
-        title.cell?.truncatesLastVisibleLine = true
+        title.cell?.lineBreakMode = .byClipping
+        title.cell?.truncatesLastVisibleLine = false
         pane.addSubview(title)
-
-        pane.addSubview(close)
-        close.snp.makeConstraints { make in
-            make.centerY.equalToSuperview()
-            make.trailing.equalToSuperview().offset(-2)
-            make.size.equalTo(CGSize(width: 24, height: 24))
-        }
 
         // Mute sits between favicon and title. Width is driven dynamically
         // by the cell so it collapses to 0 when the pane is silent; the
@@ -547,13 +624,28 @@ class SidebarSplitPairCellView: SidebarCellView {
             muteWidthConstraint = make.width.equalTo(0).constraint
         }
 
+        pane.addSubview(close)
+        close.snp.makeConstraints { make in
+            make.centerY.equalToSuperview()
+            make.trailing.equalToSuperview().offset(-2)
+            make.size.equalTo(CGSize(width: Self.closeButtonSize, height: Self.closeButtonSize))
+        }
+
         title.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
             make.leading.equalTo(mute.snp.trailing).offset(4)
-            make.trailing.lessThanOrEqualTo(close.snp.leading).offset(-2)
+            paneTrailing = make.trailing.lessThanOrEqualToSuperview().offset(-Self.titleTrailingSpacing).constraint
+            closeTrailing = make.trailing.lessThanOrEqualTo(close.snp.leading).offset(-Self.titleTrailingSpacing).constraint
         }
+        closeTrailing?.deactivate()
 
         return muteWidthConstraint
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        themeObserver.rebind(to: themeStateProvider)
     }
 
     override func updateTrackingAreas() {
@@ -585,8 +677,37 @@ class SidebarSplitPairCellView: SidebarCellView {
     }
 
     private func updateHoverChrome() {
+        setCloseButtonSpaceReserved(isCellHovered)
         leftCloseHost.isHidden = !isCellHovered
         rightCloseHost.isHidden = !isCellHovered
+    }
+
+    private func setCloseButtonSpaceReserved(_ reserved: Bool) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+
+            self.applyCloseButtonSpaceReservation(reserved)
+            self.outerBackground.layoutSubtreeIfNeeded()
+
+            CATransaction.commit()
+        }
+    }
+
+    private func applyCloseButtonSpaceReservation(_ reserved: Bool) {
+        if reserved {
+            leftTitlePaneTrailing?.deactivate()
+            rightTitlePaneTrailing?.deactivate()
+            leftTitleCloseTrailing?.activate()
+            rightTitleCloseTrailing?.activate()
+        } else {
+            leftTitleCloseTrailing?.deactivate()
+            rightTitleCloseTrailing?.deactivate()
+            leftTitlePaneTrailing?.activate()
+            rightTitlePaneTrailing?.activate()
+        }
     }
 
     override func configureAppearance() {
@@ -742,6 +863,7 @@ class SidebarSplitPairCellView: SidebarCellView {
                 guard let tab else { return }
                 tab.setAudioMuted(!tab.isAudioMuted)
             }
+            .phiThemeObserver(themeObserver)
         )
     }
 
