@@ -103,6 +103,12 @@ class WebContentViewController: NSViewController {
     /// loaded yet (url=nil).  When set, the `$url` observer will re-trigger
     /// `restoreFocusForCurrentTab` once the URL arrives and the page is ready.
     private var pendingChromeRefocusOnUrlReady = false
+    /// When content needs a window-backed mount, remember the tab and retry
+    /// once the controller actually re-enters a window-backed lifecycle.
+    private var deferredContentUpdateTabId: Int?
+    /// Coalesces same-turn retries while the controller is transiently
+    /// between superview attachment and a live `view.window`.
+    private var isDeferredContentUpdateScheduled = false
     
     // MARK: - Left Content Area
     /// Wrapper that provides the adjustable inset for the left content area.
@@ -254,6 +260,7 @@ class WebContentViewController: NSViewController {
         super.viewDidAppear()
         // Restore focus after the view enters the hierarchy.
         restoreFocusForCurrentTab()
+        flushDeferredContentUpdateIfPossible()
         // If this controller became associated with a fullscreen tab before
         // its view was in a window (so applyContentFullscreenState bailed
         // out early), catch up now that hostView.window is available.
@@ -1018,17 +1025,34 @@ class WebContentViewController: NSViewController {
         // stable in-window operation.
         if view.window == nil {
             guard parent != nil || view.superview != nil else { return }
-            DispatchQueue.main.async { [weak self, weak tab] in
-                guard let self, let tab else { return }
-                self.updateContentForTab(tab)
-            }
+            scheduleDeferredContentUpdate(for: tab)
             return
         }
+        deferredContentUpdateTabId = nil
         if shouldShowNativeNtp(for: tab) {
             showNativeNtp(for: tab)
         } else if let webView = tab.webContentView {
             showWebContent(webView, tabId: tab.guid)
         }
+    }
+
+    private func scheduleDeferredContentUpdate(for tab: Tab) {
+        deferredContentUpdateTabId = tab.guid
+        guard !isDeferredContentUpdateScheduled else { return }
+        isDeferredContentUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isDeferredContentUpdateScheduled = false
+            self.flushDeferredContentUpdateIfPossible()
+        }
+    }
+
+    private func flushDeferredContentUpdateIfPossible() {
+        guard let tab = associatedTab,
+              deferredContentUpdateTabId == tab.guid,
+              view.window != nil else { return }
+        deferredContentUpdateTabId = nil
+        updateContentForTab(tab)
     }
 
     /// Re-mount content when this controller becomes current.
