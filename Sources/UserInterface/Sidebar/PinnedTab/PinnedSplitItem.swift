@@ -79,12 +79,12 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         backgroundView.addSubview(rightIconView)
 
         backgroundView.snp.makeConstraints { make in
-            make.edges.equalToSuperview().inset(2)
+            make.edges.equalToSuperview()
         }
 
         // Two 16x16 favicons centered as a pair, separated by a small gap.
-        // 16 + 4 + 16 = 36pt total — fits inside the 50pt-wide background
-        // (54pt cell minus 4pt inset) without crowding the rounded corners.
+        // 16 + 4 + 16 = 36pt total — fits inside the 54pt-wide background
+        // without crowding the rounded corners.
         leftIconView.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
             make.centerX.equalToSuperview().offset(-10)
