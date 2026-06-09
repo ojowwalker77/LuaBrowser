@@ -43,7 +43,9 @@ final class PlaceholderShellViewController: NSViewController {
     private lazy var hostView = WebContentHostView()
 
     private var headerHeightConstraint: Constraint?
+    private var leftContainerLeadingConstraint: Constraint?
     private var layoutObserverCancellable: AnyCancellable?
+    private var sidebarCollapsedObserverCancellable: AnyCancellable?
 
     /// Anchors the omnibox popup when invoked via cmd+L in placeholder mode.
     /// Falls through to the header's anchor view; matches how
@@ -76,7 +78,10 @@ final class PlaceholderShellViewController: NSViewController {
 
         view.addSubview(leftContainerWrapper)
         leftContainerWrapper.snp.makeConstraints { make in
-            make.leading.trailing.bottom.equalToSuperview().inset(WebContentConstant.edgesSpacing)
+            leftContainerLeadingConstraint = make.leading.equalToSuperview()
+                .inset(contentLeadingInset)
+                .constraint
+            make.trailing.bottom.equalToSuperview().inset(WebContentConstant.edgesSpacing)
             make.top.equalToSuperview()
         }
 
@@ -122,6 +127,25 @@ final class PlaceholderShellViewController: NSViewController {
                 .sink { [weak self] _ in
                     self?.updateHeaderVisibility()
                 }
+
+        sidebarCollapsedObserverCancellable =
+            browserState?.$sidebarCollapsed
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.updateContentLeadingInset()
+                }
+    }
+
+    private var contentLeadingInset: CGFloat {
+        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let sidebarCollapsed = browserState?.sidebarCollapsed ?? true
+        return (traditionalLayout || sidebarCollapsed)
+            ? WebContentConstant.edgesSpacing
+            : 0
+    }
+
+    private func updateContentLeadingInset() {
+        leftContainerLeadingConstraint?.update(inset: contentLeadingInset)
     }
 
     private func updateHeaderVisibility() {
@@ -140,6 +164,8 @@ final class PlaceholderShellViewController: NSViewController {
             headerHeightConstraint?.update(offset: 0)
             titleAwareArea.isHidden = false
         }
+
+        updateContentLeadingInset()
     }
 
     /// Mount the placeholder WebContents NSView into hostView via Auto
