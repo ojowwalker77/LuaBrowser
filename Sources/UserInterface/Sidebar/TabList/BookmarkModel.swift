@@ -257,8 +257,31 @@ class BookmarkManager: ObservableObject {
                                                 secondaryUrl: secondaryUrl,
                                                 secondaryTitle: secondaryTitle)
 
-        guard let state = browserState,
-              let url,
+        guard let state = browserState else { return }
+
+        // A split-view bookmark drives its attached live split through
+        // `splitBookmarkBindings` — its panes aren't bound via `guidInLocalDB`,
+        // so editing either URL has to navigate the matching pane directly.
+        if let splitId = state.splitBookmarkBindings[guid],
+           let group = state.splits.first(where: { $0.id == splitId }) {
+            let current = bookmarkIndex[guid]
+            if let url,
+               let newPrimary = state.localStore.normalizedURL(from: url)?.absoluteString,
+               newPrimary != current?.url,
+               let primaryTab = state.tabs.first(where: { $0.guid == group.primaryTabId }) {
+                navigateSplitPane(primaryTab, to: newPrimary)
+            }
+            if let secondaryUrlOpt = secondaryUrl, let rawSecondary = secondaryUrlOpt,
+               !rawSecondary.isEmpty,
+               let newSecondary = state.localStore.normalizedURL(from: rawSecondary)?.absoluteString,
+               newSecondary != current?.secondaryUrl,
+               let secondaryTab = state.tabs.first(where: { $0.guid == group.secondaryTabId }) {
+                navigateSplitPane(secondaryTab, to: newSecondary)
+            }
+            return
+        }
+
+        guard let url,
               let normalizedURL = state.localStore.normalizedURL(from: url)?.absoluteString else {
             return
         }
@@ -281,6 +304,24 @@ class BookmarkManager: ObservableObject {
         }
     }
     
+    /// Navigates one pane of a bookmarked split to `url`. The pane carries a
+    /// non-empty `custom_value` marker (e.g. the NTP partner minted during the
+    /// open-as-split flow), which makes `CrossDomainNewTabNavigationThrottle`
+    /// hijack a cross-domain change into a brand-new tab. Clear the marker
+    /// before navigating and restore it once the load settles, mirroring the
+    /// single-tab path above.
+    private func navigateSplitPane(_ tab: Tab, to url: String) {
+        guard let wrapper = tab.webContentWrapper else { return }
+        let restore = tab.guidInLocalDB ?? ""
+        DispatchQueue.main.async {
+            wrapper.updateTabCustomValue("")
+            wrapper.navigate(toURL: url)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                wrapper.updateTabCustomValue(restore)
+            }
+        }
+    }
+
     /// O(1) lookup for a bookmark by guid.
     func bookmark(withGuid guid: String) -> Bookmark? {
         return bookmarkIndex[guid]
