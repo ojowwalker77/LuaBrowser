@@ -267,6 +267,15 @@ final class TabStripDragController {
             // FALSE branch on chip change uses chip_A's correct
             // first-time threshold.
             if let chip = leadingChip {
+                // Pinned source: judge with the cursor (single point), not the
+                // proxy edges. With proxy edges the oscillation region is
+                // `proxyWidth - gapShift` wide regardless of grab offset; the
+                // cursor collapses the dead-zone to [naturalMidX, letWayMidX]
+                // so the chip stops flickering — and it doesn't touch the proxy,
+                // so the cross-zone drag stays smooth.
+                if context.sourceContainerType == .pinned {
+                    return cursorInContainer < chip.frame.midX
+                }
                 guard let xFrame = metrics.draggedTabFrameInNormal else {
                     return cursorInContainer < chip.frame.midX
                 }
@@ -645,7 +654,12 @@ final class TabStripDragController {
                 - metrics.normalContainerFrame.minX
                 + metrics.normalScrollOffset
             let rawIndex: Int
-            if let xFrame = metrics.draggedTabFrameInNormal {
+            // Pinned source: cursor-based single-point hit testing (see the
+            // gapBeforeChip note) — proxy-edge hysteresis oscillates because the
+            // proxy is far wider than a tab-gap shift. Pass chipFrames so the
+            // cursor can also land on a collapsed group's chip.
+            if context.sourceContainerType != .pinned,
+               let xFrame = metrics.draggedTabFrameInNormal {
                 rawIndex = calculateGapIndexEdgeBased(
                     xFrame: xFrame,
                     tabFrames: metrics.normalTabFrames,
@@ -657,7 +671,8 @@ final class TabStripDragController {
                 rawIndex = calculateGapIndex(
                     localX: localX,
                     tabFrames: metrics.normalTabFrames,
-                    excludedIndices: cursorExcluded
+                    excludedIndices: cursorExcluded,
+                    chipFrames: metrics.chipFrames
                 )
             }
             let snappedIndex = snapGapOutsideSplitPair(
@@ -797,18 +812,37 @@ final class TabStripDragController {
     private func calculateGapIndex(
         localX: CGFloat,
         tabFrames: [CGRect],
-        excludedIndices: Set<Int>
+        excludedIndices: Set<Int>,
+        chipFrames: [TabStripChipFrame] = []
     ) -> Int {
+        // Collapsed-run chips stand in for their (`.zero`-framed) members so the
+        // cursor can land on a collapsed group and resolve to its
+        // firstMemberIndex — otherwise the run is skipped and a drop onto it
+        // wouldn't join (mirrors calculateGapIndexEdgeBased).
+        let collapsedChipsByFirst: [Int: TabStripChipFrame] = Dictionary(
+            uniqueKeysWithValues: chipFrames
+                .filter { $0.isCollapsed }
+                .map { ($0.firstMemberIndex, $0) }
+        )
         // Remove the dragged tab(s) and any placeholder frames.
         var visibleFrames: [(index: Int, frame: CGRect)] = []
-        for (i, frame) in tabFrames.enumerated() {
+        var i = 0
+        while i < tabFrames.count {
+            if let chip = collapsedChipsByFirst[i] {
+                visibleFrames.append((chip.firstMemberIndex, chip.frame))
+                i = chip.lastMemberIndex + 1
+                continue
+            }
             if excludedIndices.contains(i) {
+                i += 1
                 continue
             }
-            if frame == .zero {
+            if tabFrames[i] == .zero {
+                i += 1
                 continue
             }
-            visibleFrames.append((i, frame))
+            visibleFrames.append((i, tabFrames[i]))
+            i += 1
         }
 
         if visibleFrames.isEmpty {

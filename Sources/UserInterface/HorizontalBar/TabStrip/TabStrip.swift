@@ -407,8 +407,19 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             normalGap = (context?.targetContainerType == .normal)
                 ? context?.targetIndex
                 : (externalPreview?.zone == .normal ? externalPreview?.index : nil)
+            // Pinned source: the dragged tab's own width is the narrow pinned
+            // width, but in the normal zone the reserved slot must match a
+            // normal tab — use the normal average so the make-way gap matches
+            // the drop result (and the in-drag gap from
+            // dragControllerDidUpdateLayout).
+            let dragSlotPerTab: CGFloat?
+            if context?.sourceContainerType == .pinned, let dt = context?.draggingTab {
+                dragSlotPerTab = averageNormalTabWidth(excluding: dt)
+            } else {
+                dragSlotPerTab = context?.draggedTabWidth
+            }
             normalGapW = (context?.targetContainerType == .normal)
-                ? draggedSlotsWidth(for: context, perTabWidth: context?.draggedTabWidth)
+                ? draggedSlotsWidth(for: context, perTabWidth: dragSlotPerTab)
                 : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
         }
 
@@ -649,9 +660,12 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         //   • sandwich: drop strictly inside T's run — checked per-
         //     run below since it depends on run.range.
         let activeIsDraggedForeign: Bool = {
-            guard let ctx = dragCtx, let activeIdx else { return false }
-            guard tabId(for: ctx.draggingTab) == tabId(for: normalTabs[activeIdx]) else { return false }
-            return true
+            guard let ctx = dragCtx else { return false }
+            // Match by active identity, not by normalTabs index: a dragged
+            // pinned tab that is the active tab isn't in normalTabs (activeIdx
+            // is nil), yet it can still be joining a group, and its outline
+            // must be carved into the boundary path.
+            return isTabActive(ctx.draggingTab, activeTab: activeTab)
         }()
 
         var result: [GroupGeometry] = []
@@ -764,10 +778,16 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 }
                 return false
             }()
-            let containsActive: Bool = activeIdx.map {
-                let inRun = run.range.contains($0) && !activeIsLeavingThisRun
-                return inRun || activeIsJoiningThisRun
-            } ?? false
+            // activeIsJoiningThisRun must hold even when activeIdx is nil: a
+            // dragged active pinned tab isn't in normalTabs but still joins.
+            let containsActive: Bool = {
+                if let activeIdx,
+                   run.range.contains(activeIdx),
+                   !activeIsLeavingThisRun {
+                    return true
+                }
+                return activeIsJoiningThisRun
+            }()
 
             // Trailing-edge JOIN visual: extend the run's rightX
             // past z to include the drop slot when this run is the
@@ -3694,9 +3714,29 @@ extension TabStrip: TabStripDragDelegate {
         // Perform the underlying data move first.
         if isOriginalPinned {
             if toZone == .normal {
-                // Case: pinned -> normal.
+                // Case: pinned -> normal. A single (non-split) pinned tab
+                // dropped onto a group unpins and joins it; every other
+                // case keeps the existing plain move-out behavior.
                 if let guid = tab.guidInLocalDB {
-                    browserState.movePinnedTabOut(pinnedGuid: guid, to: toIndex, selectAfterMove: tab.isActive)
+                    let pinnedTab = browserState.pinnedTabs.first { $0.guidInLocalDB == guid }
+                    let isSplit = (pinnedTab?.splitPartnerGuid.map { !$0.isEmpty } ?? false)
+                        || browserState.splitGroup(forTabId: tab.guid) != nil
+                    let joinToken: String? = isSplit
+                        ? nil
+                        : resolvePinnedDropGroupToken(context: context, toIndex: toIndex)
+                    if let token = joinToken,
+                       let run = currentGroupRuns().first(where: { $0.token == token }) {
+                        let groupIndex = max(0, min(toIndex - run.range.lowerBound, run.range.count))
+                        AppLogDebug(
+                            "[TAB_GROUPS][STRIP_DRAG] pinned auto-join windowId=\(browserState.windowId) " +
+                            "pinnedGuid=\(guid) token=\(token) toIndex=\(toIndex) groupIndex=\(groupIndex)"
+                        )
+                        browserState.movePinnedTabOut(pinnedGuid: guid, toGroup: token,
+                                                      groupIndex: groupIndex, normalTabsIndex: toIndex,
+                                                      focusAfterCreate: tab.isActive)
+                    } else {
+                        browserState.movePinnedTabOut(pinnedGuid: guid, to: toIndex, selectAfterMove: tab.isActive)
+                    }
                 }
             } else {
                 // Case: pinned -> pinned.
@@ -3916,6 +3956,24 @@ extension TabStrip: TabStripDragDelegate {
         // Then reset the UI back to a clean non-drag layout.
         performLayout(context: .dataChanged)
         browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
+    }
+
+    /// Resolves the group token a single dropped pinned tab should join,
+    /// or nil when the drop isn't onto a group. Leading/trailing edges
+    /// reuse the drag controller's cursor-gated tokens (same thresholds
+    /// as normal-tab auto-join); the interior (sandwich) case is derived
+    /// geometrically from the drop index's neighbors.
+    private func resolvePinnedDropGroupToken(context: TabDragContext, toIndex: Int) -> String? {
+        if let token = context.targetGroupForLeadingJoin { return token }
+        if let token = context.targetGroupForTrailingJoin { return token }
+        let tabs = browserState.normalTabs
+        if toIndex > 0, toIndex < tabs.count,
+           let left = tabs[toIndex - 1].groupToken,
+           let right = tabs[toIndex].groupToken,
+           left == right {
+            return left
+        }
+        return nil
     }
 
     func dragControllerDidCancelDrag() {
