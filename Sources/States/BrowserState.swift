@@ -2948,31 +2948,37 @@ class BrowserState {
         guard let pinnedTab = pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }) else {
             return
         }
-        // Split-aware: if the dragged pinned tab is one pane of a pinned
-        // split and both panes are currently live, unpin both and place them
-        // adjacent in the tab list so the existing SplitGroup carries over
-        // as a merged split cell instead of leaving the partner stranded.
-        if let partnerGuid = pinnedTab.splitPartnerGuid, !partnerGuid.isEmpty,
-           let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerGuid }),
-           let handleLive = tabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
-           let partnerLive = tabs.first(where: { $0.guidInLocalDB == partnerGuid }) {
-            unpinSplitPanesIntoNormalList(handleLive: handleLive,
-                                          partnerLive: partnerLive,
-                                          handlePinned: pinnedTab,
-                                          partnerPinned: partnerPinned,
-                                          insertIndex: normalIndex)
-            return
-        }
-        // Unopened pinned split: the dragged pane has a partner record in
-        // `pinnedTabs` but neither pane is live yet, so there are no live
-        // tabs to reparent. Drop the pair from the store and reopen both
-        // URLs as a fresh split instead of falling through to the
-        // single-tab path below, which would lose the partner.
-        if let partnerGuid = pinnedTab.splitPartnerGuid, !partnerGuid.isEmpty,
-           pinnedTabs.contains(where: { $0.guidInLocalDB == partnerGuid }),
-           tabs.first(where: { $0.guidInLocalDB == pinnedGuid }) == nil {
-            let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedTab) ?? (pinnedGuid, partnerGuid)
+        // Split-aware: resolve the partner pane through the same resolver the
+        // merged pinned-split cell renders from — live `isPinned` SplitGroup
+        // first, persisted `splitPartnerGuid` as fallback. Keying off the raw
+        // `splitPartnerGuid` field plus a both-panes-live requirement left two
+        // gaps that stranded the partner record in the pinned list while only
+        // the dragged pane moved: a partially-live split (one pane closed after
+        // the pair was opened), and a freshly-pinned split whose
+        // `splitPartnerGuid` had not been persisted yet but whose live
+        // `SplitGroup` already paired the panes.
+        if let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedTab) {
+            let partnerDB = leftDB == pinnedGuid ? rightDB : leftDB
+            let handleLive = tabs.first(where: { $0.guidInLocalDB == pinnedGuid })
+            let partnerLive = tabs.first(where: { $0.guidInLocalDB == partnerDB })
+            if let handleLive, let partnerLive,
+               let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerDB }) {
+                // Both panes live: carry the existing SplitGroup over so the
+                // pair lands in the tab list as one merged split cell.
+                unpinSplitPanesIntoNormalList(handleLive: handleLive,
+                                              partnerLive: partnerLive,
+                                              handlePinned: pinnedTab,
+                                              partnerPinned: partnerPinned,
+                                              insertIndex: normalIndex)
+                return
+            }
+            // One or both panes closed. Close whichever pane is still live so
+            // the reopen below doesn't leave a duplicate tab backed by the
+            // now-deleted pinned record, then drop both pinned records and
+            // reopen the pair as a fresh split at the drop site.
             MainActor.assumeIsolated {
+                if let handleLive { closeTab(handleLive.guid) }
+                if let partnerLive { closeTab(partnerLive.guid) }
                 unpinClosedPinnedSplit(leftDB: leftDB, rightDB: rightDB, insertionIndex: normalIndex)
             }
             return
@@ -3228,17 +3234,21 @@ class BrowserState {
             return
         }
 
-        // Split-aware: if this pane belongs to a pinned split and the partner
-        // record (plus its URL) is available, save the pair as one
-        // split-view bookmark instead of two unrelated single bookmarks.
-        if let partnerGuid = pinnedTab.splitPartnerGuid, !partnerGuid.isEmpty,
-           let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerGuid }),
-           let partnerURL = partnerPinned.url, !partnerURL.isEmpty {
-            savePinnedSplitAsBookmark(handlePinned: pinnedTab,
-                                      partnerPinned: partnerPinned,
-                                      parentGuid: parentGuid,
-                                      index: index)
-            return
+        // Split-aware: resolve the partner via the shared resolver (live
+        // `isPinned` SplitGroup first, persisted `splitPartnerGuid` fallback)
+        // so a split paired only by its live group — `splitPartnerGuid` not
+        // yet persisted — is still saved as one split-view bookmark instead of
+        // a single bookmark that strands the partner in the pinned list.
+        if let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedTab) {
+            let partnerDB = leftDB == pinnedGuid ? rightDB : leftDB
+            if let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerDB }),
+               let partnerURL = partnerPinned.url, !partnerURL.isEmpty {
+                savePinnedSplitAsBookmark(handlePinned: pinnedTab,
+                                          partnerPinned: partnerPinned,
+                                          parentGuid: parentGuid,
+                                          index: index)
+                return
+            }
         }
 
         let newBookmarkGuid = UUID().uuidString
@@ -3614,13 +3624,16 @@ class BrowserState {
             return false
         }
 
-        if let partnerGuid = pinnedTab.splitPartnerGuid, !partnerGuid.isEmpty {
+        if let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedTab) {
+            let partnerGuid = leftDB == pinnedGuid ? rightDB : leftDB
             guard let partnerPinned = pinnedTabs.first(where: { $0.guidInLocalDB == partnerGuid }) else {
                 return false
             }
 
-            if let handleLive = tabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
-               let partnerLive = tabs.first(where: { $0.guidInLocalDB == partnerGuid }) {
+            let handleLive = tabs.first(where: { $0.guidInLocalDB == pinnedGuid })
+            let partnerLive = tabs.first(where: { $0.guidInLocalDB == partnerGuid })
+
+            if let handleLive, let partnerLive {
                 applyOptimisticGroupMembership(updates: [
                     (handleLive.guid, tokenHex),
                     (partnerLive.guid, tokenHex)
@@ -3640,12 +3653,16 @@ class BrowserState {
                 return true
             }
 
-            // Unopened pinned split: materialize both URLs as a fresh split
+            // One or both panes closed: materialize both URLs as a fresh split
             // that joins the group when Chromium echoes the panes back, then
-            // drop the pinned records. Mirrors `unpinClosedPinnedSplit`.
+            // drop the pinned records. Mirrors `unpinClosedPinnedSplit`. Close
+            // any still-live pane first so the reopen doesn't leave a duplicate
+            // tab backed by the now-deleted pinned record.
             guard let partnerURL = partnerPinned.url, !partnerURL.isEmpty else {
                 return false
             }
+            if let handleLive { closeTab(handleLive.guid) }
+            if let partnerLive { closeTab(partnerLive.guid) }
             pinnedTab.splitPartnerGuid = nil
             partnerPinned.splitPartnerGuid = nil
             localStore.updateTabSplitPartner(pinnedGuid, partnerGuid: nil)
