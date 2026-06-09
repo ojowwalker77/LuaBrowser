@@ -3535,6 +3535,39 @@ class BrowserState {
                          groupIndex: Int,
                          normalTabsIndex: Int,
                          focusAfterCreate: Bool = false) -> Bool {
+        guard let realBookmark = bookmarkManager.bookmark(withGuid: bookmark.guid) else {
+            return false
+        }
+        let moved = moveBookmarkIntoGroup(bookmark,
+                                          toGroup: tokenHex,
+                                          groupIndex: groupIndex,
+                                          normalTabsIndex: normalTabsIndex,
+                                          focusAfterCreate: focusAfterCreate)
+        // Split bookmarks are consumed inside `moveSplitBookmarkIntoGroup`;
+        // only the single-bookmark path still needs its entry removed here.
+        if moved, realBookmark.secondaryUrl?.isEmpty != false {
+            bookmarkManager.removeBookmark(realBookmark)
+        }
+        return moved
+    }
+
+    /// Joins a bookmark into a tab group **keeping the bookmark entry**.
+    /// An already-open bookmark tab is graduated into a plain tab (custom
+    /// guid + Chromium custom value cleared) and added to the group; a
+    /// closed bookmark opens a fresh tab inside the group. Use this when a
+    /// tab that was merely *opened from* a bookmark joins a group — the
+    /// bookmark stays in the bar. `moveBookmarkOut` wraps this and also
+    /// removes the single bookmark (the move-out semantics for sidebar
+    /// drags). Split bookmarks are consumed by `moveSplitBookmarkIntoGroup`
+    /// in either case. The detached tab keeps a live title (it follows the
+    /// page), matching the closed-bookmark `createTabInGroup` path.
+    @discardableResult
+    @MainActor
+    func moveBookmarkIntoGroup(_ bookmark: Bookmark,
+                               toGroup tokenHex: String,
+                               groupIndex: Int,
+                               normalTabsIndex: Int,
+                               focusAfterCreate: Bool = false) -> Bool {
         guard !bookmark.isFolder,
               let url = bookmark.url, !url.isEmpty,
               let realBookmark = bookmarkManager.bookmark(withGuid: bookmark.guid),
@@ -3553,7 +3586,6 @@ class BrowserState {
         if let chromiumTab = tabs.first(where: { $0.guidInLocalDB == realBookmark.guid }) {
             migrateAIChatTab(for: chromiumTab, toNewIdentifier: nil)
             chromiumTab.guidInLocalDB = nil
-            chromiumTab.applyStoredTitle(realBookmark.title)
             chromiumTab.webContentWrapper?.updateTabCustomValue("")
             applyOptimisticGroupMembership(tabId: chromiumTab.guid, newToken: tokenHex)
             insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
@@ -3575,7 +3607,6 @@ class BrowserState {
                                     focusAfterCreate: focusAfterCreate)
         }
 
-        bookmarkManager.removeBookmark(realBookmark)
         return true
     }
 

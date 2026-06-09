@@ -3895,7 +3895,39 @@ extension TabStrip: TabStripDragDelegate {
                 let leadingEdgeToken: String? = context.targetGroupForLeadingJoin
                 let trailingEdgeToken: String? = context.targetGroupForTrailingJoin
 
-                if let token = sandwichToken ?? leadingEdgeToken ?? trailingEdgeToken {
+                let joinToken = sandwichToken ?? leadingEdgeToken ?? trailingEdgeToken
+                // A tab opened from the bookmark bar carries the bookmark's
+                // guid as `guidInLocalDB`; joining a group must graduate it
+                // into a plain tab — drop the custom guid and clear the
+                // Chromium-side custom value — but KEEP the bookmark in the
+                // bar (the tab was only opened from it, not moved out of it).
+                // `moveBookmarkIntoGroup` is the no-remove half of
+                // `moveBookmarkOut`. Splits fall through to the generic path
+                // so the partner pane travels too.
+                if let token = joinToken,
+                   let dbGuid = tab.guidInLocalDB,
+                   browserState.splitGroup(forTabId: tab.guid) == nil,
+                   let bookmark = browserState.bookmarkManager.bookmark(withGuid: dbGuid),
+                   !bookmark.isFolder {
+                    // `moveNormalTabLocally` above already placed the tab at
+                    // the drop slot; reuse that resolved position
+                    // (`moveBookmarkIntoGroup` re-seats via remove+insert, so
+                    // the post-move index is idempotent).
+                    let normalIndex = browserState.normalTabs
+                        .firstIndex(where: { $0.guid == tab.guid }) ?? toIndex
+                    let groupIndex = currentGroupRuns()
+                        .first { $0.token == token }
+                        .map { max(0, min(normalIndex - $0.range.lowerBound, $0.range.count)) } ?? 0
+                    AppLogDebug(
+                        "[TAB_GROUPS][STRIP_DRAG] bookmark auto-join " +
+                        "windowId=\(browserState.windowId) bookmarkGuid=\(dbGuid) " +
+                        "token=\(token) normalIndex=\(normalIndex)"
+                    )
+                    browserState.moveBookmarkIntoGroup(bookmark, toGroup: token,
+                                                       groupIndex: groupIndex,
+                                                       normalTabsIndex: normalIndex,
+                                                       focusAfterCreate: tab.isActive)
+                } else if let token = joinToken {
                     let kind: String = {
                         if sandwichToken != nil { return "sandwich" }
                         if leadingEdgeToken != nil { return "leadingEdge" }
