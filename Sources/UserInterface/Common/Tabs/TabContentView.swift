@@ -19,7 +19,7 @@ struct UnifiedTabTitleView: View {
         titleContent
             .frame(height: Self.titleHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .shimmering(
+            .tabTitleShimmer(
                 active: viewModel.isShimmering,
                 gradient: Gradient(colors: [
                     .black,
@@ -51,6 +51,9 @@ struct UnifiedTabTitleView: View {
         Text(viewModel.displayTitle)
             .font(.system(size: Self.titleFontSize))
             .lineLimit(1)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
     }
 }
 
@@ -69,6 +72,82 @@ private struct TabTitleTrailingFadeMask: View {
                 .frame(width: min(fadeWidth, proxy.size.width))
             }
         }
+    }
+}
+
+private extension View {
+    func tabTitleShimmer(
+        active: Bool,
+        gradient: Gradient,
+        bandSize: CGFloat
+    ) -> some View {
+        modifier(
+            TabTitleShimmerModifier(active: active, gradient: gradient, bandSize: bandSize)
+        )
+    }
+}
+
+private struct TabTitleShimmerModifier: ViewModifier {
+    let active: Bool
+    let gradient: Gradient
+    let bandSize: CGFloat
+
+    func body(content: Content) -> some View {
+        content.mask {
+            TabTitleShimmerMask(active: active, gradient: gradient, bandSize: bandSize)
+        }
+    }
+}
+
+private struct TabTitleShimmerMask: View {
+    let active: Bool
+    let gradient: Gradient
+    let bandSize: CGFloat
+
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    private let duration: TimeInterval = 1.5
+
+    var body: some View {
+        if active {
+            TimelineView(.animation) { context in
+                LinearGradient(
+                    gradient: gradient,
+                    startPoint: startPoint(at: context.date),
+                    endPoint: endPoint(at: context.date)
+                )
+            }
+        } else {
+            Rectangle().fill(.black)
+        }
+    }
+
+    private func startPoint(at date: Date) -> UnitPoint {
+        let phase = phase(at: date)
+        let min = 0 - bandSize
+        let x = min + (1 - min) * phase
+
+        if layoutDirection == .rightToLeft {
+            return UnitPoint(x: 1 - x, y: min)
+        }
+        return UnitPoint(x: x, y: min)
+    }
+
+    private func endPoint(at date: Date) -> UnitPoint {
+        let phase = phase(at: date)
+        let max = 1 + bandSize
+        let x = max * phase
+
+        if layoutDirection == .rightToLeft {
+            return UnitPoint(x: 1 - x, y: max)
+        }
+        return UnitPoint(x: x, y: max)
+    }
+
+    private func phase(at date: Date) -> CGFloat {
+        let elapsed = date.timeIntervalSinceReferenceDate
+        let normalized = elapsed.truncatingRemainder(dividingBy: duration) / duration
+        return CGFloat(normalized)
     }
 }
 
