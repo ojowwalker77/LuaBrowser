@@ -2744,6 +2744,7 @@ extension SidebarTabListViewController: TabSectionDelegate {
             // affected-token filter keeps unrelated groups quiet during
             // pure metadata edits.
             pushMemberUpdatesToGroupCells(change.affectedGroupTokens)
+            pushPaneUpdatesToSplitPairCells(change.affectedSplitIds)
             return
         }
 
@@ -2780,6 +2781,10 @@ extension SidebarTabListViewController: TabSectionDelegate {
         // diffable table animates the row delta and re-notes its
         // height in the same animation tick.
         pushMemberUpdatesToGroupCells(change.affectedGroupTokens)
+        // Same for pair rows whose pane membership changed alongside the
+        // structural delta (drag-to-replace inserts the evicted tab's row
+        // while the pair row id stays put).
+        pushPaneUpdatesToSplitPairCells(change.affectedSplitIds)
 
         // Defer selection to the next run loop so NSOutlineView finishes its
         // insert/remove animation layout pass first. Calling row(forItem:) or
@@ -2814,6 +2819,26 @@ extension SidebarTabListViewController: TabSectionDelegate {
                 $0.groupToken == groupItem.group.token
             }
             cell.applyMembers(newMembers, animated: true)
+        }
+    }
+
+    /// Split-pair analog of `pushMemberUpdatesToGroupCells`: a pane replace
+    /// mutates the cached `SplitPairSidebarItem` in place and the row id
+    /// survives, so the outline diff never reloads the merged cell. Re-bind
+    /// the affected cells so their titles/favicons/subscriptions attach to
+    /// the new pane's Tab.
+    private func pushPaneUpdatesToSplitPairCells(_ splitIds: Set<String>) {
+        guard !splitIds.isEmpty else { return }
+        for case let pairItem as SplitPairSidebarItem in allItems
+            where splitIds.contains(pairItem.groupId) {
+            let row = outlineView.row(forItem: pairItem)
+            guard row >= 0,
+                  let cell = outlineView.view(atColumn: 0,
+                                              row: row,
+                                              makeIfNecessary: false)
+                            as? SidebarSplitPairCellView
+            else { continue }
+            cell.rebindPanesIfNeeded()
         }
     }
 

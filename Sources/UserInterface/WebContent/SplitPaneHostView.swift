@@ -23,11 +23,14 @@ final class SplitPaneHostView: NSView {
         case secondary
     }
 
-    private let dividerThickness: CGFloat = 4
+    /// Also mirrored by `SplitTabDropContainer.replacePaneRects` so the
+    /// replace-mode drop hint cards line up with the real panes — keep that
+    /// in mind when changing the value.
+    static let dividerThickness: CGFloat = 4
     /// Inset between the split host's bounds and the rounded pane cards on all
     /// four sides. Lets each pane read as a standalone card floating inside
     /// `leftContainerView`'s clip instead of pinning to its edges.
-    private let paneInset: CGFloat = 4
+    static let paneInset: CGFloat = 4
     private let minPaneFraction: CGFloat = 0.1
 
     /// Ratios the divider magnetically snaps to while dragging: an even split
@@ -231,6 +234,22 @@ final class SplitPaneHostView: NSView {
         if secondary.superview !== secondaryPaneContainer {
             secondaryPaneContainer.addSubview(secondary)
         }
+        // A pane replace (drag-to-replace) swaps one pane's native view for
+        // another tab's while this host stays mounted. The evicted tab's
+        // view would otherwise stay behind in its container, stacked under
+        // the incoming view and still painting — the "two pages in one
+        // pane" artifact. Evict anything that isn't the current pair or a
+        // docked DevTools view; the evicted tab is a background tab now, so
+        // tearing its view out of the window here is the normal hidden-tab
+        // state and the regular mount path revives it on focus. Reverse
+        // panes is unaffected: the moved view is already re-homed by the
+        // addSubview moves above, so it never matches.
+        let keep: [NSView?] = [primary, secondary, primaryDevToolsView, secondaryDevToolsView]
+        for container in [primaryPaneContainer, secondaryPaneContainer] {
+            for stale in container.subviews where !keep.contains(where: { $0 === stale }) {
+                stale.removeFromSuperview()
+            }
+        }
         primary.translatesAutoresizingMaskIntoConstraints = true
         secondary.translatesAutoresizingMaskIntoConstraints = true
         if primaryDevToolsView == nil {
@@ -253,27 +272,27 @@ final class SplitPaneHostView: NSView {
 
     override func layout() {
         super.layout()
-        let total = bounds.insetBy(dx: paneInset, dy: paneInset)
+        let total = bounds.insetBy(dx: Self.paneInset, dy: Self.paneInset)
         switch paneLayout {
         case .vertical:
-            let primaryWidth = (total.width - dividerThickness) * ratio
-            let secondaryWidth = total.width - dividerThickness - primaryWidth
+            let primaryWidth = (total.width - Self.dividerThickness) * ratio
+            let secondaryWidth = total.width - Self.dividerThickness - primaryWidth
             primaryPaneContainer.frame = NSRect(x: total.minX, y: total.minY,
                                                 width: primaryWidth, height: total.height)
             dividerView.frame = NSRect(x: total.minX + primaryWidth, y: total.minY,
-                                       width: dividerThickness, height: total.height)
-            secondaryPaneContainer.frame = NSRect(x: total.minX + primaryWidth + dividerThickness, y: total.minY,
+                                       width: Self.dividerThickness, height: total.height)
+            secondaryPaneContainer.frame = NSRect(x: total.minX + primaryWidth + Self.dividerThickness, y: total.minY,
                                                   width: secondaryWidth, height: total.height)
         case .horizontal:
-            let primaryHeight = (total.height - dividerThickness) * ratio
-            let secondaryHeight = total.height - dividerThickness - primaryHeight
+            let primaryHeight = (total.height - Self.dividerThickness) * ratio
+            let secondaryHeight = total.height - Self.dividerThickness - primaryHeight
             // y=0 is bottom in AppKit; primary on top matches Chromium's
             // "position 0" semantic for visual stacking.
             secondaryPaneContainer.frame = NSRect(x: total.minX, y: total.minY,
                                                   width: total.width, height: secondaryHeight)
             dividerView.frame = NSRect(x: total.minX, y: total.minY + secondaryHeight,
-                                       width: total.width, height: dividerThickness)
-            primaryPaneContainer.frame = NSRect(x: total.minX, y: total.minY + secondaryHeight + dividerThickness,
+                                       width: total.width, height: Self.dividerThickness)
+            primaryPaneContainer.frame = NSRect(x: total.minX, y: total.minY + secondaryHeight + Self.dividerThickness,
                                                 width: total.width, height: primaryHeight)
         }
         positionFocusRing(primaryFrame: primaryPaneContainer.frame,
@@ -416,11 +435,11 @@ final class SplitPaneHostView: NSView {
         let delta: CGFloat
         switch paneLayout {
         case .vertical:
-            usable = bounds.width - dividerThickness
+            usable = bounds.width - Self.dividerThickness
             guard usable > 0 else { return }
             delta = (location.x - dragStartLocation.x) / usable
         case .horizontal:
-            usable = bounds.height - dividerThickness
+            usable = bounds.height - Self.dividerThickness
             guard usable > 0 else { return }
             // y grows upward; primary sits on top, so drag-up = larger primary.
             delta = (location.y - dragStartLocation.y) / usable

@@ -697,7 +697,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// @param splitId   Target split.
 /// @param slotIndex 0 = primary slot, 1 = secondary slot.
 /// @param otherTabId The tab outside the split that moves in.
-/// @param swap      YES → kSwap (other tab takes the slot, evicted tab takes other's old position).
+/// @param swap      YES → other tab takes the slot; the evicted tab moves right
+///                  next to the split and joins its tab group, if any.
 ///                  NO  → kReplace (evicted tab is closed).
 /// If neither side of the split is currently active, the targeted slot is
 /// activated first so Chromium's "split contains the active tab" invariant

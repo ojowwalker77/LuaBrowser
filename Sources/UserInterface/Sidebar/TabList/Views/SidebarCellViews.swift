@@ -882,6 +882,22 @@ class SidebarSplitPairCellView: SidebarCellView {
         outerBackground.isSelected = pair.leftTab.isActive || pair.rightTab.isActive
     }
 
+    /// Re-binds the cell when the pair's membership changed in place — a
+    /// drag-to-replace swaps one pane's Tab object on the cached
+    /// `SplitPairSidebarItem` while the row id survives, so the outline
+    /// diff never reloads this row. `reresolvePairOrderIfNeeded` below only
+    /// covers order swaps of the two already-bound tabs; identity drift
+    /// needs the full re-bind so the title/favicon/audio subscriptions
+    /// attach to the new Tab. Driven by
+    /// `SidebarTabListViewController.pushPaneUpdatesToSplitPairCells`.
+    func rebindPanesIfNeeded() {
+        guard let pair = item as? SplitPairSidebarItem,
+              pair.leftTab !== configuredLeftTab || pair.rightTab !== configuredRightTab else {
+            return
+        }
+        configureAppearance()
+    }
+
     /// If Chromium reordered the pair (swap button / drag), reflect the new
     /// order in the cell. The SplitGroup's primary/secondary updates first;
     /// the strip's `normalTabs` then re-sequences. We compare the cell's

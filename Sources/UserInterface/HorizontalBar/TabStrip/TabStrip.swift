@@ -3159,7 +3159,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         if splitHintTargetContainer !== container {
             splitHintTargetContainer?.hideSplitDropHints()
         }
-        container.showSplitDropHints()
+        container.showSplitDropHints(draggedTabId: draggedTabId)
         splitHintTargetContainer = container
     }
 
@@ -4053,23 +4053,21 @@ extension TabStrip: TabStripDragDelegate {
         return convert(windowPoint, from: nil)
     }
 
-    /// Pairs the dragged tab with the currently focused tab into a new
-    /// vertical split. The dragged tab takes the left (primary) slot when
-    /// dropped on the left zone, the right (secondary) slot when dropped on
-    /// the right zone. When the dragged tab *is* the focused tab, a fresh
-    /// new-tab-page is spawned as the other pane. Defensive guards mirror
-    /// those in `SplitTabDropContainer.splitZoneForScreenPoint`.
+    /// Commits a split drop against the focused tab's page. When the focused
+    /// tab is *not* a split, pairs the dragged tab with it into a new vertical
+    /// split (dragged tab takes the dropped side; dragging the focused tab
+    /// onto itself spawns a fresh new-tab-page partner). When the focused tab
+    /// *is* a split, replaces the hovered pane with the dragged tab. The
+    /// create/replace decision lives in `SplitTabDropContainer.commitSplitDrop`
+    /// so both entry points stay identical.
     private func performSplitWithFocused(draggedTab: Tab,
                                          zone: SplitTabDropContainer.DropZone) {
-        guard let focused = browserState.focusingTab,
-              browserState.splitGroup(forTabId: focused.guid) == nil,
-              browserState.splitGroup(forTabId: draggedTab.guid) == nil,
+        guard browserState.splitGroup(forTabId: draggedTab.guid) == nil,
               let dropContainer = unsafeBrowserWindowController?.mainSplitViewController
                 .webContentContainerViewController.splitTabDropContainer else { return }
-        dropContainer.performSplitDrop(state: browserState,
-                                       source: .normalTab(tabId: draggedTab.guid),
-                                       focusedTabId: focused.guid,
-                                       zone: zone)
+        dropContainer.commitSplitDrop(state: browserState,
+                                      source: .normalTab(tabId: draggedTab.guid),
+                                      zone: zone)
     }
 
     private func handleExternalDrop(tab: Tab, context: TabDragContext, target: ExternalDropTarget) -> Bool {

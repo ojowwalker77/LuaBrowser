@@ -736,6 +736,13 @@ final class TabGroupCellView: SidebarCellView {
         var pairs: [Int: SplitPairSidebarItem] = [:]
         var consumed = Set<Int>()
         var order: [Int] = []
+        // Pair keys reused from the previous frame whose pane identity
+        // changed (drag-to-replace swaps one pane's Tab while the key —
+        // `-min(left, right)` — can survive when the kept pane has the
+        // smaller guid). The diffable snapshot sees the same item id and
+        // skips the cell provider, so the inner cell would stay bound to
+        // the evicted tab; reloadItems below forces the re-bind.
+        var changedPairKeys: [Int] = []
         for (idx, tab) in newMembers.enumerated() {
             if consumed.contains(tab.guid) { continue }
             if let state = configuredBrowserState,
@@ -756,6 +763,9 @@ final class TabGroupCellView: SidebarCellView {
                 // configured cell sees the right order immediately.
                 let item: SplitPairSidebarItem
                 if let existing = splitPairsByKey[key], existing.groupId == group.id {
+                    if existing.leftTab !== leftTab || existing.rightTab !== rightTab {
+                        changedPairKeys.append(key)
+                    }
                     if existing.leftTab !== leftTab { existing.leftTab = leftTab }
                     if existing.rightTab !== rightTab { existing.rightTab = rightTab }
                     item = existing
@@ -782,6 +792,9 @@ final class TabGroupCellView: SidebarCellView {
         var snap = NSDiffableDataSourceSnapshot<Section, Int>()
         snap.appendSections([.members])
         snap.appendItems(currentMemberOrder, toSection: .members)
+        if !changedPairKeys.isEmpty {
+            snap.reloadItems(changedPairKeys)
+        }
         dataSource.apply(snap, animatingDifferences: animated)
 
         groupCellDelegate?.tabGroupCellNeedsHeightUpdate(self, for: token)

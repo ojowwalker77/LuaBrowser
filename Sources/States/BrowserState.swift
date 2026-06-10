@@ -96,6 +96,13 @@ class BrowserState {
     /// being left blank.
     var pendingPrimarySplitTargetByGuid: [String: PendingPrimarySplit] = [:]
 
+    /// customGuid → pending split-pane replacement. When a tab opened via
+    /// `openTabAsPaneReplacement` (bookmark / closed-pinned dragged onto a
+    /// split pane) arrives from Chromium, it is swapped into the recorded
+    /// split slot and the evicted pane becomes a standalone tab. Mirrors
+    /// `pendingSplitPartnerByCustomGuid` for the replace-a-pane flow.
+    var pendingSplitSlotSwapByCustomGuid: [String: PendingSplitSlotSwap] = [:]
+
     /// splitId → tab id the caller wanted in the primary (left/top) slot.
     /// Chromium always reports the lower-tab-strip-indexed tab as primary, so
     /// when the caller had a specific orientation in mind we reverse the split
@@ -1134,6 +1141,7 @@ class BrowserState {
         defer {
             consumePendingSplitPartner(for: tab)
             consumePendingPrimarySplit(for: tab)
+            consumePendingSplitSlotSwap(for: tab)
         }
 
         if consumePendingNativeNTP() {
