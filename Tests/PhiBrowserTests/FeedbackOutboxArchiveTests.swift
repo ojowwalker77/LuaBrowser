@@ -133,6 +133,37 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         )
     }
 
+    func testFeedbackComponentsIncludeRunningSentinelVersion() {
+        let components = FeedbackOutbox.feedbackComponents(
+            extensionVersions: ["phi-sidecar": "2.0.0"],
+            runningSentinelInfo: SentinelHelper.RunningInfo(
+                bundleID: "com.phibrowser.Sentinel",
+                version: "1.3.3",
+                build: "414"
+            )
+        )
+
+        let sentinel = components.first { $0.id == "com.phibrowser.Sentinel" }
+        XCTAssertEqual(sentinel?.name, "Phi Sentinel")
+        XCTAssertEqual(sentinel?.type, "component")
+        XCTAssertEqual(sentinel?.version, "1.3.3")
+        XCTAssertEqual(components.first { $0.id == "phi-sidecar" }?.type, "extension")
+    }
+
+    func testFeedbackComponentsSkipSentinelWithoutVersion() {
+        let components = FeedbackOutbox.feedbackComponents(
+            extensionVersions: ["phi-sidecar": "2.0.0"],
+            runningSentinelInfo: SentinelHelper.RunningInfo(
+                bundleID: "com.phibrowser.Sentinel",
+                version: " ",
+                build: "414"
+            )
+        )
+
+        XCTAssertNil(components.first { $0.id == "com.phibrowser.Sentinel" })
+        XCTAssertEqual(components.map(\.id), ["phi-sidecar"])
+    }
+
     func testShouldDiscardFailedJobOnlyAfterFiveLargeRetries() {
         XCTAssertFalse(FeedbackOutbox.shouldDiscardFailedJob(retryCount: 5))
         XCTAssertTrue(FeedbackOutbox.shouldDiscardFailedJob(retryCount: 6))

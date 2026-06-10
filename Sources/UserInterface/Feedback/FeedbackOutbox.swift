@@ -87,14 +87,7 @@ final class FeedbackViewModel: ObservableObject {
             pageURL: urlString.trimmingCharacters(in: .whitespacesAndNewlines),
             pageTitle: pageTitle,
             contactEmail: account.userInfo?.email,
-            components: componentVersions.map {
-                FeedbackV2Metadata.Component(
-                    id: $0.key,
-                    name: $0.key,
-                    type: "extension",
-                    version: $0.value
-                )
-            }.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending },
+            components: FeedbackOutbox.feedbackComponents(extensionVersions: componentVersions),
             chromiumSystemLogsText: chromiumSystemLogsText,
             attachments: attachments
         )
@@ -221,6 +214,43 @@ enum FeedbackOutbox {
         let isImage = type?.conforms(to: .image) == true
         let mimeType = type?.preferredMIMEType ?? (isImage ? "image/png" : "application/octet-stream")
         return FeedbackSelectedAttachmentInfo(size: size, mimeType: mimeType, isImage: isImage)
+    }
+
+    static func feedbackComponents(
+        extensionVersions: [String: String],
+        runningSentinelInfo: SentinelHelper.RunningInfo? = SentinelHelper.runningInfo()
+    ) -> [FeedbackV2Metadata.Component] {
+        var components = extensionVersions.map {
+            FeedbackV2Metadata.Component(
+                id: $0.key,
+                name: $0.key,
+                type: "extension",
+                version: $0.value
+            )
+        }
+
+        if let sentinelComponent = sentinelComponent(from: runningSentinelInfo) {
+            components.append(sentinelComponent)
+        }
+
+        return components.sorted {
+            $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
+        }
+    }
+
+    private static func sentinelComponent(
+        from runningInfo: SentinelHelper.RunningInfo?
+    ) -> FeedbackV2Metadata.Component? {
+        guard let runningInfo else { return nil }
+        let version = runningInfo.version?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !version.isEmpty else { return nil }
+
+        return FeedbackV2Metadata.Component(
+            id: runningInfo.bundleID,
+            name: "Phi Sentinel",
+            type: "component",
+            version: version
+        )
     }
 
     static func enqueue(_ draft: FeedbackDraft, account: Account) throws {
