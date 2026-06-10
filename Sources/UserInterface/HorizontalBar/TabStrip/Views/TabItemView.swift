@@ -434,9 +434,14 @@ final class TabItemView: NSView {
 
         switch mode {
         case .pinned, .compact:
+            // Reset the right-pane title/close as well: a split-merged cell
+            // shrinking out of normal mode would otherwise keep their stale
+            // frames and paint the partner's title over neighboring tabs.
             titleHostingView.isHidden = true
+            secondaryTitleHostingView.isHidden = true
             closeButtonHostingView.isHidden = true
-            
+            secondaryCloseButtonHostingView.isHidden = true
+
         case .normal:
             // Close buttons: one per pane for a split-merged cell (both
             // visible on hover), single button for a regular tab.
