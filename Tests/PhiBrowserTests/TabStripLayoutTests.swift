@@ -269,4 +269,219 @@ final class TabStripLayoutTests: XCTestCase {
         XCTAssertNil(placement.rightSeparatorNeighborIndex,
             "Neighbor index must be nil when there is no separator.")
     }
+
+    // MARK: - Drag exclusion double-count
+
+    /// Regression: `TabStrip.layout()` passes the dragged index through
+    /// BOTH `excludedTabIndex` and `excludedTabIndices`. Counting the two
+    /// forms separately removes a phantom second slot from
+    /// `effectiveTabCount`, so every remaining tab visibly widens during
+    /// a drag even though the reserved gap already compensates for the
+    /// dragged tab's own slot.
+    func testDragExclusionInBothFormsDoesNotWidenRemainingTabs() {
+        // Baseline: 5 tabs in 673 px. fixed = 6 + 5*5 + 2 + 40 = 73,
+        // available = 600, base = 120 (medium pressure: all tabs 120).
+        let baseline = TabStripLayoutInput(
+            containerWidth: 673,
+            tabCount: 5,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32
+        )
+        let baselineOutput = TabStripLayoutEngine.layoutNormal(input: baseline)
+        for frame in baselineOutput.tabFrames {
+            XCTAssertEqual(frame.width, 120, accuracy: 0.001)
+        }
+
+        // Drag tab 2: excluded via both forms, gap reserves its slot.
+        // Correct: effective = 4, fixed = 6 + 4*5 + 2 + 40 + 120 = 188,
+        // available = 485, base = 121.25 — within one overhead unit of
+        // the baseline. Double-counting would yield effective = 3,
+        // base = 163.3 → clamped to ideal 160 (visible widening).
+        let dragging = TabStripLayoutInput(
+            containerWidth: 673,
+            tabCount: 5,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndex: 2,
+            excludedTabIndices: [2],
+            gapAtIndex: 2,
+            gapWidth: 120
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: dragging)
+
+        XCTAssertEqual(output.tabFrames[2], .zero, "Dragged tab gets a placeholder frame.")
+        for index in [0, 1, 3, 4] {
+            XCTAssertEqual(output.tabFrames[index].width, 121.25, accuracy: 0.001,
+                "Tab \(index) must keep ~its pre-drag width while tab 2 is dragged.")
+        }
+    }
+
+    /// Same regression for the group-aware path: a group on the strip
+    /// routes layout through `layoutNormalWithGroups`, which counted the
+    /// single and set exclusion forms separately too.
+    func testGroupedDragExclusionInBothFormsDoesNotWidenRemainingTabs() {
+        // 5 tabs, expanded group over 0...1 with a 100 px chip.
+        // chipsOverhead = 100 + 4 + 1 = 105.
+        // Correct: effective = 4, fixed = 6 + 4*5 + 2 + 40 + 120 = 188,
+        // available = 778 - 188 - 105 = 485, base = 121.25.
+        // Double-counting would yield effective = 3, base = 163.3 →
+        // clamped to ideal 160 (visible widening).
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 778,
+            tabCount: 5,
+            activeTabIndex: 2,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndex: 3,
+            excludedTabIndices: [3],
+            gapAtIndex: 3,
+            gapWidth: 120,
+            groupRuns: [GroupRun(token: token, range: 0...1, isCollapsed: false)],
+            chipFullWidths: [token: 100]
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        XCTAssertEqual(output.tabFrames[3], .zero, "Dragged tab gets a placeholder frame.")
+        for index in [0, 1, 2, 4] {
+            XCTAssertEqual(output.tabFrames[index].width, 121.25, accuracy: 0.001,
+                "Tab \(index) must keep ~its pre-drag width while tab 3 is dragged.")
+        }
+    }
+
+    /// Whole-group drag form (`excludedGroupRange`) overlapping the other
+    /// two exclusion forms must count each index once. Pre-fix, range +
+    /// set + single were subtracted independently (5 - 2 - 1 - 1 = 1
+    /// effective tab instead of 3).
+    func testGroupRangeOverlappingOtherFormsCountsEachIndexOnce() {
+        // Union = {1, 2} → effective = 3, fixed = 6 + 3*5 + 2 + 40 = 63,
+        // available = 423 - 63 = 360, base = 120 (medium pressure).
+        let input = TabStripLayoutInput(
+            containerWidth: 423,
+            tabCount: 5,
+            activeTabIndex: 4,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndex: 1,
+            excludedGroupRange: 1...2,
+            excludedTabIndices: [1]
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        XCTAssertEqual(output.tabFrames[1], .zero)
+        XCTAssertEqual(output.tabFrames[2], .zero)
+        for index in [0, 3, 4] {
+            XCTAssertEqual(output.tabFrames[index].width, 120, accuracy: 0.001,
+                "Tab \(index) must reflect a 3-way split of the available width.")
+        }
+    }
+
+    /// Production whole-group drag shape: the dragged group is
+    /// temp-collapsed before the drag, so `excludedGroupRange` fully
+    /// overlaps `collapsedMemberSet`. The overlap must be subtracted
+    /// exactly once (collapsed members are already zero-width).
+    func testWholeGroupDragOfCollapsedGroupIsNotDoubleSubtracted() {
+        // collapsed = {0, 1}, range = 0...1 → net drag exclusion = 0,
+        // effective = 3. chipsOverhead = 100 + 4 + 1 = 105,
+        // fixed = 6 + 3*5 + 2 + 40 = 63, available = 528 - 63 - 105 = 360,
+        // base = 120. Double-subtracting would yield effective = 1 →
+        // base clamped to ideal 160.
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 528,
+            tabCount: 5,
+            activeTabIndex: 4,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedGroupRange: 0...1,
+            groupRuns: [GroupRun(token: token, range: 0...1, isCollapsed: true)],
+            chipFullWidths: [token: 100]
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        XCTAssertEqual(output.tabFrames[0], .zero)
+        XCTAssertEqual(output.tabFrames[1], .zero)
+        for index in [2, 3, 4] {
+            XCTAssertEqual(output.tabFrames[index].width, 120, accuracy: 0.001,
+                "Tab \(index) must reflect a 3-way split; the collapsed run is not subtracted twice.")
+        }
+    }
+
+    /// Split-pair drag shape: a two-element set (dragged tab + partner)
+    /// with the single form mirroring one of them, plus a two-slot gap.
+    /// Pre-fix this combination triple-counted (5 - 2 - 1 = 2 effective).
+    func testSplitPairExclusionWithTwoSlotGapKeepsWidthsStable() {
+        // Union = {2, 3} → effective = 3,
+        // fixed = 6 + 3*5 + 2 + 40 + 240 = 303,
+        // available = 678 - 303 = 375, base = 125 (medium pressure).
+        let input = TabStripLayoutInput(
+            containerWidth: 678,
+            tabCount: 5,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndex: 2,
+            excludedTabIndices: [2, 3],
+            gapAtIndex: 2,
+            gapWidth: 240
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        XCTAssertEqual(output.tabFrames[2], .zero)
+        XCTAssertEqual(output.tabFrames[3], .zero)
+        for index in [0, 1, 4] {
+            XCTAssertEqual(output.tabFrames[index].width, 125, accuracy: 0.001,
+                "Tab \(index) must keep ~its pre-drag width while the split pair is dragged.")
+        }
+    }
+
+    /// Chip right-separator suppression must honor the SET exclusion form
+    /// like the tab-side hiding does: an expanded chip whose first member
+    /// is drag-excluded gets no right separator.
+    func testChipRightSeparatorHiddenWhenNeighborExcludedViaSetForm() {
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 1000,
+            tabCount: 4,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndices: [1],
+            groupRuns: [GroupRun(token: token, range: 1...2, isCollapsed: false)],
+            chipFullWidths: [token: 120]
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        guard let placement = output.chipFrames[token] else {
+            XCTFail("Expected chip placement for visible expanded group.")
+            return
+        }
+        XCTAssertNil(placement.rightSeparatorX,
+            "Set-form excluded neighbor must hide the chip's right separator, matching the single form.")
+        XCTAssertNil(placement.rightSeparatorNeighborIndex,
+            "Neighbor index must be nil when there is no separator.")
+    }
 }
