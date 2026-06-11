@@ -2379,6 +2379,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let y = TabStripMetrics.Strip.bottomSpacing + (TabStripMetrics.Strip.tabHeight - sepSize.height) / 2.0
         let activeIndex = tabs.firstIndex { isTabActive($0, activeTab: activeTab) }
 
+        // Split-secondary slots are zero-width with off-screen separators,
+        // so the separator visually left of a tab can belong to an earlier
+        // index (the pair host's right edge). Every left-side rule below
+        // must use this mapping instead of the plain `idx - 1`.
+        let splitCollapsedIndices = normalSplitCollapseInfo().collapsedIndices
+        let leftSeparatorIndex: (Int) -> Int = { idx in
+            TabStripLayoutEngine.visibleLeftSeparatorIndex(of: idx, skippingCollapsed: splitCollapsedIndices)
+        }
+
         // Hovered chip's left-edge sits between tab[firstMember - 1] and the chip.
         // That tab's right separator (separator[firstMember - 1]) should hide.
         let hoveredChipFirstMemberIdx: Int? = {
@@ -2412,18 +2421,18 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
             if let activeIdx = activeIndex {
                 if index == activeIdx { shouldHide = true }      // Separator on the tab's right side.
-                if index == activeIdx - 1 && !firstMemberOfExpandedGroup(activeIdx) {
+                if index == leftSeparatorIndex(activeIdx) && !firstMemberOfExpandedGroup(activeIdx) {
                     shouldHide = true  // Tab's left side (chip-between guard).
                 }
             }
             if let hoveredIdx = hoveredTabIndex {
                 if index == hoveredIdx { shouldHide = true }      // Separator on the tab's right side.
-                if index == hoveredIdx - 1 && !firstMemberOfExpandedGroup(hoveredIdx) {
+                if index == leftSeparatorIndex(hoveredIdx) && !firstMemberOfExpandedGroup(hoveredIdx) {
                     shouldHide = true  // Tab's left side (chip-between guard).
                 }
             }
             if let firstMemberIdx = hoveredChipFirstMemberIdx,
-               index == firstMemberIdx - 1 {
+               index == leftSeparatorIndex(firstMemberIdx) {
                 shouldHide = true  // Separator on the hovered chip's left side.
             }
 

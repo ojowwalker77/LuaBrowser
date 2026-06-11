@@ -641,4 +641,16 @@ enum TabStripLayoutEngine {
         // Preserve enough leading room so the inverse corner does not get clipped.
         return max(0, TabStripMetrics.Tab.inverseCornerRadius - TabStripMetrics.Tab.spacing)
     }
+
+    /// Index of the separator that sits visually to the LEFT of
+    /// `tabIndex`'s cell: normally `tabIndex - 1`, but split-secondary
+    /// slots are zero-width with off-screen separators, so walk past
+    /// them to the previous real slot (the pair's host, whose separator
+    /// is the merged cell's right edge). Returns -1 at the strip start,
+    /// matching the no-separator case of the plain `tabIndex - 1` form.
+    static func visibleLeftSeparatorIndex(of tabIndex: Int, skippingCollapsed collapsed: Set<Int>) -> Int {
+        var index = tabIndex - 1
+        while index >= 0, collapsed.contains(index) { index -= 1 }
+        return index
+    }
 }

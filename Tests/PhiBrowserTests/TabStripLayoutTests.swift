@@ -515,6 +515,23 @@ final class TabStripLayoutTests: XCTestCase {
         }
     }
 
+    /// The separator visually left of a tab skips split-secondary slots
+    /// (zero-width, separators parked off-screen): a tab right of a merged
+    /// pair must resolve to the pair host's separator, otherwise the
+    /// active/hover "hide my left separator" rules target the phantom.
+    func testVisibleLeftSeparatorIndexSkipsSplitSecondarySlots() {
+        // Plain neighbor: no collapsed slots in between.
+        XCTAssertEqual(TabStripLayoutEngine.visibleLeftSeparatorIndex(of: 5, skippingCollapsed: []), 4)
+        // Tab after a merged pair (3, 4): the visible separator is the host's (3).
+        XCTAssertEqual(TabStripLayoutEngine.visibleLeftSeparatorIndex(of: 5, skippingCollapsed: [4]), 3)
+        // Adjacent pairs (2, 3) and (4, 5): tab 6 resolves to host 4.
+        XCTAssertEqual(TabStripLayoutEngine.visibleLeftSeparatorIndex(of: 6, skippingCollapsed: [3, 5]), 4)
+        // Pair at the strip start (0, 1): tab 2 resolves to host 0.
+        XCTAssertEqual(TabStripLayoutEngine.visibleLeftSeparatorIndex(of: 2, skippingCollapsed: [1]), 0)
+        // Strip start has no left separator.
+        XCTAssertEqual(TabStripLayoutEngine.visibleLeftSeparatorIndex(of: 0, skippingCollapsed: []), -1)
+    }
+
     // MARK: - Quick-close width lock
 
     /// Quick-close lock: widths come verbatim from `lockedInactiveTabWidth`
