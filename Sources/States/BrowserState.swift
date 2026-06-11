@@ -2867,6 +2867,26 @@ class BrowserState {
         updateNormalTabs()
     }
 
+    /// Clamps a pinned insert index so it never lands between the two
+    /// records of a pinned split pair. The strip and the sidebar both pair
+    /// by partner guid and render the pair as one merged cell wherever its
+    /// records sit, so an interior index would silently persist a record
+    /// order that diverges from every visible order. Snapping past the
+    /// pair matches the reachable producers (drops on the pair's right).
+    /// Live-only pairs whose `splitPartnerGuid` hasn't persisted yet are
+    /// not detected — the drop-index tail fix upstream covers those.
+    static func pinnedInsertIndexOutsideSplitPair(_ index: Int, pinnedTabs: [Tab]) -> Int {
+        guard index > 0, index < pinnedTabs.count else { return index }
+        let before = pinnedTabs[index - 1]
+        let after = pinnedTabs[index]
+        guard let partnerGuid = before.splitPartnerGuid, !partnerGuid.isEmpty,
+              let afterGuid = after.guidInLocalDB, !afterGuid.isEmpty,
+              afterGuid == partnerGuid else {
+            return index
+        }
+        return index + 1
+    }
+
     /// Reorder pinned  tab
     func movePinnedTab(tab: Tab, to newIndex: Int, selectAfterMove: Bool) {
         // Split-aware: pinned splits render as a single merged cell that
@@ -2879,9 +2899,10 @@ class BrowserState {
             return
         }
 
+        let insertIndex = Self.pinnedInsertIndexOutsideSplitPair(newIndex, pinnedTabs: pinnedTabs)
         var after: String?
-        if newIndex > 0, !pinnedTabs.isEmpty {
-            let tab = pinnedTabs[newIndex - 1]
+        if insertIndex > 0, !pinnedTabs.isEmpty {
+            let tab = pinnedTabs[insertIndex - 1]
             after = tab.guidInLocalDB
         }
 
@@ -2956,7 +2977,8 @@ class BrowserState {
         }
         var afterGuid: String?
         if pinnedIndex > 0, !pinnedTabs.isEmpty {
-            let clampedIdx = min(pinnedIndex - 1, pinnedTabs.count - 1)
+            let snappedIndex = Self.pinnedInsertIndexOutsideSplitPair(pinnedIndex, pinnedTabs: pinnedTabs)
+            let clampedIdx = min(snappedIndex - 1, pinnedTabs.count - 1)
             afterGuid = pinnedTabs[clampedIdx].guidInLocalDB
         } else if pinnedIndex == -1, !pinnedTabs.isEmpty {
             afterGuid = pinnedTabs.last!.guidInLocalDB
