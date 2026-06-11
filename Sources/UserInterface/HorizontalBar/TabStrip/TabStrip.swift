@@ -980,7 +980,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
            let partnerView = normalTabViews[tabId(for: partnerTab)],
            partnerView.superview != nil,
            partnerView.frame.width > 0 {
-            return partnerView.convert(partnerView.bounds, to: coordView)
+            // Delegate instead of converting `partnerView` directly: during a
+            // merged-cell drag the host partner is the dragging tab, whose
+            // source view stays parked at its drag-start frame (alpha = 0)
+            // while the proxy follows the cursor. Re-entering tabFrame lets
+            // the partner's drag-proxy and group-drag branches resolve the
+            // live frame. Bounded: the width > 0 guard above keeps the
+            // partner out of this placeholder branch.
+            return tabFrame(for: partnerTab, in: coordView)
         }
         let frame = view.convert(view.bounds, to: coordView)
         // Whole-group drag: members are visually translated via
