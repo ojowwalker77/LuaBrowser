@@ -279,6 +279,50 @@ struct NativeTabRelationGraph: Equatable {
         }
     }
 
+    /// Slice-shaped variant of `fixOpenersAfterMovingTab`. For each
+    /// member `m` in the moved slice, re-parents every direct child
+    /// `c` of `m` that lies **outside** the slice to `m`'s opener (or
+    /// removes the entry if `m` has no opener) — mirroring the
+    /// grandparent-inheritance semantics of the single-tab helper.
+    /// Children that lie **inside** the slice keep their opener
+    /// unchanged: members keep their relative positions to each other,
+    /// so intra-slice opener edges have stable geometric meaning.
+    ///
+    /// Self-loops on members are cleaned up the same way as in
+    /// `fixOpenersAfterMovingTab`.
+    ///
+    /// Implementation note: phases 1 and 2 are separated because Set
+    /// iteration order is non-deterministic; mutating openerByTabId
+    /// in-flight would let an external child get re-parented multiple
+    /// times (m1→m2→grandparent) depending on visit order. Snapshot
+    /// the desired final opener per external child first, then apply.
+    mutating func fixOpenersAfterMovingSlice(_ memberIds: Set<Int>) {
+        // Phase 1: capture (external child → its slice-member parent's
+        //          opener) pairs before any mutation.
+        var newOpenerForChild: [Int: Int?] = [:]
+        for movedTabId in memberIds {
+            let newOpenerTabId = openerByTabId[movedTabId]
+            for childTabId in directChildren(of: movedTabId)
+            where !memberIds.contains(childTabId) {
+                newOpenerForChild[childTabId] = newOpenerTabId
+            }
+        }
+
+        // Phase 2: apply captured re-parents.
+        for (childTabId, newOpener) in newOpenerForChild {
+            if let newOpener, newOpener != childTabId {
+                openerByTabId[childTabId] = newOpener
+            } else {
+                openerByTabId.removeValue(forKey: childTabId)
+            }
+        }
+
+        // Phase 3: clean up self-loops on members.
+        for movedTabId in memberIds where openerByTabId[movedTabId] == movedTabId {
+            openerByTabId.removeValue(forKey: movedTabId)
+        }
+    }
+
     func fixingOpenersAfterMovingTab(_ movedTabId: Int) -> NativeTabRelationGraph {
         var graph = self
         graph.fixOpenersAfterMovingTab(movedTabId)
@@ -314,7 +358,8 @@ enum NativeTabDecisionEngine {
     static func insertionIndex(
         visibleNormalTabIds: [Int],
         context: NativeTabCreationContext?,
-        relationGraph: NativeTabRelationGraph
+        relationGraph: NativeTabRelationGraph,
+        splitPartnerByTabId: [Int: Int] = [:]
     ) -> Int? {
         let creationKindText = context?.creationKind.rawValue ?? "nil"
         let isActiveText = context?.isActiveAtCreation.description ?? "nil"
@@ -327,7 +372,8 @@ enum NativeTabDecisionEngine {
             "[NativeTab] insertionIndex visible=\(visibleNormalTabIds) " +
             "context={kind=\(creationKindText), active=\(isActiveText), opener=\(openerText), " +
             "insertAfter=\(insertAfterText), source=\(sourceText), resetOnActive=\(resetOnActiveText)} " +
-            "graph={openers=\(relationGraph.openerByTabId), reset=\(resetTabIds)}"
+            "graph={openers=\(relationGraph.openerByTabId), reset=\(resetTabIds)} " +
+            "splitPartners=\(splitPartnerByTabId)"
         )
         guard !visibleNormalTabIds.isEmpty else { return 0 }
         guard let context else { return nil }
@@ -336,11 +382,17 @@ enum NativeTabDecisionEngine {
         case .linkForeground:
             if let openerTabId = context.openerTabId,
                let openerIndex = visibleNormalTabIds.firstIndex(of: openerTabId) {
+                let anchorIndex = splitAdjustedAnchorIndex(
+                    openerTabId: openerTabId,
+                    openerIndex: openerIndex,
+                    visibleNormalTabIds: visibleNormalTabIds,
+                    splitPartnerByTabId: splitPartnerByTabId
+                )
                 AppLogDebug(
                     "[NativeTab] insertionIndex chose foreground opener=\(openerTabId) " +
-                    "openerIndex=\(openerIndex) result=\(openerIndex + 1)"
+                    "openerIndex=\(openerIndex) anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
                 )
-                return openerIndex + 1
+                return anchorIndex + 1
             }
             if let insertAfterTabId = context.insertAfterTabId,
                let anchorIndex = visibleNormalTabIds.firstIndex(of: insertAfterTabId) {
@@ -353,15 +405,21 @@ enum NativeTabDecisionEngine {
         case .linkBackground:
             if let openerTabId = context.openerTabId,
                let openerIndex = visibleNormalTabIds.firstIndex(of: openerTabId) {
-                let result = lastVisibleDescendantInsertionIndex(
+                let anchorIndex = splitAdjustedAnchorIndex(
                     openerTabId: openerTabId,
                     openerIndex: openerIndex,
+                    visibleNormalTabIds: visibleNormalTabIds,
+                    splitPartnerByTabId: splitPartnerByTabId
+                )
+                let result = lastVisibleDescendantInsertionIndex(
+                    openerTabId: openerTabId,
+                    openerIndex: anchorIndex,
                     visibleNormalTabIds: visibleNormalTabIds,
                     relationGraph: relationGraph
                 )
                 AppLogDebug(
                     "[NativeTab] insertionIndex chose background opener=\(openerTabId) " +
-                    "openerIndex=\(openerIndex) result=\(result)"
+                    "openerIndex=\(openerIndex) anchorIndex=\(anchorIndex) result=\(result)"
                 )
                 return result
             }
@@ -451,6 +509,23 @@ enum NativeTabDecisionEngine {
             }
         }
         return insertAfterIndex + 1
+    }
+
+    /// If the opener is in a split with a partner at a higher index, return the
+    /// partner's index so new tabs land after the whole split rather than between
+    /// the two split panes.
+    private static func splitAdjustedAnchorIndex(
+        openerTabId: Int,
+        openerIndex: Int,
+        visibleNormalTabIds: [Int],
+        splitPartnerByTabId: [Int: Int]
+    ) -> Int {
+        guard let partnerId = splitPartnerByTabId[openerTabId],
+              let partnerIndex = visibleNormalTabIds.firstIndex(of: partnerId),
+              partnerIndex > openerIndex else {
+            return openerIndex
+        }
+        return partnerIndex
     }
 
     private static func directionalMatch(

@@ -45,6 +45,16 @@ public extension ThemedColor {
             return windowOverlayBackground.resolve(theme: theme, appearance: appearance).withAlphaComponent(1)
         }
     }
+
+    /// Background for tabs in the temporary multi-selection (excluding the active tab).
+    /// Offset from `contentOverlayBackground` so a sub-selected tab reads as distinct
+    /// from both the active tab and a hover.
+    static let tabSubSelectionBackground = ThemedColor { theme, appearance in
+        let base = contentOverlayBackground.resolve(theme: theme, appearance: appearance)
+        return appearance.isLight
+            ? base.adjustingBrightness(percent: -8)
+            : base.adjustingBrightness(percent: 12)
+    }
     
     // MARK: - Sidebar Colors
     

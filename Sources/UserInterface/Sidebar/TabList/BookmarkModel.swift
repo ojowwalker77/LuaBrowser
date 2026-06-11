@@ -11,6 +11,13 @@ class Bookmark: WebContentRepresentable {
     let profileId: String?
     @Published var title: String
     @Published var url: String?
+    /// Second URL for a split-view bookmark. Non-nil means clicking the
+    /// bookmark opens both URLs as a split. Mirrors `TabDataModel.secondaryUrl`.
+    @Published var secondaryUrl: String?
+    /// Display title for the secondary URL of a split-view bookmark. Optional
+    /// even when `secondaryUrl` is set — callers fall back to the secondary
+    /// URL's host when this is nil/empty.
+    @Published var secondaryTitle: String?
     @Published var faviconUrl: String?
     @Published private(set) var cachedFaviconData: Data?
     @Published private(set) var liveFaviconData: Data?
@@ -38,6 +45,8 @@ class Bookmark: WebContentRepresentable {
     init(guid: String = UUID().uuidString,
          title: String,
          url: String? = nil,
+         secondaryUrl: String? = nil,
+         secondaryTitle: String? = nil,
          profileId: String? = nil,
          faviconData: Data? = nil,
          isFolder: Bool = false) {
@@ -45,6 +54,8 @@ class Bookmark: WebContentRepresentable {
         self.profileId = profileId
         self.title = title
         self.url = url
+        self.secondaryUrl = secondaryUrl
+        self.secondaryTitle = secondaryTitle
         self.cachedFaviconData = faviconData
         self.isFolder = isFolder
     }
@@ -233,12 +244,44 @@ class BookmarkManager: ObservableObject {
         }
     }
     
-    func updateBookmark(guid: String, title: String? = nil, url: String? = nil) {
+    func updateBookmark(guid: String,
+                        title: String? = nil,
+                        url: String? = nil,
+                        secondaryUrl: String?? = nil,
+                        secondaryTitle: String?? = nil) {
         guard let profileId = browserState?.profileId else { return }
-        browserState?.localStore.updateBookmark(guid, profileId: profileId, title: title, url: url)
+        browserState?.localStore.updateBookmark(guid,
+                                                profileId: profileId,
+                                                title: title,
+                                                url: url,
+                                                secondaryUrl: secondaryUrl,
+                                                secondaryTitle: secondaryTitle)
 
-        guard let state = browserState,
-              let url,
+        guard let state = browserState else { return }
+
+        // A split-view bookmark drives its attached live split through
+        // `splitBookmarkBindings` — its panes aren't bound via `guidInLocalDB`,
+        // so editing either URL has to navigate the matching pane directly.
+        if let splitId = state.splitBookmarkBindings[guid],
+           let group = state.splits.first(where: { $0.id == splitId }) {
+            let current = bookmarkIndex[guid]
+            if let url,
+               let newPrimary = state.localStore.normalizedURL(from: url)?.absoluteString,
+               newPrimary != current?.url,
+               let primaryTab = state.tabs.first(where: { $0.guid == group.primaryTabId }) {
+                navigateSplitPane(primaryTab, to: newPrimary)
+            }
+            if let secondaryUrlOpt = secondaryUrl, let rawSecondary = secondaryUrlOpt,
+               !rawSecondary.isEmpty,
+               let newSecondary = state.localStore.normalizedURL(from: rawSecondary)?.absoluteString,
+               newSecondary != current?.secondaryUrl,
+               let secondaryTab = state.tabs.first(where: { $0.guid == group.secondaryTabId }) {
+                navigateSplitPane(secondaryTab, to: newSecondary)
+            }
+            return
+        }
+
+        guard let url,
               let normalizedURL = state.localStore.normalizedURL(from: url)?.absoluteString else {
             return
         }
@@ -261,6 +304,24 @@ class BookmarkManager: ObservableObject {
         }
     }
     
+    /// Navigates one pane of a bookmarked split to `url`. The pane carries a
+    /// non-empty `custom_value` marker (e.g. the NTP partner minted during the
+    /// open-as-split flow), which makes `CrossDomainNewTabNavigationThrottle`
+    /// hijack a cross-domain change into a brand-new tab. Clear the marker
+    /// before navigating and restore it once the load settles, mirroring the
+    /// single-tab path above.
+    private func navigateSplitPane(_ tab: Tab, to url: String) {
+        guard let wrapper = tab.webContentWrapper else { return }
+        let restore = tab.guidInLocalDB ?? ""
+        DispatchQueue.main.async {
+            wrapper.updateTabCustomValue("")
+            wrapper.navigate(toURL: url)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                wrapper.updateTabCustomValue(restore)
+            }
+        }
+    }
+
     /// O(1) lookup for a bookmark by guid.
     func bookmark(withGuid guid: String) -> Bookmark? {
         return bookmarkIndex[guid]
@@ -296,8 +357,34 @@ class BookmarkManager: ObservableObject {
 //    }
     
     func addBookmark(title: String, url: String, to parent: Bookmark? = nil, targetIndex: Int? = nil) {
+        addBookmark(title: title, url: url, toParentGuid: parent?.guid, targetIndex: targetIndex)
+    }
+
+    /// Adds a bookmark under a parent referenced by guid. Use when the parent
+    /// was just created and may not yet be present in the in-memory index.
+    func addBookmark(title: String, url: String, toParentGuid parentGuid: String?, targetIndex: Int? = nil) {
         guard let profileId = browserState?.profileId else { return }
-        browserState?.localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parent?.guid, index: targetIndex)
+        browserState?.localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parentGuid, index: targetIndex)
+    }
+
+    /// Stores both panes of a split as a single bookmark. Clicking the saved
+    /// bookmark later reopens the pair as a split via `BrowserState.openBookmark`.
+    /// `secondaryTitle` should be the secondary pane's display title so the
+    /// bookmark bar can render both names; pass nil if unknown.
+    func addSplitBookmark(title: String,
+                          primaryURL: String,
+                          secondaryURL: String,
+                          secondaryTitle: String?,
+                          to parent: Bookmark? = nil,
+                          targetIndex: Int? = nil) {
+        guard let profileId = browserState?.profileId else { return }
+        browserState?.localStore.createBookmark(url: primaryURL,
+                                                title: title,
+                                                profileId: profileId,
+                                                parentId: parent?.guid,
+                                                index: targetIndex,
+                                                secondaryUrl: secondaryURL,
+                                                secondaryTitle: secondaryTitle)
     }
     
     func addFolder(title: String, to parent: Bookmark? = nil) {
@@ -338,6 +425,7 @@ class BookmarkManager: ObservableObject {
     
     func removeBookmark(_ bookmark: Bookmark) {
         guard let profileId = browserState?.profileId else { return }
+        browserState?.detachOpenTabsForRemovedBookmark(bookmark)
         browserState?.localStore.deleteBookmark(bookmark.guid, profileId: profileId)
     }
     
@@ -445,9 +533,13 @@ extension Bookmark {
         let displayTitle = (model.overrideTitle?.isEmpty == false ? model.overrideTitle! : model.title)
         let isFolder = (model.dataType == .bookmarkFolder)
         let resolvedURL = isFolder ? nil : model.url.absoluteString
+        let resolvedSecondary = isFolder ? nil : model.secondaryUrl?.absoluteString
+        let resolvedSecondaryTitle = isFolder ? nil : model.secondaryTitle
         self.init(guid: model.guid,
                   title: displayTitle,
                   url: resolvedURL,
+                  secondaryUrl: resolvedSecondary,
+                  secondaryTitle: resolvedSecondaryTitle,
                   profileId: model.profile?.profileId ?? model.profileId,
                   faviconData: model.favicon,
                   isFolder: isFolder)

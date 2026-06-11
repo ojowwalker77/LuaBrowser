@@ -103,6 +103,39 @@
     "/**/Window Background" : {
       "comment" : "[EXAMPLE] Theme example: window background label"
     },
+    "%@ · %d tabs" : {
+      "comment" : "Tab Groups - auto-generated group title, e.g. 'Blue · 3 tabs'",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$d tabs"
+          }
+        }
+      }
+    },
+    "%@ tab group, %d tabs, collapsed" : {
+      "comment" : "Tab Groups - VoiceOver label for collapsed horizontal-strip group chip",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ tab group, %2$d tabs, collapsed"
+          }
+        }
+      }
+    },
+    "%@ tab group, %d tabs, expanded" : {
+      "comment" : "Tab Groups - VoiceOver label for expanded horizontal-strip group chip",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ tab group, %2$d tabs, expanded"
+          }
+        }
+      }
+    },
     "%d days ago" : {
       "comment" : "Download item row - Relative time showing days since download completed"
     },
@@ -128,17 +161,35 @@
     "Add Download" : {
 
     },
+    "Add Left Split" : {
+      "comment" : "Drop-zone hint shown when dragging a tab over the left third of the page"
+    },
     "Add New" : {
       "comment" : "Shortcuts settings - Placeholder text when no shortcut is assigned"
     },
+    "Add Right Split" : {
+      "comment" : "Drop-zone hint shown when dragging a tab over the right third of the page"
+    },
+    "Add Split to Bookmark" : {
+      "comment" : "Tab context menu - Save both panes of the split as a bookmark folder"
+    },
+    "Add Split to Folder" : {
+      "comment" : "Tab context menu - Save both panes of the split into a chosen bookmark folder"
+    },
+    "Add Tabs to New Group" : {
+      "comment" : "Tab multi-selection context menu - create a new tab group from selected tabs"
+    },
     "Add to Bookmark" : {
-      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar"
+      "comment" : "Tab context menu - Add current tab to root bookmark bar in sidebar\nTab multi-selection context menu - add selected tabs to the root bookmark location"
     },
     "Add to Bookmark Bar" : {
       "comment" : "Tab context menu - Add current tab to root bookmark bar"
     },
     "Add to Folder" : {
-      "comment" : "Tab context menu - Menu item to add tab to bookmarks"
+      "comment" : "Tab context menu - Menu item to add tab to bookmarks\nTab multi-selection context menu - submenu to add selected tabs to a bookmark folder"
+    },
+    "Add to Group" : {
+      "comment" : "Tab context menu - Submenu to add this tab to an existing tab group"
     },
     "Additional browser settings" : {
       "comment" : "General settings - Title for always more settings"
@@ -176,13 +227,16 @@
     "AppKit" : {
 
     },
+    "Apply theme to text selection on web pages" : {
+      "comment" : "General settings - Toggle title for tinting ::selection on third-party pages with the window theme accent"
+    },
     "Aqua" : {
       "comment" : "Aqua theme color name"
     },
     "Are you sure you want to install version %@ and restart Phi?" : {
       "comment" : "Update alert - Message asking user to confirm update installation with version number"
     },
-    "Attach file" : {
+    "Attach files" : {
       "comment" : "Feedback form - Label for file attachment section"
     },
     "Automatically add current tab as context to new conversation" : {
@@ -208,6 +262,9 @@
     },
     "Balanced" : {
       "comment" : "Layout option - Vertical tabs with address bar at the top of webcontent\nOnboarding layout selection - Balanced option"
+    },
+    "Blue" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "Bookmark All Tabs" : {
       "comment" : "Tab area context menu - Bookmark all open tabs"
@@ -246,7 +303,7 @@
       "comment" : "Import data type - Browsing history toggle label"
     },
     "Cancel" : {
-      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nFeedback form - Cancel button to dismiss feedback form\nNew folder dialog cancel button title\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
+      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
     },
     "Cancel First" : {
 
@@ -273,6 +330,9 @@
     "Certificate is valid" : {
       "comment" : "Address bar menu - Certificate validity status"
     },
+    "Change Color" : {
+      "comment" : "Tab group context menu - Submenu to change the group color"
+    },
     "Change Name" : {
       "comment" : "Account settings - Dialog title for changing user name"
     },
@@ -285,8 +345,8 @@
     "Checking for updates..." : {
       "comment" : "Phi menu - Menu item text while checking for updates"
     },
-    "Choose File" : {
-      "comment" : "Feedback form - Button to open file picker for attachment"
+    "Choose Files" : {
+      "comment" : "Feedback form - Button to open file picker for attachments"
     },
     "Chromium Engine Version %@" : {
       "comment" : "About window - Chromium engine version label"
@@ -300,17 +360,35 @@
     "Click " : {
       "comment" : "Phi Link - Custom bot guide prefix"
     },
+    "Click the title for overview. Click the arrow to expand or collapse." : {
+      "comment" : "Tab Groups - tooltip for horizontal-strip group chip interactions"
+    },
     "Click to install update" : {
       "comment" : "Phi menu - Menu item text when update is ready to install"
     },
     "Close" : {
       "comment" : "Sidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
     },
+    "Close Group" : {
+      "comment" : "Tab group context menu - Close the group and all its tabs"
+    },
+    "Close Group Overview" : {
+      "comment" : "Tab group overview - Accessibility label for the button that closes the overview"
+    },
     "Close Other Tabs" : {
-      "comment" : "Tab context menu - Menu item to close all tabs except the selected one"
+      "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
+    },
+    "Close Tab" : {
+      "comment" : "Tab group overview - Accessibility label for the button that closes one tab card"
+    },
+    "Close Tabs" : {
+      "comment" : "Tab multi-selection context menu - close all selected tabs"
     },
     "Code Examples" : {
 
+    },
+    "Collapse Group" : {
+      "comment" : "Tab group context menu - Collapse an expanded group"
     },
     "Color" : {
       "comment" : "General settings - Theme color row title"
@@ -357,11 +435,26 @@
     "Cookies" : {
       "comment" : "Import data type - Cookies toggle label"
     },
+    "Copy Left URL" : {
+      "comment" : "Bookmark context menu - Copy the left (primary) URL of a split-view bookmark\nTab context menu - Copy the left pane's URL for a split"
+    },
     "Copy Link" : {
       "comment" : "Address bar menu - Copy link menu item\nBookmark Copy Link menu item\nDownload item row - Tooltip for copy link button\nSidebar address bar - Copy current page URL button tooltip\nTab context menu - Menu item to copy the tab URL to clipboard\nTooltip for button to copy download URL in living downloads toast"
     },
+    "Copy Links" : {
+      "comment" : "Tab multi-selection context menu - copy links of all selected tabs"
+    },
+    "Copy Right URL" : {
+      "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
+    },
     "Coral" : {
       "comment" : "Coral theme color name"
+    },
+    "Could Not Add Attachment" : {
+      "comment" : "Feedback form - Alert title when selected attachments cannot be added"
+    },
+    "Could Not Save Feedback" : {
+      "comment" : "Feedback form - Alert title when local outbox save fails"
     },
     "Crash Samples" : {
 
@@ -371,6 +464,9 @@
     },
     "Custom Telegram bot" : {
       "comment" : "Phi Link - Custom bot title"
+    },
+    "Cyan" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "Dark" : {
       "comment" : "Appearance choice: always dark mode"
@@ -385,7 +481,7 @@
       "comment" : "Download item row - Status label when downloaded file was deleted"
     },
     "Describe the issue in detail" : {
-      "comment" : "Feedback form - Label prompting user to describe the issue"
+      "comment" : "Feedback form - Section header prompting user to describe the issue"
     },
     "Discard" : {
       "comment" : "Download item row - Tooltip for discard button on blocked download\nDownload item row - Tooltip for discard button on safety warning\nTooltip for discard button on blocked download in living downloads toast\nTooltip for discard button on safety warning in living downloads toast"
@@ -417,6 +513,12 @@
     "Duplicate" : {
       "comment" : "Tab context menu - Menu item to duplicate the selected tab"
     },
+    "Duplicate Split" : {
+      "comment" : "Tab context menu - Duplicate both panes of a split as a new split"
+    },
+    "Duplicate Tabs" : {
+      "comment" : "Tab multi-selection context menu - duplicate all selected tabs"
+    },
     "e.g. 123456:ABC-DEF..." : {
 
     },
@@ -426,14 +528,26 @@
     "Edit Folder" : {
       "comment" : "Folder editor - Title of the sheet to edit a folder"
     },
+    "Edit Pinned Split" : {
+      "comment" : "Favorite editor - Title of the sheet to edit a pinned split-view tab"
+    },
     "Edit Pinned Tab" : {
       "comment" : "Favorite editor - Title of the sheet to edit a pin"
+    },
+    "Edit Split Bookmark" : {
+      "comment" : "Bookmark editor - Title of the sheet when editing a split-view bookmark"
     },
     "Edit the name and address for this bookmark." : {
       "comment" : "Bookmark editor - Subtitle explaining bookmark editing"
     },
     "Edit the name and address for this pinned tab." : {
       "comment" : "Pinned tab editor - Subtitle explaining pinned tab editing"
+    },
+    "Edit the name and both addresses for this split-view bookmark." : {
+      "comment" : "Bookmark editor - Subtitle explaining split-view bookmark editing"
+    },
+    "Edit the names and addresses for both panes of this pinned split." : {
+      "comment" : "Pinned tab editor - Subtitle explaining pinned split editing"
     },
     "Edit..." : {
       "comment" : "Edit bookmark url menu item title\nPinned tab context menu - Edit pinned tab menu item"
@@ -452,6 +566,9 @@
     },
     "Error" : {
       "comment" : "Phi Link - Custom bot generic error text"
+    },
+    "Expand Group" : {
+      "comment" : "Tab group context menu - Expand a collapsed group"
     },
     "Export" : {
       "comment" : "Help menu - NSSavePanel primary button title for confirming log export save location"
@@ -495,9 +612,6 @@
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
     },
-    "File too large" : {
-      "comment" : "Feedback form - Alert title when selected file exceeds size limit"
-    },
     "Find shortcut keys" : {
       "comment" : "Shortcuts settings - Search field placeholder to find shortcuts"
     },
@@ -536,6 +650,12 @@
     },
     "Go to the browser to complete log in" : {
       "comment" : "Waiting view title shown during login process in onboarding"
+    },
+    "Green" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
+    },
+    "Grey" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "here to begin the @BotFather" : {
       "comment" : "Phi Link - Custom bot guide link text"
@@ -636,6 +756,15 @@
     "Layout selection" : {
       "comment" : "Onboarding layout selection - Page title"
     },
+    "Leave empty to use the auto-generated name." : {
+      "comment" : "Tab group rename alert - Hint that empty title clears to auto-name"
+    },
+    "Left Name" : {
+      "comment" : "Bookmark editor - Label for the left (primary) title input field on a split-view bookmark"
+    },
+    "Left URL" : {
+      "comment" : "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
+    },
     "Light" : {
       "comment" : "Appearance choice: always light mode"
     },
@@ -684,6 +813,15 @@
     "More Settings" : {
       "comment" : "Address bar menu - Settings submenu item to open settings page\nExtension list - Website settings item to open more settings"
     },
+    "Move Tabs to Group" : {
+      "comment" : "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"
+    },
+    "Move to Group" : {
+      "comment" : "Tab context menu - Submenu to move this tab to another tab group"
+    },
+    "Move to New Group" : {
+      "comment" : "Tab context menu - Move this tab out of its current group into a newly created group"
+    },
     "Mute" : {
       "comment" : "Notification menu option - Disable auto popup for notification cards\nTab mute button tooltip - mute"
     },
@@ -696,11 +834,14 @@
     "Name cannot exceed %d characters" : {
       "comment" : "Account settings - Error message when user name is too long"
     },
+    "Name group" : {
+      "comment" : "Tab group overview editor - Placeholder for the editable group title field"
+    },
     "Name is too long (maximum 100 characters)" : {
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
     },
     "New Folder" : {
-      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder"
+      "comment" : "Bookmark New Folder menu item\nBookmark editor - Inline new folder creation title\nFolder creator - Title of the sheet to create a new folder\nNew folder dialog title\nSidebar context menu title\nTab area context menu - Create a new bookmark folder\nTab multi-selection context menu - bookmark selected tabs into a newly created folder"
     },
     "New Folder…" : {
       "comment" : "Bookmark editor - Create new folder option in folder picker"
@@ -709,10 +850,16 @@
       "comment" : "Bookmark New Folder menu item"
     },
     "New Tab" : {
-      "comment" : "Sidebar tab list - Button title to create a new browser tab\nTab area context menu - Open a new browser tab\nside bar new tab button text"
+      "comment" : "Sidebar tab list - Button title to create a new browser tab\nTab area context menu - Open a new browser tab\nTitle for the group overview card that creates a new tab in the selected group\nside bar new tab button text"
     },
     "New tab behavior" : {
       "comment" : "General settings - Row title for configuring new tab behavior"
+    },
+    "New Tab Group" : {
+      "comment" : "Tab context menu - Add this tab to a newly created tab group"
+    },
+    "New Tab in Group" : {
+      "comment" : "Tab group context menu - Open a new tab inside this group"
     },
     "New Tab Page" : {
       "comment" : "AI settings - Section title for new tab page options\nGeneral settings - Option to open New Tab Page when pressing ⌘+T"
@@ -772,13 +919,16 @@
       "comment" : "Phi Link - Official Bot title"
     },
     "OK" : {
-      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nFeedback form - OK button to dismiss file size alert\nGeneric - OK button to dismiss an alert"
+      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nExtension info alert - OK button to dismiss the alert\nGeneric - OK button to dismiss an alert"
     },
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
     },
     "Opacity" : {
       "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency"
+    },
+    "Open as Split" : {
+      "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab"
     },
     "Open in New Tab" : {
       "comment" : "Open in New Tab menu item"
@@ -791,6 +941,12 @@
     },
     "Open User Data Directory" : {
       "comment" : "Debug menu item to reveal the current user's data storage directory in Finder"
+    },
+    "Or paste an image" : {
+      "comment" : "Feedback form - Hint explaining pasted images can be added as attachments"
+    },
+    "Orange" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "Passwords Manager" : {
       "comment" : "Onboarding password manager - Page title"
@@ -837,11 +993,14 @@
     "Pin extension" : {
       "comment" : "Extension list - Tooltip for pinning an extension"
     },
+    "Pin Split" : {
+      "comment" : "Tab context menu - Pin the split that contains this tab"
+    },
+    "Pink" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
+    },
     "Please reauthenticate to restore account features." : {
       "comment" : "Account settings - Tooltip explaining why reauthentication is needed"
-    },
-    "Please select a file smaller than 2MB." : {
-      "comment" : "Feedback form - Alert message explaining file size limit"
     },
     "Pop up" : {
       "comment" : "Notification menu option - Enable auto popup for notification cards"
@@ -852,8 +1011,14 @@
     "Previous image" : {
       "comment" : "Image preview: accessibility label for previous image control"
     },
+    "Preview attachment" : {
+      "comment" : "Feedback form - Tooltip for previewing an attachment"
+    },
     "Pure" : {
       "comment" : "Pure theme name"
+    },
+    "Purple" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "QR code expired. Generate a fresh one to continue." : {
       "comment" : "Phi Link - Official bot QR expired hint"
@@ -873,6 +1038,9 @@
     "Recommended" : {
       "comment" : "Onboarding password manager - Recommended label for iCloud Passwords"
     },
+    "Red" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
+    },
     "Refresh" : {
       "comment" : "Phi Link - Official bot refresh QR action\nWeb content header - Accessibility description for refresh page button"
     },
@@ -882,11 +1050,23 @@
     "Remove" : {
       "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
     },
+    "Remove attachment" : {
+      "comment" : "Feedback form - Tooltip for removing an attachment"
+    },
+    "Remove from Group" : {
+      "comment" : "Tab context menu - Remove this tab from its tab group"
+    },
     "Remove from list" : {
       "comment" : "Download item row - Menu option to remove download from list"
     },
+    "Remove from Split" : {
+      "comment" : "Tab context menu - Dissolve the split that contains this tab"
+    },
     "Rename" : {
       "comment" : "Rename folder or bookmark dialog title"
+    },
+    "Rename Group" : {
+      "comment" : "Tab group context menu - Rename the group\nTab group rename alert - Title"
     },
     "Rename..." : {
       "comment" : "Bookmark Rename menu item"
@@ -915,11 +1095,20 @@
     "Return" : {
       "comment" : "Import data type selection - Return button to go back"
     },
+    "Reverse Panes" : {
+      "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
+    },
+    "Right Name" : {
+      "comment" : "Bookmark editor - Label for the right (secondary) title input field on a split-view bookmark"
+    },
+    "Right URL" : {
+      "comment" : "Bookmark editor - Label for the right (secondary) URL input field on a split-view bookmark"
+    },
     "Run" : {
       "comment" : "Notification card run button - Executes the suggested action"
     },
     "Save" : {
-      "comment" : "Account settings - Save button in rename dialog\nDebug clear data - NSSavePanel confirm button title when saving Phi user data backup zip\nEditor - Save button title\nIM Channels - Custom bot save button"
+      "comment" : "Account settings - Save button in rename dialog\nDebug clear data - NSSavePanel confirm button title when saving Phi user data backup zip\nEditor - Save button title\nIM Channels - Custom bot save button\nTab group rename alert - Confirm button"
     },
     "Scan the QR code with your phone camera or click on the button below to add Phi Link bot to your Telegram" : {
       "comment" : "Phi Link - Official bot QR hint"
@@ -928,7 +1117,7 @@
       "comment" : "Omnibox - Accessibility description for search icon"
     },
     "Search or Enter URL" : {
-      "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query"
+      "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"
     },
     "Select Phi User Data Backup" : {
       "comment" : "Debug import user data - NSOpenPanel title for choosing a Phi user data zip"
@@ -1008,6 +1197,9 @@
     "System" : {
       "comment" : "Appearance choice: follow system setting"
     },
+    "Tab Group" : {
+      "comment" : "Fallback title shown in the group overview header when group metadata is unavailable\nTab Groups - Fallback bookmark folder title when converting a tab group"
+    },
     "Tab Name" : {
       "comment" : "Pinned tab editor - Placeholder for pinned tab name input"
     },
@@ -1053,6 +1245,9 @@
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
     },
+    "Ungroup" : {
+      "comment" : "Tab group context menu - Dissolve the group, keeping the tabs"
+    },
     "Unknown" : {
       "comment" : "Address bar menu - Website security unknown\nWebsite security unknown"
     },
@@ -1067,6 +1262,9 @@
     },
     "Unpin extension" : {
       "comment" : "Extension list - Tooltip for unpinning an extension"
+    },
+    "Unpin Split" : {
+      "comment" : "Tab context menu - Remove the pin from the split that contains this tab"
     },
     "Unsupported image format" : {
       "comment" : "Image preview error"
@@ -1129,6 +1327,9 @@
     },
     "What's New" : {
       "comment" : "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'"
+    },
+    "Yellow" : {
+      "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
     "Yesterday" : {
       "comment" : "Download item row - Relative time when download completed yesterday"

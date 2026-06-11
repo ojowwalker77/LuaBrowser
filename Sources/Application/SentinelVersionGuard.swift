@@ -187,28 +187,14 @@ final class SentinelVersionGuard {
     }
 
     private static func defaultRunningSentinelInfo(sentinelBundleID: String) -> RunningSentinelInfo? {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { runningApp in
-            guard let bundleID = runningApp.bundleIdentifier else { return false }
-            return bundleID.caseInsensitiveCompare(sentinelBundleID) == .orderedSame && !runningApp.isTerminated
-        }) else {
+        guard let info = SentinelHelper.runningInfo(identifier: sentinelBundleID) else {
             return nil
         }
 
         return RunningSentinelInfo(
-            bundleID: app.bundleIdentifier ?? sentinelBundleID,
-            version: readVersion(from: app.bundleURL)
+            bundleID: info.bundleID,
+            version: info.version
         )
-    }
-
-    private static func readVersion(from bundleURL: URL?) -> String? {
-        guard let infoPlistURL = bundleURL?
-            .appendingPathComponent("Contents", isDirectory: true)
-            .appendingPathComponent("Info.plist", isDirectory: false),
-              let info = NSDictionary(contentsOf: infoPlistURL) as? [String: Any] else {
-            return nil
-        }
-
-        return info["CFBundleShortVersionString"] as? String
     }
 
     private static func postRestartRequest(snapshot: SentinelVersionGuardSnapshot, requestID: String) {

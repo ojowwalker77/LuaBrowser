@@ -10,15 +10,18 @@ import Combine
 class EmbeddedChatViewController: NSViewController {
     private lazy var contentView = NSView()
     private lazy var cancellables = Set<AnyCancellable>()
+    /// Cancellables scoped to `associatedTab` — re-bound whenever the
+    /// associated tab changes so observers always track the current tab.
+    private var tabCancellables = Set<AnyCancellable>()
     private weak var browserState: BrowserState?
     private var isSetup = false
-    
+
     /// The associated Tab for this embedded chat
     private(set) weak var associatedTab: Tab?
-    
+
     /// The current AI Chat Tab being displayed
     private weak var currentAIChatTab: Tab?
-    
+
     /// The identifier for the associated tab (used for AI Chat tab lookup)
     private var tabIdentifier: String?
     
@@ -84,16 +87,34 @@ class EmbeddedChatViewController: NSViewController {
     /// Updates the primary tab associated with this chat pane.
     func updateAssociatedTab(_ tab: Tab) {
         guard tab !== associatedTab else { return }
-        
+
         self.associatedTab = tab
-        
+        bindAssociatedTabObservers(tab)
+
         if let state = browserState {
-            let newIdentifier = state.getTabIdentifier(for: tab)
+            let newIdentifier = state.chatIdentifier(for: tab)
             if newIdentifier != tabIdentifier {
                 tabIdentifier = newIdentifier
                 loadAIChatForCurrentTab()
             }
         }
+    }
+
+    /// Re-bind observers that follow the current `associatedTab`. In a split
+    /// both panes' chat controllers exist simultaneously, but a single chat
+    /// `webContentView` can only live in one pane's `contentView`. When focus
+    /// moves to this pane (`tab.isActive` flips true) we must pull the chat
+    /// view back into this controller — otherwise it stays in the previously
+    /// active pane and this pane shows a blank chat area.
+    private func bindAssociatedTabObservers(_ tab: Tab) {
+        tabCancellables.removeAll()
+        tab.$isActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isActive in
+                guard let self, isActive else { return }
+                self.reattachAIChatViewIfNeeded()
+            }
+            .store(in: &tabCancellables)
     }
     
     // MARK: - Private Methods
@@ -103,18 +124,30 @@ class EmbeddedChatViewController: NSViewController {
             return
         }
         isSetup = true
-        
+
         if let tab = associatedTab {
-            tabIdentifier = state.getTabIdentifier(for: tab)
+            tabIdentifier = state.chatIdentifier(for: tab)
+            bindAssociatedTabObservers(tab)
         }
         
         state.$aiChatTabs
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tabs in
+                // Re-resolve first: when the *other* pane in a split creates
+                // a chat, this pane's resolver now points at that chat and
+                // we should switch to it rather than create a second one.
+                self?.refreshChatIdentifierIfNeeded()
                 self?.handleAIChatTabsChanged(tabs)
             }
             .store(in: &cancellables)
-        
+
+        state.$splits
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshChatIdentifierIfNeeded()
+            }
+            .store(in: &cancellables)
+
         loadAIChatForCurrentTab()
     }
     
@@ -130,12 +163,22 @@ class EmbeddedChatViewController: NSViewController {
     }
     
     private func clearCurrentAIChatTab() {
-        currentAIChatTab?.webContentView?.removeFromSuperview()
+        detachChatNativeIfHostedHere(currentAIChatTab?.webContentView)
         currentAIChatTab?.onFocusGained = nil
         currentAIChatTab = nil
         contentView.subviews.forEach { $0.removeFromSuperview() }
     }
     
+    /// Re-resolves the shared chat identifier when split membership/ownership
+    /// changes, switching the displayed chat tab if the resolved key moved.
+    private func refreshChatIdentifierIfNeeded() {
+        guard let state = browserState, let tab = associatedTab else { return }
+        let resolved = state.chatIdentifier(for: tab)
+        guard resolved != tabIdentifier else { return }
+        tabIdentifier = resolved
+        loadAIChatForCurrentTab()
+    }
+
     /// Loads or creates the AI Chat tab for the associated browser tab.
     private func loadAIChatForCurrentTab() {
         guard let state = browserState, let identifier = tabIdentifier, let tab = associatedTab else { return }
@@ -145,9 +188,13 @@ class EmbeddedChatViewController: NSViewController {
         } else {
             let chromeTabId = tab.guid
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak state] in
-                guard let self, let state else { return }
-                if state.aiChatTabs[identifier] == nil {
-                    state.createAIChatTab(for: identifier, chromeTabId: chromeTabId)
+                guard let self, let state, let tab = self.associatedTab else { return }
+                // Re-resolve at firing time: between the click and now, the
+                // other pane in a split may have created the shared chat —
+                // in which case we should adopt it, not create a duplicate.
+                let resolved = state.chatIdentifier(for: tab)
+                if state.aiChatTabs[resolved] == nil {
+                    state.createAIChatTab(for: resolved, chromeTabId: chromeTabId)
                 }
             }
         }
@@ -159,7 +206,7 @@ class EmbeddedChatViewController: NSViewController {
     ///   - isNewlyCreated: Whether to focus the chat after the content loads.
     private func switchToAIChatTab(_ tab: Tab, isNewlyCreated: Bool) {
         if currentAIChatTab !== tab {
-            currentAIChatTab?.webContentView?.removeFromSuperview()
+            detachChatNativeIfHostedHere(currentAIChatTab?.webContentView)
             currentAIChatTab?.onFocusGained = nil
         }
         
@@ -218,7 +265,23 @@ class EmbeddedChatViewController: NSViewController {
         }
     }
     
+    private func detachChatNativeIfHostedHere(_ native: NSView?) {
+        guard let native, native.superview === contentView else { return }
+        native.removeFromSuperview()
+    }
+
     private func addWebContent(_ native: NSView) {
+        // In a split both panes share one chat tab, but its single
+        // webContentView can only live in one contentView. Both panes' chat
+        // controllers receive viewDidAppear/observer callbacks (e.g. when the
+        // shared sidebar expands), so an inactive pane must not claim the view
+        // — otherwise it steals it from the active pane, which goes blank until
+        // the next pane switch reclaims it.
+        if let tab = associatedTab,
+           browserState?.splitGroup(forTabId: tab.guid) != nil,
+           tab.isActive == false {
+            return
+        }
         contentView.subviews.forEach { $0.removeFromSuperview() }
         
         contentView.addSubview(native)
@@ -235,7 +298,7 @@ class EmbeddedChatViewController: NSViewController {
     /// `setupIfNeeded()` on the first appear; the dedup in
     /// `BrowserState.createAIChatTab(for:chromeTabId:)` (`aiChatTabsBeingCreated`
     /// in-flight set) is what keeps Chromium from building duplicate AI tabs.
-    private func reattachAIChatViewIfNeeded() {
+    func reattachAIChatViewIfNeeded() {
         if currentAIChatTab == nil {
             loadAIChatForCurrentTab()
             return

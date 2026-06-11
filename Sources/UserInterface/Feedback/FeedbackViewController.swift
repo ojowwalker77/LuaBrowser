@@ -6,14 +6,11 @@
 import Cocoa
 import SwiftUI
 
-class FeedbackViewModel: ObservableObject {
-    @Published var urlString: String = ""
-}
-
+@MainActor
 class FeedbackViewController: NSViewController {
     let hostWindowController: MainBrowserWindowController
     
-    private var viewModel = FeedbackViewModel()
+    private let viewModel = FeedbackViewModel()
     
     private lazy var feedbackView: FeedbackView = {
         // Pass the viewModel to the View
@@ -29,10 +26,9 @@ class FeedbackViewController: NSViewController {
         } onCancel: { [weak self] in
             guard let self else { return }
             closeWindow()
-        } onSend: {[weak self] payload in
+        } onSend: { [weak self] in
             guard let self else { return }
-            ChromiumLauncher.sharedInstance().bridge?.submitFeedback(withParams: payload, windowId: hostWindowController.browserState.windowId.int64Value)
-            closeWindow()
+            submitFeedback()
         }
         return view
     }()
@@ -51,8 +47,7 @@ class FeedbackViewController: NSViewController {
     override func loadView() {
         view = NSView()
         view.wantsLayer = true
-//        view.layer?.backgroundColor = .white
-        view.phiLayer?.backgroundColor = .white <> NSColor.black.withAlphaComponent(0.7).cgColor
+        view.layer?.backgroundColor = NSColor.white.cgColor
     }
     
     override func viewDidLoad() {
@@ -61,11 +56,12 @@ class FeedbackViewController: NSViewController {
         view.addSubview(feedbackHosting.view)
         feedbackHosting.view.snp.makeConstraints { make in
             make.edges.equalToSuperview()
-            make.size.equalTo(NSSize(width: 520, height: 652))
+            make.size.equalTo(NSSize(width: 520, height: 580))
         }
         
         if let tab = hostWindowController.browserState.focusingTab {
-            updateActiveTabURL(URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "") )
+            updateActiveTabURL(URLProcessor.phiBrandEnsuredUrlString(tab.url ?? ""))
+            viewModel.pageTitle = tab.title
         }
     }
     
@@ -78,6 +74,53 @@ class FeedbackViewController: NSViewController {
         // Since FeedbackView observes this viewModel, it will update UI.
         DispatchQueue.main.async {
             self.viewModel.urlString = string ?? ""
+        }
+    }
+
+    private func refreshFeedbackContext() {
+        if let tab = hostWindowController.browserState.focusingTab {
+            viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "")
+            viewModel.pageTitle = tab.title
+        }
+        viewModel.componentVersions = hostWindowController.browserState.extensionManager.phiExtensionVersions
+    }
+
+    private func submitFeedback() {
+        guard viewModel.canSend else { return }
+
+        refreshFeedbackContext()
+        viewModel.isSubmitting = true
+
+        let windowId = Int64(hostWindowController.browserState.windowId)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let chromiumSystemLogsText = await fetchChromiumSystemLogsText(windowId: windowId)
+
+            do {
+                try viewModel.enqueueFeedback(chromiumSystemLogsText: chromiumSystemLogsText)
+                closeWindow()
+            } catch {
+                AppLogError("Feedback V2 enqueue failed: \(error.localizedDescription)")
+                viewModel.localSaveError = error.localizedDescription
+            }
+
+            viewModel.isSubmitting = false
+        }
+    }
+
+    private func fetchChromiumSystemLogsText(windowId: Int64) async -> String? {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogWarn("Feedback V2 Chromium system logs skipped because the bridge is unavailable")
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            bridge.getFeedbackSystemLogsText(withWindowId: windowId) { text in
+                if text == nil {
+                    AppLogWarn("Feedback V2 Chromium system logs skipped because Chromium returned no text")
+                }
+                continuation.resume(returning: text)
+            }
         }
     }
     

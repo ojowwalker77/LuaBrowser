@@ -101,6 +101,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 
 /// Called when the inspected page bounds change (DevTools JS resizes the content area).
 /// Mac should update webContentView.frame accordingly.
+/// @param bounds The rect where the content NSView should be placed (relative to hostView)
+/// @param hide If YES, the content NSView should be completely hidden (e.g. device emulation fullscreen)
 - (void)updateInspectedPageBounds:(CGRect)bounds
                          forTabId:(int64_t)tabId
                          windowId:(int64_t)windowId
@@ -127,6 +129,51 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)tabContentFullscreenChanged:(int64_t)tabId
                            windowId:(int64_t)windowId
                        isFullscreen:(BOOL)isFullscreen;
+
+// ==========================================================================
+// Tab groups (Chromium → Mac notification)
+// ==========================================================================
+
+/// A new tab group exists in `windowId`. tokenHex is the 32-char uppercase
+/// hex token (base::Token::ToString format). color is a lowercase wire
+/// string ("blue"/"red"/...). initialTabIds enumerates the Phi-stable tab
+/// ids placed into the group at creation time. May fire from a normal user
+/// "Add to new group" action or from a cross-window detach (token preserved).
+- (void)tabGroupCreated:(int64_t)windowId
+                tokenHex:(NSString *)tokenHex
+                   title:(NSString *)title
+                   color:(NSString *)color
+             isCollapsed:(BOOL)isCollapsed
+           initialTabIds:(NSArray<NSNumber *> *)initialTabIds;
+
+/// Tab group's visuals changed (title / color / isCollapsed). Fires both
+/// from explicit user actions and from an auto-bookkeeping event right
+/// after group creation. Mac side should overwrite the cached visual data
+/// idempotently.
+- (void)tabGroupVisualDataChanged:(int64_t)windowId
+                          tokenHex:(NSString *)tokenHex
+                             title:(NSString *)title
+                             color:(NSString *)color
+                       isCollapsed:(BOOL)isCollapsed;
+
+/// Tab group closed. Mac side should drop the group entry from the
+/// per-window groups dict. Closure reason is intentionally not propagated.
+- (void)tabGroupClosed:(int64_t)windowId tokenHex:(NSString *)tokenHex;
+
+/// A tab joined a tab group. windowId and tabId are pre-resolved (the
+/// underlying WebContents may be in transition during teardown). Mac side
+/// should set the tab's groupToken and append it to the group's
+/// orderedTabIds (idempotent).
+- (void)tabJoinedGroup:(int64_t)windowId
+                 tabId:(int64_t)tabId
+              tokenHex:(NSString *)tokenHex;
+
+/// A tab left a tab group. Mac side should clear the tab's groupToken and
+/// remove it from the group's orderedTabIds; if orderedTabIds becomes
+/// empty, also drop the group entry (defensive cleanup, see spec § 1.4).
+- (void)tabLeftGroup:(int64_t)windowId
+               tabId:(int64_t)tabId
+            tokenHex:(NSString *)tokenHex;
 
 // bookmark service
 - (void)bookmarksLoaded:(int64_t)windowId;
@@ -182,6 +229,42 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)toggleChatSidebar:(NSNumber * _Nullable)show;
 - (void)showFeedbackDialog;
 
+// ==========================================================================
+// Split view notifications (Chromium → Mac)
+// splitId is a SplitTabId serialized via base::Token::ToString()
+// ==========================================================================
+
+/// Called when a split is created. primaryTabId is at position 0, secondaryTabId at position 1.
+- (void)splitCreated:(NSString *)splitId
+        primaryTabId:(int64_t)primaryTabId
+      secondaryTabId:(int64_t)secondaryTabId
+              layout:(NSString *)layout   // @"vertical" | @"horizontal"
+               ratio:(double)ratio        // 0.0–1.0, proportion of primary pane
+            windowId:(int64_t)windowId;
+
+/// Called when a split's layout or ratio changes.
+- (void)splitVisualsChanged:(NSString *)splitId
+                     layout:(NSString *)layout
+                      ratio:(double)ratio
+                   windowId:(int64_t)windowId;
+
+/// Called when one or both sides of a split change (e.g. after reverseTabsInSplit).
+- (void)splitContentsChanged:(NSString *)splitId
+               primaryTabId:(int64_t)primaryTabId
+             secondaryTabId:(int64_t)secondaryTabId
+                   windowId:(int64_t)windowId;
+
+/// Called when a split is disbanded.
+- (void)splitRemoved:(NSString *)splitId windowId:(int64_t)windowId;
+
+/// Right-click "Open link in split view" — Chromium asks Mac to open `url`
+/// as a fresh pane paired with the tab identified by `partnerTabId`. Routed
+/// through Swift so the pendingSplitPartner marker dance can prevent the
+/// partner pane from bouncing HIDDEN → VISIBLE and rendering blank.
+- (void)openLinkAsSplitPartnerWithPartnerTabId:(int64_t)partnerTabId
+                                           url:(NSString *)url
+                                      windowId:(int64_t)windowId;
+
 @optional
 // Optional metadata-rich variants for richer native tab orchestration.
 - (void)tabWillBeRemove:(int64_t)tabId
@@ -205,6 +288,30 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                                       payload:(NSString *)payload
                                     requestId:(NSString *)requestId
                                       senderId:(NSString *)senderId;
+
+// ==========================================================================
+// Placeholder mode (Chromium → Mac notification)
+// ==========================================================================
+
+/// Window entered placeholder mode: the TabStripModel just became empty and
+/// the Browser is showing an out-of-band `chrome://dino` WebContents.
+/// Mac must:
+///   1. Attach wrapper.nativeView to the content area.
+///   2. Set BrowserState.isInPlaceholderMode = true (UI bindings respond).
+///   3. Retain wrapper for the duration of placeholder mode.
+/// @param windowId The window's session id.
+/// @param wrapper The WebContentWrapper for the placeholder WebContents.
+- (void)windowDidEnterPlaceholderMode:(int64_t)windowId
+                      placeholderView:(id<WebContentWrapper>)wrapper;
+
+/// Window exited placeholder mode: a real tab was inserted into TabStripModel.
+/// Mac must SYNCHRONOUSLY before returning:
+///   1. Detach the placeholder NSView from the view hierarchy.
+///   2. Release the wrapper (lifetime owned by Chromium; nativeView dies on return).
+///   3. Set BrowserState.isInPlaceholderMode = false.
+/// A subsequent newTabCreatedWithInfo + activeTabChanged provides the new tab.
+/// @param windowId The window's session id.
+- (void)windowDidExitPlaceholderMode:(int64_t)windowId;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -225,6 +332,125 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                  
 // Unlike createNewTabWithUrl, this reuses an existing tab for the same URL when possible.
 - (void)openTabWithUrl:(NSString *)urlString windowId:(int64_t)windowId;
+
+- (void)moveTabWithWindowId:(int64_t)windowId
+                      tabId:(int64_t)tabId
+                beforeTabId:(int64_t)anchorTabId;
+- (void)moveTabWithWindowId:(int64_t)windowId
+                      tabId:(int64_t)tabId
+                 afterTabId:(int64_t)anchorTabId;
+- (void)moveTabToFirstWithWindowId:(int64_t)windowId
+                             tabId:(int64_t)tabId;
+- (void)moveTabToLastWithWindowId:(int64_t)windowId
+                            tabId:(int64_t)tabId;
+
+/// Create a new tab group containing the given Phi-stable tab ids in
+/// `windowId`. Returns the new group's 32-char uppercase hex token, or an
+/// empty string on failure. `title` and `color` are optional (pass nil to
+/// keep Chromium default); `color` is the lowercase wire string
+/// ("blue"/"red"/...).
+- (NSString *)createGroupFromTabsWithWindowId:(int64_t)windowId
+                                       tabIds:(NSArray<NSNumber *> *)tabIds
+                                        title:(NSString * _Nullable)title
+                                        color:(NSString * _Nullable)color;
+
+/// Add the given Phi-stable tab ids to an existing group identified by
+/// `tokenHex` in `windowId`.
+- (void)addTabsToGroupWithWindowId:(int64_t)windowId
+                            tabIds:(NSArray<NSNumber *> *)tabIds
+                          tokenHex:(NSString *)tokenHex;
+
+/// Remove the given Phi-stable tab ids from whichever group they belong
+/// to (the group is preserved unless the last tab leaves).
+- (void)removeTabsFromGroupWithWindowId:(int64_t)windowId
+                                 tabIds:(NSArray<NSNumber *> *)tabIds;
+
+/// Atomically create a new tab inside the group identified by `tokenHex`,
+/// inserted at the end of the group's range in the strip. The new tab
+/// loads the New Tab URL and is foregrounded.
+- (void)createTabInGroupWithWindowId:(int64_t)windowId
+                            tokenHex:(NSString *)tokenHex;
+
+- (void)createTabInGroupWithWindowId:(int64_t)windowId
+                            tokenHex:(NSString *)tokenHex
+                                  url:(NSString *)url
+                           groupIndex:(NSInteger)groupIndex
+                     focusAfterCreate:(BOOL)focusAfterCreate;
+
+/// Close the group identified by `tokenHex` (closes all of its tabs).
+- (void)closeGroupWithWindowId:(int64_t)windowId
+                      tokenHex:(NSString *)tokenHex;
+
+/// Reposition the group identified by `tokenHex` so that it starts at
+/// `toIndex` in the strip.
+- (void)moveGroupWithWindowId:(int64_t)windowId
+                     tokenHex:(NSString *)tokenHex
+                      toIndex:(NSInteger)toIndex;
+
+/// Reposition the group identified by `tokenHex` so that its **last**
+/// member lands immediately before `anchorTabId` in the strip.
+/// `anchorTabId` MUST NOT be a member of the group; if it is, the call
+/// logs WARNING and is a no-op. Anchor-based analog of
+/// moveTabWithWindowId:tabId:beforeTabId: for whole groups; lets Mac
+/// avoid computing absolute TabStripModel indices.
+- (void)moveGroupWithWindowId:(int64_t)windowId
+                     tokenHex:(NSString *)tokenHex
+                  beforeTabId:(int64_t)anchorTabId;
+
+/// Reposition the group identified by `tokenHex` so that its **first**
+/// member lands immediately after `anchorTabId` in the strip. Same
+/// constraints as the beforeTabId variant.
+- (void)moveGroupWithWindowId:(int64_t)windowId
+                     tokenHex:(NSString *)tokenHex
+                   afterTabId:(int64_t)anchorTabId;
+
+/// Cross-window: move the group identified by `tokenHex` from
+/// `sourceWindowId` to `targetWindowId`, landing **before** the tab
+/// identified by `anchorTabId` in the target strip. Group identity
+/// (TabGroupId/token), active member, and member order are preserved —
+/// Chromium runs an atomic detach + insert via
+/// `TabStripModel::DetachTabGroupForInsertion` +
+/// `InsertDetachedTabGroupAt`. If the target index would fall inside
+/// another group on the target strip, it is clamped to the nearest
+/// boundary. Failure paths (window/group/anchor lookup miss, same
+/// source/target window) log WARNING and no-op.
+- (void)moveGroupWithWindowId:(int64_t)sourceWindowId
+                     tokenHex:(NSString *)tokenHex
+                   toWindowId:(int64_t)targetWindowId
+                  beforeTabId:(int64_t)anchorTabId;
+
+/// Cross-window: same constraints as the beforeTabId variant; lands
+/// **after** the anchor in the target strip.
+- (void)moveGroupWithWindowId:(int64_t)sourceWindowId
+                     tokenHex:(NSString *)tokenHex
+                   toWindowId:(int64_t)targetWindowId
+                   afterTabId:(int64_t)anchorTabId;
+
+/// Tear-off: move the group identified by `tokenHex` into a new
+/// Browser window. Group identity, active member, and member order
+/// are preserved. Mirrors upstream `MoveGroupToNewWindow` helper in
+/// chrome/browser/ui/browser_commands.cc. New window inherits the
+/// source profile; placement is left to the caller (Mac side uses
+/// `TabDraggingSession.recordPendingTearOffWindowPlacement` +
+/// `.mainBrowserWindowCreated` notification, identical to single-tab
+/// tear-off).
+- (void)moveGroupToNewWindowWithWindowId:(int64_t)sourceWindowId
+                                tokenHex:(NSString *)tokenHex;
+
+/// Update the group's display title (empty string clears to Chromium auto).
+- (void)updateTabGroupTitleWithWindowId:(int64_t)windowId
+                                tokenHex:(NSString *)tokenHex
+                                   title:(NSString *)title;
+
+/// Update the group's color via lowercase wire string ("blue"/"red"/...).
+- (void)updateTabGroupColorWithWindowId:(int64_t)windowId
+                                tokenHex:(NSString *)tokenHex
+                                   color:(NSString *)color;
+
+/// Update the group's collapsed state (YES collapses, NO expands).
+- (void)updateTabGroupCollapsedWithWindowId:(int64_t)windowId
+                                    tokenHex:(NSString *)tokenHex
+                                 isCollapsed:(BOOL)isCollapsed;
 // Wrapped by base::apple::CallWithEHFrame for Chromium-side exception handling.
 - (void)callWithEHFrame:(void (^)(void))block;
 - (void)openURLInNewWindow:(NSString *)url;
@@ -308,17 +534,6 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// @param windowId The window ID to execute the command on
 - (void)executeCommand:(int)commandId windowId:(int64_t)windowId;
 
-- (void)moveTabWithWindowId:(int64_t)windowId
-                      tabId:(int64_t)tabId
-                beforeTabId:(int64_t)anchorTabId;
-- (void)moveTabWithWindowId:(int64_t)windowId
-                      tabId:(int64_t)tabId
-                 afterTabId:(int64_t)anchorTabId;
-- (void)moveTabToFirstWithWindowId:(int64_t)windowId
-                             tabId:(int64_t)tabId;
-- (void)moveTabToLastWithWindowId:(int64_t)windowId
-                            tabId:(int64_t)tabId;
-
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
 - (void)getFaviconForURL:(NSString *)urlString profileId:(NSString * _Nullable)profileId completion:(void (^)(NSData * _Nullable faviconData))completion;
@@ -330,6 +545,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (NSData * _Nullable)thumbnailForTab:(int64_t)tabId;
 
 - (void)submitFeedbackWithParams:(NSDictionary *)params windowId:(int64_t)windowId;
+- (void)getFeedbackSystemLogsTextWithWindowId:(int64_t)windowId
+                                   completion:(void (^ _Nonnull)(NSString * _Nullable text))completion;
 
 - (void)notifyLoginCompleted;
 - (void)notifyRebuildMenuAfterLogin;
@@ -441,6 +658,68 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                  requestId:(NSString *)requestId
                   senderId:(NSString *)senderId;
 
+// ==========================================================================
+// Split view control (Mac → Chromium)
+// ==========================================================================
+
+/// Create a split from two existing tabs. Returns the split ID string, or nil on failure.
+- (NSString * _Nullable)createSplitWithTabId:(int64_t)primaryTabId
+                                  secondTabId:(int64_t)secondaryTabId
+                                       layout:(NSString *)layout
+                                     windowId:(int64_t)windowId;
+
+/// Disband a split (tabs remain open, just no longer side-by-side).
+- (void)removeSplit:(NSString *)splitId windowId:(int64_t)windowId;
+
+/// Change split orientation (@"vertical" side-by-side, @"horizontal" stacked).
+- (void)updateSplitLayout:(NSString *)splitId layout:(NSString *)layout windowId:(int64_t)windowId;
+
+/// Adjust the divider position (ratio 0.0–1.0 is the fraction occupied by the primary pane).
+- (void)updateSplitRatio:(NSString *)splitId ratio:(double)ratio windowId:(int64_t)windowId;
+
+/// Swap the positions of the two tabs within the split.
+- (void)reverseTabsInSplit:(NSString *)splitId windowId:(int64_t)windowId;
+
+/// Mark `tabId` as the soon-to-be partner of a split currently being formed.
+/// While marked, the active-tab visibility path skips the OCCLUDED transition
+/// and the deferred-HIDDEN flip for that tab. Used by "Open as Split" so the
+/// existing tab does not bounce through HIDDEN (which RenderWidgetHostViewCocoa
+/// does not always cleanly resume from) before its pane is mounted in the
+/// split. The mark is cleared automatically when the split is established
+/// (CreateSplit) or the tab leaves the strip; callers should also clear
+/// explicitly on timeout or failure paths.
+- (void)markPendingSplitPartnerWithTabId:(int64_t)tabId
+                                windowId:(int64_t)windowId;
+- (void)clearPendingSplitPartnerWithTabId:(int64_t)tabId
+                                 windowId:(int64_t)windowId;
+
+/// Cross-tab reordering: replace or swap one side of a split with another tab in the strip.
+/// @param splitId   Target split.
+/// @param slotIndex 0 = primary slot, 1 = secondary slot.
+/// @param otherTabId The tab outside the split that moves in.
+/// @param swap      YES → kSwap (other tab takes the slot, evicted tab takes other's old position).
+///                  NO  → kReplace (evicted tab is closed).
+/// If neither side of the split is currently active, the targeted slot is
+/// activated first so Chromium's "split contains the active tab" invariant
+/// holds. Callers should not rely on focus being preserved across this call.
+- (void)swapTabInSplit:(NSString *)splitId
+              slotIndex:(int)slotIndex
+              withTabId:(int64_t)otherTabId
+                   swap:(BOOL)swap
+               windowId:(int64_t)windowId;
+
+/// Move the entire split (both tabs) as a block to a new position in the tab strip.
+/// Pin/group state of the split is preserved.
+- (void)moveSplit:(NSString *)splitId
+          toIndex:(int)toIndex
+         windowId:(int64_t)windowId;
+
+/// Returns the split ID for a tab, or nil if the tab is not currently in a split.
+- (NSString * _Nullable)getSplitIdForTabId:(int64_t)tabId windowId:(int64_t)windowId;
+
+/// Returns all active split ID strings in the given window.
+- (NSArray<NSString *> *)listSplitsInWindow:(int64_t)windowId;
+
 @end
 
 @protocol WebContentWrapper <NSObject>
@@ -481,6 +760,31 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)moveSelfToIndex:(NSInteger)newIndex selectAfterMove:(BOOL)selectAfterMove;
 - (void)moveSelfToNewWindow:(BOOL)activateNewWindow;
 - (void)moveSelfToWindow:(int64_t)targetWindowId atIndex:(NSInteger)insertIndex;
+
+/// Cross-window: move this tab to `targetWindowId`, inserting it
+/// immediately before `anchorTabId` and joining `targetGroupTokenHex`.
+- (void)moveSelfToWindow:(int64_t)targetWindowId
+   andAddToGroupTokenHex:(NSString *)targetGroupTokenHex
+             beforeTabId:(int64_t)anchorTabId;
+
+/// Cross-window: same as above but inserts after `anchorTabId`.
+- (void)moveSelfToWindow:(int64_t)targetWindowId
+   andAddToGroupTokenHex:(NSString *)targetGroupTokenHex
+              afterTabId:(int64_t)anchorTabId;
+
+/// Split-aware tear-off: when the receiver belongs to a split, move BOTH tabs
+/// of the split (preserving layout and ratio) into a new window as a single
+/// user-visible operation. The move is not transactional — the source split is
+/// dissolved, both tabs are detached, a new window is created, and the tabs
+/// are re-inserted and re-grouped; observers see those intermediate states.
+/// When the receiver is not in a split, behaves identically to moveSelfToNewWindow:.
+- (void)moveSplitToNewWindow:(BOOL)activateNewWindow;
+/// Split-aware cross-window move: when the receiver belongs to a split, move
+/// BOTH tabs of the split into the target window starting at insertIndex,
+/// preserving layout and ratio. Same intermediate-state caveat as
+/// moveSplitToNewWindow:. When not in a split, behaves identically to
+/// moveSelfToWindow:atIndex:.
+- (void)moveSplitToWindow:(int64_t)targetWindowId atIndex:(NSInteger)insertIndex;
 - (void)updateTabCustomValue:(NSString *)customValue;
 - (void)focus;
 - (void)restoreFocus;

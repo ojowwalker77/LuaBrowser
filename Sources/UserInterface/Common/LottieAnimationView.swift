@@ -58,6 +58,8 @@ struct LottieAnimationViewConfig {
     var hoverScale: CGFloat
     /// Whether to reverse animation when mouse exits (animation stays at last frame until exit)
     var reverseOnHoverExit: Bool
+    /// Whether the wrapper should consume pointer events.
+    var allowsHitTesting: Bool
     
     init(
         animationName: String,
@@ -74,7 +76,8 @@ struct LottieAnimationViewConfig {
         animationSpeed: Double? = nil,
         enableHoverScale: Bool = false,
         hoverScale: CGFloat = 1.05,
-        reverseOnHoverExit: Bool = false
+        reverseOnHoverExit: Bool = false,
+        allowsHitTesting: Bool = true
     ) {
         self.animationName = animationName
         self.reverseAnimationName = reverseAnimationName
@@ -91,6 +94,7 @@ struct LottieAnimationViewConfig {
         self.enableHoverScale = enableHoverScale
         self.hoverScale = hoverScale
         self.reverseOnHoverExit = reverseOnHoverExit
+        self.allowsHitTesting = allowsHitTesting
     }
 }
 
@@ -190,7 +194,7 @@ struct LottieAnimationView: View {
                 playReverseAnimation()
             }
         }
-        .allowsHitTesting(state.isEnabled)
+        .allowsHitTesting(state.isEnabled && config.allowsHitTesting)
     }
     
     // MARK: - Lottie Content
@@ -427,6 +431,11 @@ class LottieAnimationNSView: NSView {
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard config.allowsHitTesting else { return nil }
+        return super.hitTest(point)
     }
     
     // MARK: - Setup

@@ -143,4 +143,130 @@ final class TabStripLayoutTests: XCTestCase {
         XCTAssertEqual(activeWidth, 100, "The active tab width should remain 100 px.")
         XCTAssertEqual(width0, width2, "Non-active tabs should have the same width.")
     }
+
+    // MARK: - Chip width cache miss
+
+    /// Regression: `chipFullWidths` is populated asynchronously by
+    /// `TabStrip.refreshChipWidth(...)`, so a visible `GroupRun` may
+    /// briefly appear with no cached measurement (newly-created group,
+    /// cross-window join, frame between cache eviction and reconfigure).
+    /// The engine must reserve a nonzero, hit-testable area for that
+    /// chip; otherwise click / context-menu / whole-group drag silently
+    /// vanish for that group until the cache catches up.
+    func testGroupedLayoutFallsBackToMaxFullWidthWhenChipMeasurementMissing() {
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 1000,
+            tabCount: 4,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            groupRuns: [GroupRun(token: token, range: 1...2, isCollapsed: false)],
+            chipFullWidths: [:]  // cache miss
+        )
+
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        guard let placement = output.chipFrames[token] else {
+            XCTFail("Visible group should produce a chip frame even with no cached width.")
+            return
+        }
+        XCTAssertEqual(placement.frame.width, TabGroupChipView.maxFullWidth,
+            "Cache miss must reserve `maxFullWidth` so the chip stays hit-testable.")
+        XCTAssertGreaterThan(placement.frame.width, 0,
+            "Chip frame must have a nonzero hit-test area.")
+    }
+
+    // MARK: - Chip right separator
+
+    /// Expanded chip emits a right separator positioned between chip
+    /// and its first member tab, with neighbor index = run.lowerBound.
+    func testExpandedChipEmitsRightSeparatorTargetingFirstMember() {
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 1000,
+            tabCount: 4,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            groupRuns: [GroupRun(token: token, range: 1...2, isCollapsed: false)],
+            chipFullWidths: [token: 120]
+        )
+
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+        guard let placement = output.chipFrames[token] else {
+            XCTFail("Expected chip placement for visible expanded group.")
+            return
+        }
+        XCTAssertNotNil(placement.rightSeparatorX,
+            "Expanded chip with a following member must emit a right separator.")
+        XCTAssertEqual(placement.rightSeparatorNeighborIndex, 1,
+            "Right separator neighbor index should be run.lowerBound (the first member).")
+        if let sepX = placement.rightSeparatorX {
+            XCTAssertGreaterThan(sepX, placement.frame.maxX,
+                "Right separator sits to the right of the chip frame.")
+        }
+    }
+
+    /// Collapsed chip targets the first tab AFTER the run for hide-rule
+    /// purposes (its members are zero-width placeholders).
+    func testCollapsedChipRightSeparatorTargetsTabAfterRun() {
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 1000,
+            tabCount: 4,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            groupRuns: [GroupRun(token: token, range: 1...2, isCollapsed: true)],
+            chipFullWidths: [token: 120]
+        )
+
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+        guard let placement = output.chipFrames[token] else {
+            XCTFail("Expected chip placement for visible collapsed group.")
+            return
+        }
+        XCTAssertNotNil(placement.rightSeparatorX,
+            "Collapsed chip with a following tab must emit a right separator.")
+        XCTAssertEqual(placement.rightSeparatorNeighborIndex, 3,
+            "Collapsed chip's right separator neighbor should be run.upperBound + 1.")
+    }
+
+    /// Group occupying the strip's tail (no tab after) emits no right
+    /// separator — there is no neighbor to draw against.
+    func testChipAtStripEndEmitsNoRightSeparator() {
+        let token = "g1"
+        let input = TabStripLayoutInput(
+            containerWidth: 1000,
+            tabCount: 3,
+            activeTabIndex: 0,
+            spacing: 2,
+            idealTabWidth: 160,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            groupRuns: [GroupRun(token: token, range: 1...2, isCollapsed: true)],
+            chipFullWidths: [token: 120]
+        )
+
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+        guard let placement = output.chipFrames[token] else {
+            XCTFail("Expected chip placement for visible group.")
+            return
+        }
+        XCTAssertNil(placement.rightSeparatorX,
+            "Collapsed group at strip end has no neighbor → no right separator.")
+        XCTAssertNil(placement.rightSeparatorNeighborIndex,
+            "Neighbor index must be nil when there is no separator.")
+    }
 }

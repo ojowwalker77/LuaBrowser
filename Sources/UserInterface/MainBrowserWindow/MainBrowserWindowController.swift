@@ -92,6 +92,10 @@ class MainBrowserWindowController: NSWindowController {
                                                selector: #selector(myWindowWillExitFullScreen),
                                                name: NSWindow.willExitFullScreenNotification,
                                                object: window)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(myWindowWillClose(_:)),
+                                               name: NSWindow.willCloseNotification,
+                                               object: window)
         browserState.themeContext.themeAppearancePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
@@ -178,7 +182,16 @@ class MainBrowserWindowController: NSWindowController {
             browserState.toggleFullScreenMode(false)
         }
     }
-    
+
+    @objc private func myWindowWillClose(_ notification: Notification) {
+        // Defensive teardown for placeholder mode. In practice Chromium's
+        // Browser::~Browser → HidePlaceholder fires first and clears state,
+        // making this a no-op; kept as a backstop in case the destruction
+        // order ever shifts. See spec §9.1 / §9.4.
+        browserState.exitPlaceholderMode()
+    }
+
+
     /// Restore and show a window that was previously hidden (e.g., dangling window after login)
     /// This restores the window to normal state and makes it visible
     func restoreAndShowWindow() {

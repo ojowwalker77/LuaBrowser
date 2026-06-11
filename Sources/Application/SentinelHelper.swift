@@ -3,11 +3,17 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import AppKit
 import Foundation
 import ServiceManagement
 import CocoaLumberjackSwift
 
 enum SentinelHelper {
+    struct RunningInfo: Equatable {
+        let bundleID: String
+        let version: String?
+        let build: String?
+    }
 
     static func register() {
         let identifier = loginItemIdentifier()
@@ -40,6 +46,19 @@ enum SentinelHelper {
             guard let bundleID = $0.bundleIdentifier else { return false }
             return bundleID.caseInsensitiveCompare(identifier) == .orderedSame && !$0.isTerminated
         }
+    }
+
+    static func runningInfo(identifier: String = loginItemIdentifier()) -> RunningInfo? {
+        guard let app = runningApplication(identifier: identifier) else {
+            return nil
+        }
+
+        let versionInfo = readVersionInfo(from: app.bundleURL)
+        return RunningInfo(
+            bundleID: app.bundleIdentifier ?? identifier,
+            version: versionInfo.version,
+            build: versionInfo.build
+        )
     }
 
     static func launch() {
@@ -75,10 +94,7 @@ enum SentinelHelper {
     }
 
     private static func ensureRunning(identifier: String) {
-        let isRunning = NSWorkspace.shared.runningApplications.contains {
-            guard let bundleID = $0.bundleIdentifier else { return false }
-            return bundleID.caseInsensitiveCompare(identifier) == .orderedSame && !$0.isTerminated
-        }
+        let isRunning = runningApplication(identifier: identifier) != nil
 
         if isRunning {
             AppLogInfo("Sentinel is already running")
@@ -106,6 +122,27 @@ enum SentinelHelper {
                 AppLogInfo("Requested Sentinel login item launch")
             }
         }
+    }
+
+    private static func runningApplication(identifier: String) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first {
+            guard let bundleID = $0.bundleIdentifier else { return false }
+            return bundleID.caseInsensitiveCompare(identifier) == .orderedSame && !$0.isTerminated
+        }
+    }
+
+    private static func readVersionInfo(from bundleURL: URL?) -> (version: String?, build: String?) {
+        guard let infoPlistURL = bundleURL?
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Info.plist", isDirectory: false),
+              let info = NSDictionary(contentsOf: infoPlistURL) as? [String: Any] else {
+            return (nil, nil)
+        }
+
+        return (
+            info["CFBundleShortVersionString"] as? String,
+            info["CFBundleVersion"] as? String
+        )
     }
 
     private static func loginItemURL() -> URL? {

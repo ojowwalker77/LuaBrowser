@@ -10,6 +10,7 @@ import AppKit
 final class WebContentAddressBarViewModel: ObservableObject {
     @Published var displayText: String = ""
     @Published var addressBarWidth: CGFloat = 0
+    @Published var isInPlaceholderMode: Bool = false
 
     private weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
@@ -22,6 +23,28 @@ final class WebContentAddressBarViewModel: ObservableObject {
 
     func bind(currentTab: Tab?) {
         cancellables.removeAll()
+
+        // Placeholder-mode sink: blank text on enter, restore on exit. Lives
+        // outside the `guard let tab` so it stays subscribed even when the
+        // shell sets currentTab=nil.
+        if let browserState {
+            browserState.$isInPlaceholderMode
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] isPlaceholder in
+                    guard let self else { return }
+                    self.isInPlaceholderMode = isPlaceholder
+                    if isPlaceholder {
+                        self.displayText = ""
+                    } else if let url = currentTab?.url {
+                        let alwaysShowURLPath = PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue()
+                        self.displayText = self.formattedDisplayText(urlString: url, alwaysShowURLPath: alwaysShowURLPath)
+                    } else {
+                        self.displayText = ""
+                    }
+                }
+                .store(in: &cancellables)
+        }
 
         guard let tab = currentTab else {
             displayText = ""
@@ -36,15 +59,25 @@ final class WebContentAddressBarViewModel: ObservableObject {
             .prepend(PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue())
             .removeDuplicates()
 
+        let overviewActivePublisher = browserState?.$groupOverviewState
+            .map { $0 != nil }
+            .prepend(browserState?.groupOverviewState != nil)
+            .removeDuplicates()
+            .eraseToAnyPublisher() ?? Just(false).eraseToAnyPublisher()
+
         tab.$url
             .removeDuplicates()
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
-            .combineLatest(alwaysShowURLPathPublisher)
-            .map { [weak self] urlString, alwaysShowURLPath in
-                self?.formattedDisplayText(urlString: urlString ?? "", alwaysShowURLPath: alwaysShowURLPath) ?? ""
+            .combineLatest(alwaysShowURLPathPublisher, overviewActivePublisher)
+            .map { [weak self] urlString, alwaysShowURLPath, overviewActive in
+                guard !overviewActive else { return "" }
+                return self?.formattedDisplayText(urlString: urlString ?? "", alwaysShowURLPath: alwaysShowURLPath) ?? ""
             }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] text in
+                // Skip writes during placeholder mode so the placeholder sink
+                // (which blanks displayText) is not raced by a stale URL update.
+                guard self?.browserState?.isInPlaceholderMode != true else { return }
                 self?.displayText = text
             }
             .store(in: &cancellables)
@@ -189,9 +222,11 @@ struct WebContentAddressBarView: View {
                 .frame(maxHeight: .infinity)
                 .allowsHitTesting(false)
 
-                HStack(spacing: 2) {
-                    copyURLButton
-                    menuButton
+                if !viewModel.isInPlaceholderMode {
+                    HStack(spacing: 2) {
+                        copyURLButton
+                        menuButton
+                    }
                 }
             }
             .padding(.leading, 12)
@@ -220,7 +255,9 @@ struct WebContentAddressBarView: View {
     }
 
     private var backgroundShape: some View {
-        let baseColor = showBackgroundWhenInactive
+        // Placeholder mode shows the inactive background so users can spot
+        // the address bar without hovering — it'd otherwise be a blank patch.
+        let baseColor = (showBackgroundWhenInactive || viewModel.isInPlaceholderMode)
             ? Color(.sidebarTabHovered)
             : ThemedColor.contentOverlayBackground.swiftUIColor(theme: theme, appearance: appearance)
         let hoverColor = Color(.sidebarTabHoveredColorEmphasized)
@@ -265,6 +302,9 @@ struct WebContentAddressBarView: View {
     }
 
     private var displayText: String {
+        if viewModel.isInPlaceholderMode {
+            return NSLocalizedString("Search or Enter URL", comment: "Web content address bar - Placeholder text shown when window has no tab")
+        }
         if viewModel.displayText.isEmpty {
             return ""
         }
@@ -272,7 +312,12 @@ struct WebContentAddressBarView: View {
     }
 
     private var displayTextColor: Color {
-        viewModel.displayText.isEmpty
+        if viewModel.isInPlaceholderMode {
+            // Match SideAddressBar's placeholder text — system standard placeholder
+            // color is weaker than textSecondary and signals "fill me in" affordance.
+            return Color(NSColor.placeholderTextColor)
+        }
+        return viewModel.displayText.isEmpty
             ? ThemedColor.textSecondary.swiftUIColor(theme: theme, appearance: appearance)
             : ThemedColor.textPrimary.swiftUIColor(theme: theme, appearance: appearance)
     }

@@ -89,6 +89,33 @@ struct BookmarkEvent: WindowEvent {
     }
 }
 
+struct TabGroupEvent: WindowEvent {
+    var browserId: Int?
+    var scope: EventScope {
+        if let browserId {
+            return .window(browserId: browserId)
+        } else {
+            return .global
+        }
+    }
+    let action: TabGroupAction
+
+    enum TabGroupAction {
+        case groupCreated(token: String,
+                          title: String,
+                          color: GroupColor,
+                          isCollapsed: Bool,
+                          initialTabIds: [Int])
+        case groupVisualDataChanged(token: String,
+                                    title: String,
+                                    color: GroupColor,
+                                    isCollapsed: Bool)
+        case groupClosed(token: String)
+        case tabJoinedGroup(tabId: Int, token: String)
+        case tabLeftGroup(tabId: Int, token: String)
+    }
+}
+
 struct ExtensionEvent: WindowEvent {
     var browserId: Int?
     var scope: EventScope {
@@ -99,9 +126,33 @@ struct ExtensionEvent: WindowEvent {
         }
     }
     let action: ExtensionAction
-    
+
     enum ExtensionAction {
         case extensionChanged(info: [[AnyHashable : Any]])
+    }
+}
+
+struct SplitEvent: WindowEvent {
+    var browserId: Int?
+    var scope: EventScope {
+        if let browserId {
+            return .window(browserId: browserId)
+        } else {
+            return .global
+        }
+    }
+    let action: SplitAction
+
+    enum SplitAction {
+        case created(splitId: String,
+                     primaryTabId: Int,
+                     secondaryTabId: Int,
+                     layout: SplitLayout,
+                     ratio: Double)
+        case visualsChanged(splitId: String, layout: SplitLayout, ratio: Double)
+        case contentsChanged(splitId: String, primaryTabId: Int, secondaryTabId: Int)
+        case removed(splitId: String)
+        case openLinkAsSplitPartner(partnerTabId: Int, url: String)
     }
 }
 
@@ -138,6 +189,10 @@ class EventBus {
             handleBookmarkEvent(bookmarkEvent, in: browserState)
         case let extensionEvent as ExtensionEvent:
             handleExtensionEvent(extensionEvent, in: browserState)
+        case let tabGroupEvent as TabGroupEvent:
+            handleTabGroupEvent(tabGroupEvent, in: browserState)
+        case let splitEvent as SplitEvent:
+            handleSplitEvent(splitEvent, in: browserState)
         default:  fatalError("not support")
         }
     }
@@ -195,12 +250,57 @@ class EventBus {
         }
     }
     
+    @MainActor
+    private func handleTabGroupEvent(_ event: TabGroupEvent, in state: BrowserState) {
+        switch event.action {
+        case let .groupCreated(token, title, color, isCollapsed, initialTabIds):
+            state.handleTabGroupCreated(token: token,
+                                        title: title,
+                                        color: color,
+                                        isCollapsed: isCollapsed,
+                                        initialTabIds: initialTabIds)
+        case let .groupVisualDataChanged(token, title, color, isCollapsed):
+            state.handleTabGroupVisualDataChanged(token: token,
+                                                  title: title,
+                                                  color: color,
+                                                  isCollapsed: isCollapsed)
+        case .groupClosed(let token):
+            state.handleTabGroupClosed(token: token)
+        case let .tabJoinedGroup(tabId, token):
+            state.handleTabJoinedGroup(tabId: tabId, token: token)
+        case let .tabLeftGroup(tabId, token):
+            state.handleTabLeftGroup(tabId: tabId, token: token)
+        }
+    }
+
     private func handleExtensionEvent(_ event: ExtensionEvent, in state: BrowserState) {
         switch event.action {
         case .extensionChanged(let info):
             if let typedInfo = info as? [[String: Any]] {
                 state.extensionManager.extensionChanged(typedInfo)
             }
+        }
+    }
+
+    @MainActor
+    private func handleSplitEvent(_ event: SplitEvent, in state: BrowserState) {
+        switch event.action {
+        case let .created(splitId, primaryTabId, secondaryTabId, layout, ratio):
+            state.handleSplitCreated(splitId: splitId,
+                                     primaryTabId: primaryTabId,
+                                     secondaryTabId: secondaryTabId,
+                                     layout: layout,
+                                     ratio: ratio)
+        case let .visualsChanged(splitId, layout, ratio):
+            state.handleSplitVisualsChanged(splitId: splitId, layout: layout, ratio: ratio)
+        case let .contentsChanged(splitId, primaryTabId, secondaryTabId):
+            state.handleSplitContentsChanged(splitId: splitId,
+                                             primaryTabId: primaryTabId,
+                                             secondaryTabId: secondaryTabId)
+        case .removed(let splitId):
+            state.handleSplitRemoved(splitId: splitId)
+        case let .openLinkAsSplitPartner(partnerTabId, url):
+            state.handleOpenLinkAsSplitPartner(partnerTabId: partnerTabId, url: url)
         }
     }
 }

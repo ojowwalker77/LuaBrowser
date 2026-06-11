@@ -501,10 +501,95 @@ class APIClient {
 
         return try JSONDecoder().decode(Response<DeleteOAuthTokenResponse>.self, from: data)
     }
+
+    // MARK: - Feedback V2
+
+    func presignFeedbackV2Attachments(
+        _ attachments: [FeedbackV2PresignAttachmentRequest]
+    ) async throws -> [FeedbackV2PresignedAttachment] {
+        guard attachments.count <= 5 else {
+            throw APIError.invalidRequest(message: "Feedback V2 presign supports at most five attachments per request")
+        }
+
+        let url = URL(string: "\(accountBaseURL)/api/auth/feedback/v2/attachments/presign")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(FeedbackV2PresignRequest(attachments: attachments))
+
+        let response: Response<FeedbackV2PresignData> = try await executeAccountJSONRequest(request)
+        guard response.code == 0 else {
+            throw APIError.serverError(message: response.message)
+        }
+        return response.data.attachments
+    }
+
+    func uploadFeedbackV2Attachment(
+        fileURL: URL,
+        mimeType: String,
+        presignedAttachment: FeedbackV2PresignedAttachment
+    ) async throws {
+        guard let url = URL(string: presignedAttachment.uploadURL) else {
+            throw APIError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        if presignedAttachment.headers["Content-Type"] == nil {
+            request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
+        }
+        for (header, value) in presignedAttachment.headers {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+
+        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(statusCode: httpResponse.statusCode)
+        }
+    }
+
+    func submitFeedbackV2(_ submitRequest: FeedbackV2SubmitRequest) async throws -> Response<FeedbackV2SubmitData> {
+        guard submitRequest.attachments.count <= 5 else {
+            throw APIError.invalidRequest(message: "Feedback V2 submit supports at most five attachments")
+        }
+
+        let url = URL(string: "\(accountBaseURL)/api/auth/feedback/v2/submit")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(submitRequest)
+
+        let response: Response<FeedbackV2SubmitData> = try await executeAccountJSONRequest(request)
+        guard response.code == 0 else {
+            throw APIError.serverError(message: response.message)
+        }
+        return response
+    }
+
+    private func executeAccountJSONRequest<T: Codable>(_ request: URLRequest) async throws -> Response<T> {
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(statusCode: httpResponse.statusCode)
+        }
+
+        return try JSONDecoder().decode(Response<T>.self, from: data)
+    }
 }
 
 enum APIError: Error {
     case invalidResponse
+    case invalidRequest(message: String)
     case httpError(statusCode: Int)
     case decodingError
+    case serverError(message: String)
 }

@@ -69,6 +69,7 @@ import PostHog
         MemoryUsageMonitor.shared.start()
         
         DefaultExtensionManifestWriter.start()
+        FeedbackOutboxUploader.shared.start()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),

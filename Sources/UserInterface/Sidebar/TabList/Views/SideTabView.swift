@@ -8,6 +8,8 @@ import AppKit
 // MARK: - SideTabView
 
 struct SideTabView: View {
+    static let trailingHoverDeadZoneWidth: CGFloat = 6
+
     var model: TabViewModel
     var onClose: (() -> Void)? = nil
 
@@ -17,6 +19,9 @@ struct SideTabView: View {
         if model.isActive {
             return Color(nsColor: NSColor(resource: .sidebarTabSelected))
         }
+        if model.isMultiSelected {
+            return Color(nsColor: NSColor(resource: .sidebarTabSubSelected))
+        }
         if model.isHovered {
             return Color(nsColor: NSColor(resource: .sidebarTabHovered))
         }
@@ -24,7 +29,20 @@ struct SideTabView: View {
     }
 
     private var borderColor: Color {
-        (model.isActive && appearance == .dark) ? .white.opacity(0.2) : .clear
+        if model.isActive && appearance == .dark {
+            return .white.opacity(0.2)
+        }
+        return .clear
+    }
+
+    private var borderWidth: CGFloat {
+        model.isActive ? 1 : 0
+    }
+
+    private var cornerRadius: CGFloat { 8 }
+
+    private var dropShadowOpacity: Double {
+        model.isActive ? 0.15 : 0
     }
 
     var body: some View {
@@ -32,7 +50,6 @@ struct SideTabView: View {
             UnifiedTabFaviconView(viewModel: model)
                 .frame(width: 16, height: 16)
 
-            // Media Indicators
             if model.isCurrentlyAudible || model.isAudioMuted {
                 UnifiedTabMuteButton(viewModel: model)
             }
@@ -43,23 +60,25 @@ struct SideTabView: View {
                 UnifiedTabCloseButton { onClose?() }
             }
         }
+//        .debugBorder(.green)
         .help(model.displayTitle)
         .padding(.leading, 6)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(backgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(borderColor, lineWidth: model.isActive ? 1 : 0)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(borderColor, lineWidth: borderWidth)
         )
-        .shadow(color: model.isActive ? .black.opacity(0.15) : .clear, radius: 1, x: 0, y: 1)
-        .padding(.horizontal, WebContentConstant.edgesSpacing)
+        .shadow(color: .black.opacity(dropShadowOpacity), radius: 1, x: 0, y: 1)
+        .padding(.leading, WebContentConstant.edgesSpacing)
+        .padding(.trailing, model.isInGroup ? 2 : WebContentConstant.edgesSpacing)
         .padding(.vertical, 2)
         .scaleEffect(model.isPressed ? 0.985 : 1.0)
-        .animation(.easeOut(duration: 0.1), value: model.isPressed)
+        .animation(.easeOut(duration: 0.08), value: model.isPressed)
         .onHover { hovering in
             model.setHovered(hovering)
         }

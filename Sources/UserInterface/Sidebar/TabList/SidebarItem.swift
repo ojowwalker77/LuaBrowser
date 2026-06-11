@@ -41,6 +41,64 @@ enum SidebarItemType {
     case bookmarkFolder
     case newTabButton
     case separator
+    /// Header row for a Chromium tab group, materialized by
+    /// `TabGroupSidebarItem`. Selectable=false; expand/collapse routes
+    /// through the bridge via `requestTabGroupCollapseChange`.
+    case tabGroup
+    /// A non-pinned split rendered as a single merged row with two
+    /// favicons side-by-side. Materialized by `SplitPairSidebarItem`.
+    /// The two panes of a split are merged into one row so the pair
+    /// reads as one item; clicking the left half focuses the left
+    /// pane, clicking the right half focuses the right pane.
+    case splitPair
+}
+
+/// Sidebar row that represents a non-pinned split as a single merged
+/// item carrying both panes. Stable across rebuilds via the underlying
+/// `SplitGroup.id` so the outline-view diff keeps the row in place when
+/// either pane's title / favicon / focus changes.
+final class SplitPairSidebarItem: SidebarItem, ContextMenuRepresentable {
+    let groupId: String
+    // Mutable so a cell observing the strip can swap left/right in place
+    // after Chromium's reverse — the item's `id` is keyed on `groupId`
+    // alone, so the outline-view diff treats a swap as no-op; the cell
+    // re-resolves order and updates these fields directly.
+    var leftTab: Tab
+    var rightTab: Tab
+    weak var browserState: BrowserState?
+
+    init(groupId: String, leftTab: Tab, rightTab: Tab, browserState: BrowserState?) {
+        self.groupId = groupId
+        self.leftTab = leftTab
+        self.rightTab = rightTab
+        self.browserState = browserState
+    }
+
+    var id: AnyHashable { "split:\(groupId)" }
+    var title: String { "\(leftTab.title) | \(rightTab.title)" }
+    var url: String? { leftTab.url }
+    var iconName: String? { nil }
+    var faviconUrl: String? { leftTab.faviconUrl }
+    var isExpandable: Bool { false }
+    var hasChildren: Bool { false }
+    var childrenItems: [SidebarItem] { [] }
+    var depth: Int { 0 }
+    var itemType: SidebarItemType { .splitPair }
+    var isActive: Bool { leftTab.isActive || rightTab.isActive }
+    var isSelectable: Bool { true }
+    var isBookmark: Bool { false }
+
+    func performAction(with owner: SidebarTabListItemOwner?) {
+        // Default click target is the active pane; left as fallback.
+        let target = rightTab.isActive ? rightTab : leftTab
+        target.performAction(with: owner)
+    }
+
+    /// Drives the merged cell's context menu off the left pane so the
+    /// user gets split-aware items (Remove from Split, etc.).
+    @MainActor func makeContextMenu(on menu: NSMenu) {
+        leftTab.makeContextMenu(on: menu)
+    }
 }
 
 // Helper classes for UI elements
@@ -105,4 +163,8 @@ extension NSPasteboard.PasteboardType {
     static let phiBookmark = NSPasteboard.PasteboardType("com.phibrowser.bookmark")
     /// Source window identifier used for cross-window drags.
     static let sourceWindowId = NSPasteboard.PasteboardType("com.phibrowser.sourceWindowId")
+    /// Tab-group pasteboard type storing the group's hex token. Used
+    /// when the user drags a `TabGroupSidebarItem`'s header — the
+    /// payload identifies the entire contiguous group block.
+    static let tabGroup = NSPasteboard.PasteboardType("com.phibrowser.tabGroup")
 }

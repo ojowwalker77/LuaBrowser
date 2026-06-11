@@ -315,9 +315,11 @@ extension AppController {
 
     private func canBookmarkCurrentTab() -> Bool {
         guard !isActiveWindowIncognito() else { return false }
-        guard let tab = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.focusingTab,
-              let url = tab.url,
-              !url.isEmpty else {
+        guard let state = MainBrowserWindowControllersManager.shared
+            .activeWindowController?.browserState,
+              !state.isInPlaceholderMode,
+              let tab = state.focusingTab,
+              let url = tab.url, !url.isEmpty else {
             return false
         }
 
@@ -549,9 +551,45 @@ extension AppController {
     // MARK: - Menu Validation
 
     @objc func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        // Placeholder mode: tab-targeted menu items must not act on the
+        // (now-empty) tab strip. Chromium-side CommandUpdater already disables
+        // most of these because the placeholder isn't in TabStripModel; this
+        // is belt-and-suspenders for selector-based items (AI sidebar) and
+        // defensive against any Chromium command that might still trip.
+        if MainBrowserWindowControllersManager.shared
+            .getActiveWindowState()?.isInPlaceholderMode == true {
+            if item.action == #selector(toggleChatbar(_:)) { return false }
+            if let menuItem = item as? NSMenuItem {
+                let placeholderDisabledTags: Set<Int> = [
+                    CommandWrapper.IDC_RELOAD.rawValue,
+                    CommandWrapper.IDC_RELOAD_BYPASSING_CACHE.rawValue,
+                    33009,                                       // IDC_RELOAD_CLEARING_CACHE
+                    CommandWrapper.IDC_CLOSE_TAB.rawValue,
+                    CommandWrapper.IDC_VIEW_SOURCE.rawValue,
+                    CommandWrapper.IDC_DEV_TOOLS.rawValue,
+                    CommandWrapper.IDC_DEV_TOOLS_INSPECT.rawValue,
+                    CommandWrapper.IDC_DEV_TOOLS_CONSOLE.rawValue,
+                    40007,                                       // IDC_DEV_TOOLS_DEVICES
+                    40237,                                       // IDC_DEV_TOOLS_TOGGLE
+                    CommandWrapper.IDC_FIND.rawValue,
+                    CommandWrapper.IDC_FIND_NEXT.rawValue,
+                    CommandWrapper.IDC_FIND_PREVIOUS.rawValue,
+                    CommandWrapper.IDC_PRINT.rawValue,
+                    CommandWrapper.IDC_ZOOM_PLUS.rawValue,
+                    CommandWrapper.IDC_ZOOM_MINUS.rawValue,
+                    CommandWrapper.IDC_ZOOM_NORMAL.rawValue,
+                    CommandWrapper.IDC_SAVE_PAGE.rawValue,
+                    CommandWrapper.IDC_BACK.rawValue,
+                    CommandWrapper.IDC_FORWARD.rawValue,
+                ]
+                if placeholderDisabledTags.contains(menuItem.tag) { return false }
+            }
+        }
+
         if item.action == #selector(toggleChatbar(_:)) {
             let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-            if !phiAIEnabled || MainBrowserWindowControllersManager.shared.getActiveWindowState()?.isIncognito ?? false || MainBrowserWindowControllersManager.shared.getActiveWindowState()?.focusingTab?.aiChatEnabled == false {
+            let state = MainBrowserWindowControllersManager.shared.getActiveWindowState()
+            if !phiAIEnabled || state?.isIncognito ?? false || state?.groupOverviewState != nil || state?.focusingTab?.aiChatEnabled == false {
                 return false
             }
         }

@@ -23,6 +23,7 @@ class WebContentHeaderState: ObservableObject {
     @Published var isProgressVisible: Bool = false
     @Published var isDownloadPopoverShown: Bool = false
     @Published var isIncognito: Bool = false
+    @Published var isInPlaceholderMode: Bool = false
 
     init() {
         let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
@@ -74,6 +75,9 @@ class WebContentHeader: NSView {
     private let state = WebContentHeaderState()
     private let downloadViewModel = DownloadButtonViewModel()
     private var cancellables = Set<AnyCancellable>()
+    /// Subscription for the current tab's split-partner `aiChatEnabled` state,
+    /// rebuilt whenever the tab or split membership changes.
+    private var partnerAIChatEnabledCancellable: AnyCancellable?
     private weak var browserState: BrowserState?
     private var didSetupHostingView = false
     private var themeObserver = ThemeObserver.shared
@@ -203,16 +207,47 @@ class WebContentHeader: NSView {
                 self?.updateLayoutVisibility()
             }
             .store(in: &cancellables)
+
+        // Re-run layout visibility when entering/leaving placeholder mode so
+        // navigation + chat buttons hide alongside the placeholder shell.
+        unsafeBrowserState.$isInPlaceholderMode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
     }
 
     private func setupObservers() {
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
+        partnerAIChatEnabledCancellable?.cancel()
+        partnerAIChatEnabledCancellable = nil
         setupConfigObserver()
 
         unsafeBrowserState?.$sidebarCollapsed
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
+
+        unsafeBrowserState?.$groupOverviewState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
+
+        // Split membership controls whether we treat the partner's
+        // aiChatEnabled as a fallback for the chat button. Rebind the partner
+        // observer and refresh on every splits change so the button reacts
+        // when this tab joins or leaves a split.
+        unsafeBrowserState?.$splits
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.observePartnerAIChatEnabled()
                 self?.updateLayoutVisibility()
             }
             .store(in: &cancellables)
@@ -255,6 +290,32 @@ class WebContentHeader: NSView {
                 self?.updateLayoutVisibility()
             }
             .store(in: &cancellables)
+
+        observePartnerAIChatEnabled()
+    }
+
+    /// Resolve the current tab's split partner, if any.
+    private func splitPartner() -> Tab? {
+        guard let state = unsafeBrowserState,
+              let tab = currentTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid) else {
+            return nil
+        }
+        return state.tabs.first { $0.guid == partnerId }
+    }
+
+    /// Observe `aiChatEnabled` on the current tab's split partner so the chat
+    /// button stays visible while either pane has chat enabled.
+    private func observePartnerAIChatEnabled() {
+        partnerAIChatEnabledCancellable?.cancel()
+        partnerAIChatEnabledCancellable = nil
+        guard let partner = splitPartner() else { return }
+        partnerAIChatEnabledCancellable = partner.$aiChatEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
     }
 
     private func updateLayoutVisibility() {
@@ -263,19 +324,27 @@ class WebContentHeader: NSView {
         let traditionalLayout = layoutMode.isTraditional
         let isCollapsed = unsafeBrowserState?.sidebarCollapsed ?? false
         let isIncognito = unsafeBrowserState?.isIncognito ?? false
-        let aiChatEnabled = currentTab?.aiChatEnabled ?? false
+        let overviewActive = unsafeBrowserState?.groupOverviewState != nil
+        let focusedAIChat = currentTab?.aiChatEnabled ?? false
+        // In a split the chat is shared between the two panes, so keep the
+        // button visible while either pane has chat enabled (e.g. one side
+        // is an NTP and the other is a real page).
+        let partnerAIChat = splitPartner()?.aiChatEnabled ?? false
+        let aiChatEnabled = focusedAIChat || partnerAIChat
+        let isInPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.state.showAddressBar = navigationAtTop
-            self.state.showNavigationButtons = navigationAtTop
-            self.state.showChatButton = navigationAtTop && !isIncognito && aiChatEnabled && phiAIEnabled
-            self.state.showFeedbackButton = traditionalLayout || (navigationAtTop && isCollapsed)
-            self.state.showDownloadButton = traditionalLayout || (navigationAtTop && isCollapsed)
-            self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito
+            self.state.showNavigationButtons = navigationAtTop && !isInPlaceholder
+            self.state.showChatButton = navigationAtTop && !overviewActive && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
+            self.state.showFeedbackButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
+            self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
+            self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
             self.state.showSidebarButton = !traditionalLayout && navigationAtTop && isCollapsed
             self.state.isIncognito = isIncognito
+            self.state.isInPlaceholderMode = isInPlaceholder
         }
     }
 
@@ -302,6 +371,17 @@ class WebContentHeader: NSView {
     }
 
     @objc private func aiChatButtonClicked() {
+        // Defense in depth: chat button should already be hidden in placeholder
+        // mode (see updateLayoutVisibility). Belt-and-braces guard avoids
+        // toggling chat if a stale tap somehow reaches this handler.
+        guard unsafeBrowserState?.isInPlaceholderMode != true else {
+            NSSound.beep()
+            return
+        }
+        guard unsafeBrowserState?.groupOverviewState == nil else {
+            NSSound.beep()
+            return
+        }
         unsafeBrowserState?.toggleAIChat()
     }
 

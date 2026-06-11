@@ -24,12 +24,24 @@ class WebContentContainerViewController: NSViewController {
     /// Currently displayed WebContentViewController
     private weak var currentWebContentController: WebContentViewController?
 
+    /// Owned by this controller while in placeholder mode; released on exit.
+    /// Mutually exclusive with the active tab's WCVC (only one is visible
+    /// in contentContainer at a time).
+    private var placeholderShell: PlaceholderShellViewController?
+
     /// Shared bookmark bar owned once per window and moved between controllers.
     private var sharedBookmarkBar: BookmarkBar?
     /// Current host for the shared bookmark bar.
     private weak var sharedBookmarkBarHostController: WebContentViewController?
 
-    var addressBarAnchorView: NSView? { currentWebContentController?.addressBarAnchorView }
+    var addressBarAnchorView: NSView? {
+        // In placeholder mode the shell owns the anchor — needed for the
+        // omnibox popup when invoked via cmd+L.
+        if let shell = placeholderShell {
+            return shell.addressBarAnchorView
+        }
+        return currentWebContentController?.addressBarAnchorView
+    }
 
     // =========================================================================
     // Tab switch
@@ -106,12 +118,25 @@ class WebContentContainerViewController: NSViewController {
     private var topBarHeightConstraint: Constraint?
     private var topBarTopConstraint: Constraint?
     
-    /// Container view for the current WebContentViewController
-    private lazy var contentContainer: NSView = {
-        let view = NSView()
+    /// Container view for the current WebContentViewController. Also serves
+    /// as the drop target for "drag a tab onto the left third → make a split".
+    private lazy var contentContainer: SplitTabDropContainer = {
+        let view = SplitTabDropContainer()
         view.wantsLayer = true
+        view.browserState = self.browserState
+        view.pageAreaProvider = { [weak self, weak view] in
+            guard let self, let view,
+                  let current = self.currentWebContentController else { return nil }
+            return current.pageContentAreaFrame(in: view)
+        }
         return view
     }()
+
+    /// Exposed so the horizontal TabStrip (comfortable layout) can show the
+    /// split-drop hint while a tab is being torn out — TabStrip drives drags
+    /// with raw mouse events, not an NSDraggingSession, so the container's
+    /// NSDraggingDestination callbacks never fire in that mode.
+    var splitTabDropContainer: SplitTabDropContainer { contentContainer }
 
     /// Single CAShapeLayer that strokes a unified path covering the active
     /// tab's outline (top + sides + inverse curves) AND splitViewContainer's
@@ -121,6 +146,26 @@ class WebContentContainerViewController: NSViewController {
     /// would clip half of the stroke.
     private let outerBorderLayer = CAShapeLayer()
     private var outerBorderThemeObservation: AnyObject?
+
+    /// Per-group colored stroke that traces a single unified path:
+    /// horizontal underline from the chip's leading edge → up-and-over
+    /// the active tab's outline (when the active tab is in this group)
+    /// → horizontal underline to the last member tab's trailing edge.
+    /// One layer per visible expanded group, keyed by token.
+    ///
+    /// Replaces what would otherwise be (a) a separate filled band in
+    /// `TabStrip.normalContainer.layer` and (b) a separate stroke
+    /// covering the active tab outline. Two-shape rendering creates a
+    /// perpendicular seam at the inverse-curve apex that no padding /
+    /// corner-radius tweak can fully eliminate; one path eliminates it
+    /// by construction.
+    private var groupBoundaryLayers: [String: CAShapeLayer] = [:]
+
+    /// Per-group `objectWillChange` subscriptions — needed because the
+    /// active tab's group color and the active tab's groupToken can both
+    /// flip without `BrowserState.$focusingTab` or `$groups` republishing.
+    /// Mirrors the pattern used in `TabStrip.bindData`.
+    private var groupChangeCancellables: [String: AnyCancellable] = [:]
 
     enum LayerZIndex {
         /// Stacks above every sibling sublayer in `view.layer` so the active
@@ -221,6 +266,17 @@ class WebContentContainerViewController: NSViewController {
         outerBorderThemeObservation = view.subscribe { [weak self] _, _ in
             guard let self else { return }
             self.outerBorderLayer.strokeColor = ThemedColor.border.resolve(in: self.view).cgColor
+            // Group boundary layers use `group.color.nsColor.cgColor`,
+            // which doesn't auto-rebind on appearance change. Refresh
+            // each live layer here so the underline tracks the system
+            // theme. Wrap in `performAsCurrentDrawingAppearance` to
+            // ensure resolution picks the correct asset variant.
+            self.view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                for (token, layer) in self.groupBoundaryLayers {
+                    guard let group = self.browserState?.groups[token] else { continue }
+                    layer.strokeColor = group.color.nsColor.cgColor
+                }
+            }
         }
         
         // Add left-edge hover trigger for floating sidebar.
@@ -313,6 +369,25 @@ class WebContentContainerViewController: NSViewController {
             }
             .store(in: &cancellables)
 
+        // Placeholder mode attach/detach.
+        //
+        // SYNCHRONOUS by design (no `.receive(on:)`, no `Task { @MainActor }`).
+        // See spec §9.1: the UAF contract requires the NSView to be detached
+        // from the AppKit hierarchy before `exitPlaceholderMode` returns to
+        // Chromium, which then resets `placeholder_web_contents_` and destroys
+        // the underlying NSView. Any async hop here would dangle.
+        browserState?.$isInPlaceholderMode
+            .removeDuplicates()
+            .sink { [weak self] isPlaceholder in
+                guard let self else { return }
+                if isPlaceholder {
+                    self.attachPlaceholderShell()
+                } else {
+                    self.detachPlaceholderShell()
+                }
+            }
+            .store(in: &cancellables)
+
         browserState?.$sidebarCollapsed
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -365,6 +440,36 @@ class WebContentContainerViewController: NSViewController {
                 self?.updateStatusURL(url)
             }
             .store(in: &cancellables)
+
+        // Active-tab outline tinting follows group state. `$groups` only
+        // fires on dict add/remove, so we (re)subscribe to each group's
+        // `objectWillChange` to catch color flips and active-tab join/
+        // leave events that nudge `info.objectWillChange.send()`. This
+        // mirrors `TabStrip.rebuildGroupChangeSubscriptions`.
+        browserState?.$groups
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] groups in
+                guard let self else { return }
+                self.rebuildGroupChangeSubscriptions(groups: groups)
+                self.updateContentOuterBorder()
+            }
+            .store(in: &cancellables)
+
+        browserState?.$groupOverviewState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateContentOuterBorder()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
+        WebContentGroupInfo.reconcileSubscriptions(
+            groups: groups,
+            cancellables: &groupChangeCancellables
+        ) { [weak self] _ in
+            self?.updateContentOuterBorder()
+        }
     }
     
     private func setupConfigObserver() {
@@ -386,18 +491,21 @@ class WebContentContainerViewController: NSViewController {
     private func updateContentOuterBorder() {
         guard let controller = currentWebContentController else {
             outerBorderLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
         let isComfortableLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
         controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
         guard isComfortableLayout else {
             outerBorderLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
 
         let r = controller.splitViewContainerFrame(in: view)
         guard r.width > 0, r.height > 0 else {
             outerBorderLayer.path = nil
+            clearGroupBoundaryLayers()
             return
         }
 
@@ -416,7 +524,9 @@ class WebContentContainerViewController: NSViewController {
         // path, focusingTab updates before currentWebContentController is
         // promoted; using the visible tab keeps the outline attached to the
         // tab whose page is actually onscreen.
-        let activeFrame = tabStripBarController?.tabFrame(for: controller.associatedTab, in: view)
+        let overviewActive = browserState?.groupOverviewState != nil
+        let activeTabForBorder = overviewActive ? nil : controller.associatedTab
+        let activeFrame = tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
 
         let path = CGMutablePath()
 
@@ -501,7 +611,142 @@ class WebContentContainerViewController: NSViewController {
         CATransaction.setDisableActions(!shouldAnimate)
         outerBorderLayer.path = path
         outerBorderLayer.strokeColor = ThemedColor.border.resolve(in: view).cgColor
+
+        updateGroupBoundaryLayers(apexY: topY, invR: invR, activeTab: activeTabForBorder)
+
         CATransaction.commit()
+    }
+
+    /// Builds / refreshes one `CAShapeLayer` per visible expanded group,
+    /// each tracing a unified path: horizontal underline from chip to
+    /// the active tab's left apex (if the group contains the active
+    /// tab) → up over the active tab outline → down to the right apex
+    /// → horizontal underline to the last member tab. For groups that
+    /// don't contain the active tab the path is just the horizontal
+    /// segment.
+    ///
+    /// Single path means the seam at the inverse-curve apex no longer
+    /// exists by construction — stroke is one continuous shape.
+    private func updateGroupBoundaryLayers(apexY: CGFloat, invR: CGFloat, activeTab: Tab?) {
+        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        guard traditionalLayout,
+              let geometries = tabStripBarController?.groupGeometries(in: view,
+                                                                       activeTab: activeTab) else {
+            clearGroupBoundaryLayers()
+            return
+        }
+
+        // Tear down vanished tokens.
+        let liveTokens = Set(geometries.map { $0.token })
+        for (token, layer) in groupBoundaryLayers where !liveTokens.contains(token) {
+            layer.removeFromSuperlayer()
+            groupBoundaryLayers.removeValue(forKey: token)
+        }
+
+        let cornerR = TabStripMetrics.Tab.cornerRadius
+        let activeFrame = tabStripBarController?.tabFrame(for: activeTab, in: view)
+
+        for geom in geometries {
+            guard let group = browserState?.groups[geom.token] else { continue }
+
+            let layer: CAShapeLayer
+            if let existing = groupBoundaryLayers[geom.token] {
+                layer = existing
+            } else {
+                layer = CAShapeLayer()
+                layer.fillColor = NSColor.clear.cgColor
+                layer.lineWidth = 1
+                layer.lineCap = .butt
+                layer.lineJoin = .round
+                layer.zPosition = LayerZIndex.contentOuterBorder + 1
+                layer.actions = ["strokeColor": NSNull(), "lineWidth": NSNull()]
+                view.layer?.addSublayer(layer)
+                groupBoundaryLayers[geom.token] = layer
+            }
+
+            // Inset the horizontal segment ends so the underline
+            // doesn't bleed into an adjacent (non-member) active
+            // tab's inverse-curve "shadow". An active tab's apex
+            // tip extends `invR − interTabGap` (= 8 − 3 = 5pt) past
+            // its neighboring chip's leading edge; without this
+            // inset our underline pokes 5pt under that adjacent
+            // apex curve, leaving a small triangular seam between
+            // the (gray) curve and the (colored) horizontal line.
+            //
+            // For groups whose active member sits at this boundary
+            // we keep the path extending all the way to its own
+            // apex tip via `min`/`max` — the inset only affects the
+            // free, non-curving end.
+            let edgeInset: CGFloat = invR - 3
+            let leftInsetX = geom.leftX + edgeInset
+            let rightInsetX = geom.rightX - edgeInset
+
+            let path = CGMutablePath()
+            if geom.containsActive, let af = activeFrame {
+                let leftLineStart = min(leftInsetX, af.minX - invR)
+                let rightLineEnd = max(rightInsetX, af.maxX + invR)
+                path.move(to: CGPoint(x: leftLineStart, y: apexY))
+                path.addLine(to: CGPoint(x: af.minX - invR, y: apexY))
+                // up the left inverse curve
+                path.addCurve(
+                    to: CGPoint(x: af.minX, y: apexY + invR),
+                    control1: CGPoint(x: af.minX - invR / 2, y: apexY),
+                    control2: CGPoint(x: af.minX, y: apexY + invR / 2)
+                )
+                // up the left side
+                path.addLine(to: CGPoint(x: af.minX, y: af.maxY - cornerR))
+                // top-left corner
+                path.addCurve(
+                    to: CGPoint(x: af.minX + cornerR, y: af.maxY),
+                    control1: CGPoint(x: af.minX, y: af.maxY - cornerR / 2),
+                    control2: CGPoint(x: af.minX + cornerR / 2, y: af.maxY)
+                )
+                // top edge
+                path.addLine(to: CGPoint(x: af.maxX - cornerR, y: af.maxY))
+                // top-right corner
+                path.addCurve(
+                    to: CGPoint(x: af.maxX, y: af.maxY - cornerR),
+                    control1: CGPoint(x: af.maxX - cornerR / 2, y: af.maxY),
+                    control2: CGPoint(x: af.maxX, y: af.maxY - cornerR / 2)
+                )
+                // down the right side
+                path.addLine(to: CGPoint(x: af.maxX, y: apexY + invR))
+                // down the right inverse curve
+                path.addCurve(
+                    to: CGPoint(x: af.maxX + invR, y: apexY),
+                    control1: CGPoint(x: af.maxX, y: apexY + invR / 2),
+                    control2: CGPoint(x: af.maxX + invR / 2, y: apexY)
+                )
+                // right apex → horizontal → group-right (or apex tip
+                // itself if active is the rightmost / only member).
+                path.addLine(to: CGPoint(x: rightLineEnd, y: apexY))
+            } else {
+                // No active tab in this group — just a horizontal
+                // underline along the strip's bottom edge, with the
+                // same 5pt edge inset so adjacent active apexes
+                // outside this group don't clip our line.
+                path.move(to: CGPoint(x: leftInsetX, y: apexY))
+                path.addLine(to: CGPoint(x: rightInsetX, y: apexY))
+            }
+
+            layer.path = path
+            // `NSColor(resource:).cgColor` resolves against
+            // `NSAppearance.currentDrawing()`, which isn't pinned here
+            // — `updateGroupBoundaryLayers` runs from `viewDidLayout`,
+            // a layout callback (not a draw callback). Pin it to the
+            // host view's appearance so the underline picks up the
+            // same variant the chip dot uses.
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                layer.strokeColor = group.color.nsColor.cgColor
+            }
+        }
+    }
+
+    private func clearGroupBoundaryLayers() {
+        for (_, layer) in groupBoundaryLayers {
+            layer.removeFromSuperlayer()
+        }
+        groupBoundaryLayers.removeAll()
     }
     
     // MARK: - Tab Management
@@ -510,8 +755,18 @@ class WebContentContainerViewController: NSViewController {
         guard let tab, let state = browserState else { return }
 
         let identifier = state.getTabIdentifier(for: tab)
-        // Skip if already showing this tab
-        guard identifier != currentTabIdentifier else { return }
+        // Skip if already showing this exact tab. Identifier alone can
+        // collide: when a bookmark-bound tab is detached (its `guidInLocalDB`
+        // cleared as it joins a split) and then a fresh tab is opened with
+        // the same bookmark guid via `customGuid`, both share the bookmark
+        // guid as identifier even though they're different Chromium tabs.
+        // If we relied on identifier alone we'd short-circuit here and the
+        // old split-pane controller would stay mounted under the new tab's
+        // focus, leaving the splitview on screen. Require the underlying
+        // Chromium tab to match too.
+        let alreadyShowingExactTab = identifier == currentTabIdentifier
+            && currentWebContentController?.associatedTab?.guid == tab.guid
+        guard !alreadyShowingExactTab else { return }
 
         // Clear status URL when switching tabs
         state.targetURL = ""
@@ -525,9 +780,20 @@ class WebContentContainerViewController: NSViewController {
         // Flicker fix: Choose switch strategy based on whether tab has painted
         // =========================================================================
 
+        let leavingSplit = currentWebContentController?.associatedTab.map {
+            state.splitGroup(forTabId: $0.guid) != nil
+        } ?? false
+        let enteringSplit = state.splitGroup(forTabId: tab.guid) != nil
+
         if tab.hasFirstPaint {
             // Scenario 1: Tab has already painted, switch immediately (bring to front)
             // AppLogDebug("[FlickerFix][Mac] Tab has first paint, using immediate switch (scenario 1)")
+            switchToWebContentController(controller)
+            currentTabIdentifier = identifier
+        } else if leavingSplit && !enteringSplit {
+            // Leaving a split for a non-split tab — the split's pane host
+            // shouldn't linger via the flicker-fix deferral. Force the
+            // immediate switch so the new tab takes over.
             switchToWebContentController(controller)
             currentTabIdentifier = identifier
         } else {
@@ -647,6 +913,65 @@ class WebContentContainerViewController: NSViewController {
         controller.updateBookmarkBarVisibility(bookmarkCount: bookmarkBar.bookmarkCount)
     }
     
+    // MARK: - Placeholder Shell
+
+    /// Mount the placeholder shell inside `contentContainer` and ask it to
+    /// host the placeholder WebContents NSView. Idempotent: re-mounts the
+    /// nativeView on the existing shell if one is already attached.
+    @MainActor
+    private func attachPlaceholderShell() {
+        guard let wrapper = browserState?.placeholderWrapper,
+              let nativeView = wrapper.nativeView else {
+            AppLogWarn("🦖 [Container] attachPlaceholderShell: no wrapper/nativeView")
+            return
+        }
+
+        let shell: PlaceholderShellViewController
+        if let existing = placeholderShell {
+            shell = existing
+        } else {
+            shell = PlaceholderShellViewController(browserState: browserState)
+            addChild(shell)
+            contentContainer.addSubview(shell.view)
+            shell.view.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            placeholderShell = shell
+        }
+        shell.mountPlaceholderNativeView(nativeView)
+
+        // Focus the placeholder so the user can immediately press Space to
+        // start the dino game without first clicking the canvas.
+        // Two-step focus matches WebContentViewController.focusWebContent:
+        //   1. Cocoa-level: window.makeFirstResponder routes Cocoa events.
+        //   2. Chromium-level: wrapper.focus() routes Chromium's internal
+        //      focus tracker so the renderer receives keystrokes. Without
+        //      it, makeFirstResponder alone may leave the renderer in a
+        //      "not focused" state and keyDown events go nowhere.
+        // wrapper.focus() may silently fail if chrome://dino hasn't
+        // committed navigation yet (URL=nil), but the page loads fast
+        // enough that the first user keystroke arrives after commit.
+        nativeView.window?.makeFirstResponder(nativeView)
+        if wrapper.responds(to: #selector(WebContentWrapper.focus)) {
+            wrapper.focus()
+        }
+
+        AppLogInfo("🦖 [Container] attached placeholder shell + focused")
+    }
+
+    /// Tear down the placeholder shell. Synchronous structural cleanup —
+    /// `BrowserState.exitPlaceholderMode` already removed the underlying
+    /// NSView from the hierarchy (the Combine sink fires synchronously).
+    /// See spec §9.1.
+    @MainActor
+    private func detachPlaceholderShell() {
+        placeholderShell?.unmountPlaceholderNativeView()
+        placeholderShell?.view.removeFromSuperview()
+        placeholderShell?.removeFromParent()
+        placeholderShell = nil
+        AppLogInfo("🦖 [Container] detached placeholder shell")
+    }
+
     /// Scenario 1: Switch to an already-painted tab (immediate switch, bring to front)
     private func switchToWebContentController(_ controller: WebContentViewController) {
         // Flicker fix: Don't remove old view immediately, defer until Chromium confirms.
@@ -676,6 +1001,19 @@ class WebContentContainerViewController: NSViewController {
         }
 
         attachSharedBookmarkBar(to: controller)
+
+        // Re-mount content before we mark this controller as current.
+        // For split tabs, the partner's webContentView may have been
+        // reparented into another controller's split host. For tabs whose
+        // split was dissolved while they were inactive, a stale split host
+        // may still be hanging around. In both cases this reconciles.
+        //
+        // NB: code reachable from `refreshContentForCurrentTab` must NOT read
+        // `currentWebContentController` — it still points at the outgoing VC
+        // until the assignment below. Today the reachable code stays inside
+        // the controller's own host; if you add a container-level lookup,
+        // consult the `controller` parameter explicitly instead.
+        controller.refreshContentForCurrentTab()
 
         currentWebContentController = controller
         // Force a full layout sweep before reading splitViewContainer's frame.
@@ -819,6 +1157,7 @@ class WebContentContainerViewController: NSViewController {
     /// Toggle AI Chat for the current tab
     /// This toggles the AI Chat state on the currently focused tab
     func toggleAIChat() {
+        guard browserState?.groupOverviewState == nil else { return }
         // Toggle on the current WebContentViewController (which will update the associated tab)
         if let controller = currentWebContentController {
             controller.toggleAIChatInTraditionalLayout()
@@ -924,12 +1263,34 @@ class WebContentContainerViewController: NSViewController {
     // =========================================================================
 
     /// Find the WebContentViewController managing a given Chromium tab ID.
-    private func findController(forTabId tabId: Int) -> WebContentViewController? {
+    func findController(forTabId tabId: Int) -> WebContentViewController? {
         webContentControllers.values.first { $0.associatedTab?.guid == tabId }
+    }
+
+    /// True when the inspected tab is part of a split currently mounted by
+    /// the visible WebContentViewController. In that case DevTools must dock
+    /// into the matching pane's container — routing through the inspected
+    /// tab's own (offscreen) controller would dump DevTools into a hostView
+    /// that isn't in the window hierarchy.
+    private func mountedSplitPane(forInspectedTabId tabId: Int)
+        -> (controller: WebContentViewController, pane: SplitPaneHostView.Pane)? {
+        guard let state = browserState,
+              let group = state.splitGroup(forTabId: tabId),
+              let mounted = currentWebContentController,
+              let mountedTabId = mounted.associatedTab?.guid,
+              group.contains(tabId: mountedTabId) else { return nil }
+        let pane: SplitPaneHostView.Pane = group.primaryTabId == tabId ? .primary : .secondary
+        return (mounted, pane)
     }
 
     /// Called when Chromium attaches docked DevTools to a tab.
     func handleDevToolsDidAttach(tabId: Int, devToolsView: NSView) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.attachDevToolsToPane(tabId: tabId,
+                                                   pane: target.pane,
+                                                   devToolsView: devToolsView)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else {
             AppLogInfo("[DevTools] No controller found for tabId=\(tabId)")
             return
@@ -939,6 +1300,10 @@ class WebContentContainerViewController: NSViewController {
 
     /// Called when Chromium detaches DevTools from a tab (closed or undocked).
     func handleDevToolsDidDetach(tabId: Int) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.detachDevToolsFromPane(tabId: tabId, pane: target.pane)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else {
             AppLogInfo("[DevTools] No controller found for tabId=\(tabId)")
             return
@@ -948,6 +1313,13 @@ class WebContentContainerViewController: NSViewController {
 
     /// Called when DevTools JS updates the inspected page bounds.
     func handleUpdateInspectedPageBounds(tabId: Int, bounds: CGRect, hide: Bool) {
+        if let target = mountedSplitPane(forInspectedTabId: tabId) {
+            target.controller.updateInspectedPageBoundsForPane(tabId: tabId,
+                                                               pane: target.pane,
+                                                               bounds: bounds,
+                                                               hide: hide)
+            return
+        }
         guard let controller = findController(forTabId: tabId) else { return }
         controller.updateInspectedPageBounds(bounds, hide: hide)
     }

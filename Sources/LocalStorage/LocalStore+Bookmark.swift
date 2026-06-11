@@ -18,19 +18,39 @@ extension LocalStore {
     )
     
     /// Creates a bookmark node, attaching it to the root when `parentId` is nil.
+    /// `secondaryUrl` is set only for split-view bookmarks; clicking such a
+    /// bookmark opens both URLs as a side-by-side split. `secondaryTitle`
+    /// is the secondary pane's display name and is shown alongside the
+    /// primary title in the bookmark bar/sidebar.
     func createBookmark(url: String?,
                         title: String?,
                         profileId: String,
                         parentId: String?,
                         index: Int? = nil,
                         guid: String? = nil,
-                        spaceId: String? = nil) {
+                        spaceId: String? = nil,
+                        secondaryUrl: String? = nil,
+                        secondaryTitle: String? = nil) {
         guard let normalizedURL = normalizedURL(from: url),
         let bookmarkURL = URL(string: URLProcessor.processUserInput( normalizedURL.absoluteString)) else {
             AppLogError("Invalid bookmark url: \(url ?? "nil")")
             return
         }
-        
+        // A nil `secondaryUrl` means a single-URL bookmark; a non-nil but
+        // unparseable value is a user error and must surface, not silently
+        // turn the bookmark into a single-URL one.
+        let normalizedSecondary: URL?
+        if let raw = secondaryUrl {
+            guard let normalized = self.normalizedURL(from: raw),
+                  let processed = URL(string: URLProcessor.processUserInput(normalized.absoluteString)) else {
+                AppLogError("Invalid bookmark secondary url: \(raw)")
+                return
+            }
+            normalizedSecondary = processed
+        } else {
+            normalizedSecondary = nil
+        }
+
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
@@ -46,6 +66,8 @@ extension LocalStore {
                                                 index: index,
                                                 guid: guid,
                                                 spaceId: spaceId,
+                                                secondaryUrl: normalizedSecondary,
+                                                secondaryTitle: secondaryTitle,
                                                 now: now,
                                                 in: context)
             } catch {
@@ -128,6 +150,54 @@ extension LocalStore {
             } catch {
                 AppLogError("Failed to create directory with bookmark: \(error)")
                 completion?(false)
+            }
+        }
+    }
+
+    func createDirectoryWithBookmarks(folderTitle: String,
+                                      folderGuid: String,
+                                      profileId: String,
+                                      parentId: String?,
+                                      index: Int?,
+                                      bookmarks: [(title: String?, url: String, guid: String)]) {
+        let normalizedBookmarks: [(title: String?, url: URL, guid: String)] = bookmarks.compactMap { bookmark in
+            guard let normalizedURL = normalizedURL(from: bookmark.url) else {
+                AppLogError("Invalid bookmark url: \(bookmark.url)")
+                return nil
+            }
+            return (title: bookmark.title, url: normalizedURL, guid: bookmark.guid)
+        }
+        guard normalizedBookmarks.count == bookmarks.count else { return }
+
+        performBackgroundWrite { [weak self] context in
+            guard let self else { return }
+            do {
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                    AppLogError("Parent folder not found when creating directory with bookmarks")
+                    return
+                }
+                let now = Date()
+                let folder = try self.insertDirectoryNode(title: folderTitle,
+                                                          profileId: profileId,
+                                                          parent: parent,
+                                                          index: index,
+                                                          guid: folderGuid,
+                                                          spaceId: parent.spaceId,
+                                                          now: now,
+                                                          in: context)
+                for (childIndex, bookmark) in normalizedBookmarks.enumerated() {
+                    _ = try self.insertBookmarkNode(title: bookmark.title,
+                                                    profileId: profileId,
+                                                    url: bookmark.url,
+                                                    parent: folder,
+                                                    index: childIndex,
+                                                    guid: bookmark.guid,
+                                                    spaceId: folder.spaceId,
+                                                    now: now,
+                                                    in: context)
+                }
+            } catch {
+                AppLogError("Failed to create directory with bookmarks: \(error)")
             }
         }
     }
@@ -361,7 +431,17 @@ extension LocalStore {
     }
     
     /// Updates bookmark title and URL, normalizing the URL when provided.
-    func updateBookmark(_ guid: String, profileId: String, title: String?, url: String?) {
+    /// `secondaryUrl` / `secondaryTitle` are split-bookmark specific: pass
+    /// `.some(value)` to set or replace, `.some("")` (for secondaryUrl) to
+    /// clear it and turn the bookmark back into a single-URL bookmark, or
+    /// `.none` to leave it untouched. Clearing `secondaryUrl` also clears
+    /// `secondaryTitle` even if no explicit update was passed for the title.
+    func updateBookmark(_ guid: String,
+                        profileId: String,
+                        title: String?,
+                        url: String?,
+                        secondaryUrl: String?? = nil,
+                        secondaryTitle: String?? = nil) {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
@@ -378,6 +458,33 @@ extension LocalStore {
                         return
                     }
                     node.url = newURL
+                }
+                var secondaryUrlClearedInThisUpdate = false
+                if let secondaryUrlOpt = secondaryUrl {
+                    if let raw = secondaryUrlOpt, !raw.isEmpty {
+                        // Mirror the primary-URL behavior: a non-empty
+                        // secondary URL that fails to parse aborts the whole
+                        // update so the user sees the error and the bookmark
+                        // does not silently keep its old state mixed with
+                        // partially-applied changes.
+                        guard let normalized = self.normalizedURL(from: raw) else {
+                            AppLogError("Invalid secondary URL while updating bookmark: \(raw)")
+                            return
+                        }
+                        node.secondaryUrl = normalized
+                    } else {
+                        node.secondaryUrl = nil
+                        secondaryUrlClearedInThisUpdate = true
+                    }
+                }
+                if secondaryUrlClearedInThisUpdate {
+                    node.secondaryTitle = nil
+                } else if let secondaryTitleOpt = secondaryTitle {
+                    if let raw = secondaryTitleOpt, !raw.isEmpty {
+                        node.secondaryTitle = raw
+                    } else {
+                        node.secondaryTitle = nil
+                    }
                 }
                 node.updatedDate = Date()
             } catch {
@@ -557,6 +664,8 @@ private extension LocalStore {
                             index: Int?,
                             guid: String?,
                             spaceId: String?,
+                            secondaryUrl: URL? = nil,
+                            secondaryTitle: String? = nil,
                             now: Date,
                             in context: ModelContext) throws -> TabDataModel {
         let bookmark = TabDataModel(title: (title?.isEmpty == false ? title! : url.absoluteString),
@@ -571,6 +680,8 @@ private extension LocalStore {
         bookmark.profileId = profileId
         bookmark.profile = parent.profile
         bookmark.isCreatedByChromium = false
+        bookmark.secondaryUrl = secondaryUrl
+        bookmark.secondaryTitle = (secondaryTitle?.isEmpty == false) ? secondaryTitle : nil
         context.insert(bookmark)
         try insert(node: bookmark, to: parent, at: index, in: context)
         return bookmark

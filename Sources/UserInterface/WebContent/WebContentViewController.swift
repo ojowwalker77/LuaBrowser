@@ -69,9 +69,10 @@ class WebContentViewController: NSViewController {
     private var progressObserverCancellables = Set<AnyCancellable>()
     private var lastProgressLogBucket: Int?
     private var isSubscriptionsSetup = false
-    private enum ContentMode {
+    private enum ContentMode: Equatable {
         case nativeNtp
         case webContent
+        case groupOverview(token: String)
     }
     private var contentMode: ContentMode? {
         didSet {
@@ -102,6 +103,12 @@ class WebContentViewController: NSViewController {
     /// loaded yet (url=nil).  When set, the `$url` observer will re-trigger
     /// `restoreFocusForCurrentTab` once the URL arrives and the page is ready.
     private var pendingChromeRefocusOnUrlReady = false
+    /// When content needs a window-backed mount, remember the tab and retry
+    /// once the controller actually re-enters a window-backed lifecycle.
+    private var deferredContentUpdateTabId: Int?
+    /// Coalesces same-turn retries while the controller is transiently
+    /// between superview attachment and a live `view.window`.
+    private var isDeferredContentUpdateScheduled = false
     
     // MARK: - Left Content Area
     /// Wrapper that provides the adjustable inset for the left content area.
@@ -124,6 +131,7 @@ class WebContentViewController: NSViewController {
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
+    private var groupOverviewController: GroupOverviewViewController?
 
     // MARK: - Agent Animation Overlay
     private lazy var agentAnimationOverlay: EdgeFogOverlayView = {
@@ -252,12 +260,21 @@ class WebContentViewController: NSViewController {
         super.viewDidAppear()
         // Restore focus after the view enters the hierarchy.
         restoreFocusForCurrentTab()
+        flushDeferredContentUpdateIfPossible()
         // If this controller became associated with a fullscreen tab before
         // its view was in a window (so applyContentFullscreenState bailed
         // out early), catch up now that hostView.window is available.
         if associatedTab?.isInContentFullscreen == true,
            savedHostViewSuperview == nil {
             applyContentFullscreenState(true)
+        }
+        // A split partner's chat may have been uncollapsed while this VC was
+        // offscreen — at that time our splitView had zero bounds, so
+        // `preferredThicknessFraction` was skipped and NSSplitView fell back to
+        // minimumThickness (300). After layout settles, drive the divider to
+        // the shared chat width so a first-time pane switch doesn't shrink it.
+        DispatchQueue.main.async { [weak self] in
+            self?.resyncSplitChatWidthIfNeeded()
         }
     }
     
@@ -384,6 +401,43 @@ class WebContentViewController: NSViewController {
                 self?.updateSplitViewLeadingInset()
             }
             .store(in: &cancellables)
+
+        browserState?.$groupOverviewState
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.updateGroupOverviewState(state)
+            }
+            .store(in: &cancellables)
+
+        // Re-render content when split membership/visuals change for the
+        // associated tab. Chromium is source of truth; we just react.
+        // Only the controller whose tab is currently focused mounts the
+        // split host — otherwise two controllers in the same split race
+        // to re-parent each other's webContentView. Inactive controllers
+        // refresh on switch via refreshSplitContentIfNeeded().
+        browserState?.$splits
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let tab = self.associatedTab else { return }
+                // AI Chat autohide depends on split membership: a pane leaving
+                // a split must collapse its now-orphaned sidebar immediately,
+                // not wait for the next focus switch to re-sync. Runs for every
+                // controller (focused or not) so a partner pane that has just
+                // been split off also converges.
+                if let aiChatSplitViewItem = self.aiChatSplitViewItem {
+                    self.syncAIChatState(from: tab, to: aiChatSplitViewItem)
+                }
+                guard self.browserState?.focusingTab?.guid == tab.guid else { return }
+                // Each pane tracks its own `lastKnownAIChatWidth`, so a
+                // freshly-formed split would otherwise expand the partner
+                // pane at its stale (often default) width. Push the focused
+                // pane's width into the partner now — runs before the
+                // partner's own aiChatCollapsed observer fires the expand.
+                self.syncAIChatWidthToSplitPartner(self.lastKnownAIChatWidth)
+                self.updateContentForTab(tab)
+            }
+            .store(in: &cancellables)
     }
 
     private func updateSplitViewLeadingInset() {
@@ -414,8 +468,19 @@ class WebContentViewController: NSViewController {
             bindTabObservers(for: tab, splitViewItem: aiChatSplitViewItem)
         }
         
-        // Observe split-item collapse changes directly.
+        // Observe split-item collapse changes directly. Drop the initial KVO
+        // emit: with `.receive(on: .main)` the initial `isCollapsed=true`
+        // arrives on a later runloop iteration, and if `syncSplitAIChatCollapsed`
+        // has flipped this tab's `aiChatCollapsed` between subscription and
+        // delivery (the "open link in split view" / "open tab in split view"
+        // flows create the secondary's controller in that exact window), the
+        // handler reads the stale emit value, mirrors it back via
+        // `setAIChatCollapsed`, and starts an open/close cascade with the
+        // partner pane. The initial visual state is already established by
+        // `syncAIChatState` in `bindTabObservers`, so dropping the initial
+        // emit costs nothing.
         aiChatSplitViewItem.publisher(for: \.isCollapsed)
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }
@@ -438,8 +503,11 @@ class WebContentViewController: NSViewController {
                 self.isUpdatingAIChatState = true
                 defer { self.isUpdatingAIChatState = false }
                 
-                // Mirror the split view state back into the tab model.
-                self.associatedTab?.toggleAIChat(isCollapsed)
+                // Mirror the split view state back into the tab model (and its
+                // split partner, so both panes share one collapse state).
+                if let tab = self.associatedTab {
+                    self.browserState?.setAIChatCollapsed(for: tab, collapsed: isCollapsed)
+                }
                 // Keep styling in sync with the chat state.
                 self.updateLeftContainerStyle(isAIChatExpanded: !isCollapsed)
                 self.persistAIChatSidebarStateIfNeeded(for: self.associatedTab)
@@ -460,10 +528,101 @@ class WebContentViewController: NSViewController {
             guard width > 0 else { return }
             // Skip during expand animation to avoid persisting intermediate widths.
             guard !self.isAnimatingAIChatExpansion else { return }
-            self.lastKnownAIChatWidth = self.clampAIChatWidth(width)
+            let newWidth = self.clampAIChatWidth(width)
+            // Bounce guard: when a split partner pushed this width onto us via
+            // `applyAIChatWidthFromPartner`, our split-view re-lays-out and
+            // fires this notification with the same value. Skip the re-emit
+            // so we don't ping-pong with the partner.
+            guard abs(newWidth - self.lastKnownAIChatWidth) > 0.5 else { return }
+            self.lastKnownAIChatWidth = newWidth
             self.persistAIChatSidebarStateIfNeeded(for: self.associatedTab)
+            self.syncAIChatWidthToSplitPartner(newWidth)
         }
         .store(in: &cancellables)
+    }
+
+    /// In a split both panes have independent `aiChatSplitViewItem` geometry,
+    /// but the chat itself is shared. After a manual resize on the active
+    /// pane, push the new width into the partner pane's split item so that
+    /// switching focus does not snap the chat back to the partner's stale
+    /// width.
+    private func syncAIChatWidthToSplitPartner(_ width: CGFloat) {
+        guard let state = browserState,
+              let tab = associatedTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let container = parent as? WebContentContainerViewController,
+              let partner = container.findController(forTabId: partnerId),
+              partner !== self else { return }
+        partner.applyAIChatWidthFromPartner(width)
+    }
+
+    /// Re-drive the chat divider to the shared split width if it drifted while
+    /// this VC was offscreen. Covers the "first pane switch after partner
+    /// opened chat" case: B's `$aiChatCollapsed` KVO fires from the shared
+    /// collapse mirror while B's splitView still has zero bounds, so
+    /// `preferredThicknessFraction` and the minimumThickness expand trick
+    /// can't size it; NSSplitView lays out at minimumThickness when B finally
+    /// appears, and the visible chat snaps narrower than what the user saw.
+    private func resyncSplitChatWidthIfNeeded() {
+        guard let aiChatSplitViewItem,
+              !aiChatSplitViewItem.isCollapsed,
+              !isAnimatingAIChatExpansion,
+              let tab = associatedTab,
+              browserState?.splitGroup(forTabId: tab.guid) != nil else {
+            return
+        }
+        let targetWidth = clampAIChatWidth(splitPartnerCurrentChatWidth() ?? lastKnownAIChatWidth)
+        let splitView = contentSplitViewController.splitView
+        let total = splitView.bounds.width
+        guard total > 0 else { return }
+        let currentWidth = aiChatSplitViewItem.viewController.view.frame.width
+        guard abs(currentWidth - targetWidth) > 0.5 else { return }
+        let dividerThickness = splitView.dividerThickness
+        let position = max(0, total - targetWidth - dividerThickness)
+        splitView.setPosition(position, ofDividerAt: 0)
+        lastKnownAIChatWidth = targetWidth
+        AppLogDebug("[AIChatSidebarCache] viewDidAppear resync: drove divider current=\(currentWidth) → target=\(targetWidth)")
+    }
+
+    /// Returns the split partner pane's currently-expanded chat width, if any.
+    /// Used so a pane-focus flip within a split never snaps the visible chat
+    /// to a per-origin cached value — the chat is visually shared across both
+    /// panes, so we match what the user is already looking at.
+    private func splitPartnerCurrentChatWidth() -> CGFloat? {
+        guard let state = browserState,
+              let tab = associatedTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let container = parent as? WebContentContainerViewController,
+              let partner = container.findController(forTabId: partnerId),
+              partner !== self,
+              let partnerItem = partner.aiChatSplitViewItem,
+              !partnerItem.isCollapsed else {
+            return nil
+        }
+        let frameWidth = partnerItem.viewController.view.frame.width
+        return frameWidth > 0 ? frameWidth : nil
+    }
+
+    /// Apply a chat width pushed in from this controller's split partner.
+    /// Updates `lastKnownAIChatWidth` so any future expand uses the synced
+    /// value, and if the split item is currently uncollapsed, drives the
+    /// divider to match so the visible width stays consistent across pane
+    /// focus changes. Bounce-protected via the equality check in the frame
+    /// observer.
+    func applyAIChatWidthFromPartner(_ width: CGFloat) {
+        let clamped = clampAIChatWidth(width)
+        guard abs(clamped - lastKnownAIChatWidth) > 0.5 else { return }
+        lastKnownAIChatWidth = clamped
+        guard let aiChatSplitViewItem,
+              !aiChatSplitViewItem.isCollapsed else { return }
+        let splitView = contentSplitViewController.splitView
+        let total = splitView.bounds.width
+        guard total > 0 else { return }
+        let dividerThickness = splitView.dividerThickness
+        let position = max(0, total - clamped - dividerThickness)
+        splitView.setPosition(position, ofDividerAt: 0)
     }
     
     /// Rebind tab observers when associated tab changes
@@ -485,8 +644,10 @@ class WebContentViewController: NSViewController {
     
     /// Sync AI Chat state from tab to splitViewItem (one-time, with animation)
     private func syncAIChatState(from tab: Tab, to splitViewItem: NSSplitViewItem) {
-        guard tab.aiChatEnabled else {
-            // Always collapse AI Chat when the tab disables it.
+        // In a split the chat is shared, so autohide only when *both* panes
+        // disable chat (e.g. both panes are on NTP). When the partner pane
+        // still has chat enabled, mirror the shared collapsed state instead.
+        guard tab.aiChatEnabled || partnerHasAIChatEnabled() else {
             if !splitViewItem.isCollapsed {
                 isUpdatingAIChatState = true
                 splitViewItem.animator().isCollapsed = true
@@ -494,7 +655,7 @@ class WebContentViewController: NSViewController {
             }
             return
         }
-        
+
         // Mirror the tab's collapsed state into the split item.
         if tab.aiChatCollapsed != splitViewItem.isCollapsed {
             if !tab.aiChatCollapsed {
@@ -513,16 +674,25 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak splitViewItem, weak tab] collapsed in
                 guard let self, let splitViewItem, let tab else { return }
-                
+
                 // Prevent observer feedback loops.
                 guard !self.isUpdatingAIChatState else { return }
-                
-                // Ignore collapse changes while AI Chat is disabled.
-                guard tab.aiChatEnabled else { return }
-                
+
+                // Ignore collapse changes while AI Chat is disabled — unless a
+                // split partner still has chat enabled, in which case this
+                // pane participates in the shared expand/collapse state so the
+                // sidebar can be toggled from either pane of the split.
+                guard tab.aiChatEnabled || self.partnerHasAIChatEnabled() else { return }
+
                 if collapsed != splitViewItem.isCollapsed {
                     if !collapsed {
                         self.prepareAIChatWidthBeforeExpand(for: tab)
+                        // When the focused pane in a split expands chat, push
+                        // our width to the partner now (before its own expand
+                        // observer fires) so both panes open to the same size.
+                        if self.browserState?.focusingTab?.guid == tab.guid {
+                            self.syncAIChatWidthToSplitPartner(self.lastKnownAIChatWidth)
+                        }
                     }
                     // Guard against feedback loops while mirroring KVO back into the tab.
                     self.isUpdatingAIChatState = true
@@ -541,18 +711,67 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak splitViewItem] enabled in
                 guard let self, let splitViewItem else { return }
-                
+
                 // Ignore recursive updates triggered by our own state sync.
                 guard !self.isUpdatingAIChatState else { return }
-                
-                // Collapse the sidebar when the tab disables AI Chat.
-                if !enabled && !splitViewItem.isCollapsed {
+
+                // In a split the chat is shared. Skip autohide while the
+                // partner pane still has chat enabled — collapsing would
+                // pull the sidebar out from under the partner's webpage.
+                guard !enabled, !self.partnerHasAIChatEnabled() else {
+                    return
+                }
+
+                if !splitViewItem.isCollapsed {
                     self.isUpdatingAIChatState = true
                     splitViewItem.animator().isCollapsed = true
                     self.isUpdatingAIChatState = false
                 }
+                // Each pane only observes its own tab's aiChatEnabled, so the
+                // partner pane needs an explicit poke to re-evaluate once both
+                // panes are NTP and the sidebar must collapse on both sides.
+                self.refreshSplitPartnerAIChatSidebarState()
             }
             .store(in: &tabObserverCancellables)
+    }
+
+    /// True when this pane sits in a split whose other pane still has AI Chat
+    /// enabled. Used by the autohide path so the sidebar stays open while at
+    /// least one pane of the split can use chat.
+    private func partnerHasAIChatEnabled() -> Bool {
+        guard let state = browserState,
+              let tab = associatedTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let partner = state.tabs.first(where: { $0.guid == partnerId }) else {
+            return false
+        }
+        return partner.aiChatEnabled
+    }
+
+    /// Ask this pane's split partner controller to re-sync its AI Chat
+    /// sidebar against the latest combined state. Used when this pane's
+    /// autohide kicks in so the partner pane converges on the new state
+    /// rather than holding its own sidebar open.
+    private func refreshSplitPartnerAIChatSidebarState() {
+        guard let state = browserState,
+              let tab = associatedTab,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let container = parent as? WebContentContainerViewController,
+              let partner = container.findController(forTabId: partnerId),
+              partner !== self else {
+            return
+        }
+        partner.refreshAIChatSidebarStateForPartnerNotification()
+    }
+
+    /// Re-run the AI Chat sidebar sync against the current tab and partner
+    /// states. Called by a split partner that has just flipped its own
+    /// `aiChatEnabled` so this pane mirrors the new combined autohide state.
+    func refreshAIChatSidebarStateForPartnerNotification() {
+        guard let aiChatSplitViewItem, let tab = associatedTab else { return }
+        syncAIChatState(from: tab, to: aiChatSplitViewItem)
     }
 
     private func setupView() {
@@ -692,9 +911,19 @@ class WebContentViewController: NSViewController {
         }
     }
 
+    /// Returns the actual web-page area (below the header and bookmark bar)
+    /// in the given coordinate space. The split-drop hint uses this to
+    /// confine its highlight to the page region.
+    func pageContentAreaFrame(in coordView: NSView) -> CGRect {
+        hostView.convert(hostView.bounds, to: coordView)
+    }
+
     /// Toggles the AI Chat panel when the associated tab allows it.
     func toggleAIChatInTraditionalLayout() {
-        guard associatedTab?.aiChatEnabled == true else { return }
+        guard browserState?.groupOverviewState == nil,
+              associatedTab?.aiChatEnabled == true else {
+            return
+        }
         // Updating the tab model is enough; observers drive the UI update.
         associatedTab?.toggleAIChat()
     }
@@ -770,11 +999,100 @@ class WebContentViewController: NSViewController {
 
     private func updateContentForTab(_ tab: Tab?) {
         guard let tab else { return }
+        if browserState?.groupOverviewState != nil {
+            return
+        }
+        // For split members, only the focused VC may run this — same rule the
+        // `$splits` subscription enforces. Other entry points (`tab.$url`
+        // re-emit on a background member, the deferred re-run below) can fire
+        // on a member whose VC is currently behind another's; letting them
+        // run installSplitContent steals BOTH panes back into the hidden VC's
+        // split host, and the visible VC renders an empty host (both panes
+        // blank) until the user switches away and back.
+        if browserState?.splitGroup(forTabId: tab.guid) != nil,
+           browserState?.focusingTab?.guid != tab.guid {
+            return
+        }
+        // setupView calls this from inside loadView, before the controller's
+        // view has been added to its superview — so view.window is nil. In
+        // the "Open as Split" flow, state.splits already contains the new
+        // split at this point, so installSplitContent runs and reparents the
+        // partner pane into a windowless host. The whole subtree then
+        // transitions windowless→window in one batch when addSubview finally
+        // happens, and RenderWidgetHostViewCocoa for the brand-new tab
+        // mis-resumes its compositor through that batch transition — the
+        // pane stays blank. Defer until we have a window so the mount is a
+        // stable in-window operation.
+        if view.window == nil {
+            guard parent != nil || view.superview != nil else { return }
+            scheduleDeferredContentUpdate(for: tab)
+            return
+        }
+        deferredContentUpdateTabId = nil
         if shouldShowNativeNtp(for: tab) {
             showNativeNtp(for: tab)
         } else if let webView = tab.webContentView {
             showWebContent(webView, tabId: tab.guid)
         }
+    }
+
+    private func scheduleDeferredContentUpdate(for tab: Tab) {
+        deferredContentUpdateTabId = tab.guid
+        guard !isDeferredContentUpdateScheduled else { return }
+        isDeferredContentUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isDeferredContentUpdateScheduled = false
+            self.flushDeferredContentUpdateIfPossible()
+        }
+    }
+
+    private func flushDeferredContentUpdateIfPossible() {
+        guard let tab = associatedTab,
+              deferredContentUpdateTabId == tab.guid,
+              view.window != nil else { return }
+        deferredContentUpdateTabId = nil
+        updateContentForTab(tab)
+    }
+
+    /// Re-mount content when this controller becomes current.
+    /// One WebContentViewController exists per tab. When two split tabs
+    /// trade focus, each `installSplitContent` reparents the partner's
+    /// `webContentView` into its own split host, so the previously-active
+    /// controller ends up with a split host whose views have been stolen.
+    /// Similarly, a controller can be left holding a stale split host
+    /// after its split was dissolved while it was inactive. Re-running
+    /// the mount path here re-claims views and reconciles the hierarchy.
+    func refreshContentForCurrentTab() {
+        guard let tab = associatedTab else { return }
+        updateContentForTab(tab)
+        // Re-attach the AI Chat view synchronously while the outgoing
+        // controller is still in-window. Switching the active pane of a split
+        // swaps the visible controller; the split shares one chat tab, so its
+        // Chromium webContentView must move between the two panes' chat hosts.
+        // Doing it here (same-window move) avoids the windowless transition
+        // that blanks the renderer — mirrors the split-content remount above.
+        if view.window != nil {
+            embeddedChatViewController?.reattachAIChatViewIfNeeded()
+        }
+    }
+
+    /// The active split this controller's tab is part of, or nil.
+    /// Content-fullscreen still forces a single-view fallback (the page owns
+    /// the whole window). DevTools is now scoped to the inspected pane via
+    /// `SplitPaneHostView.attachDevTools(pane:…)`, so we keep rendering the
+    /// split when DevTools is open — otherwise focusing the inspected tab
+    /// would collapse the split and the inspected page would take over the
+    /// whole hostView.
+    private func activeSplitForCurrentTab() -> SplitGroup? {
+        guard let tab = associatedTab, let state = browserState else { return nil }
+        if tab.isInContentFullscreen { return nil }
+        return state.splitGroup(forTabId: tab.guid)
+    }
+
+    private func partnerTab(for group: SplitGroup, ownTabId: Int) -> Tab? {
+        let partnerId = group.primaryTabId == ownTabId ? group.secondaryTabId : group.primaryTabId
+        return browserState?.tabs.first { $0.guid == partnerId }
     }
 
     private func shouldShowNativeNtp(for tab: Tab) -> Bool {
@@ -817,13 +1135,138 @@ class WebContentViewController: NSViewController {
     }
 
     private func showWebContent(_ contentView: NSView, tabId: Int) {
+        if let group = activeSplitForCurrentTab() {
+            installSplitContent(group: group, ownTabId: tabId, ownNativeView: contentView)
+            contentMode = .webContent
+            updateLeftContainerStyleForCurrentAIChatState()
+            return
+        }
+        // Tear down any leftover split host before re-mounting single content.
+        if let existing = currentSplitHost {
+            existing.removeFromSuperview()
+            currentSplitHost = nil
+        }
         // Check if content view is already the primary view in hostView
         if hostView.subviews.contains(contentView),
            contentView.superview === hostView {
+            updateLeftContainerStyleForCurrentAIChatState()
             return
         }
         addWebContentView(contentView, tabId: tabId)
         contentMode = .webContent
+        updateLeftContainerStyleForCurrentAIChatState()
+    }
+
+    /// Mount or update the SplitPaneHostView so that this tab and its partner
+    /// render side-by-side. Falls back to single-view if partner's nativeView
+    /// is missing (e.g. partner not yet finished loading its WebContents).
+    private func installSplitContent(group: SplitGroup,
+                                     ownTabId: Int,
+                                     ownNativeView: NSView) {
+        guard let partner = partnerTab(for: group, ownTabId: ownTabId),
+              let partnerNativeView = partner.webContentView else {
+            // Partner not ready — show ourself alone for now; the splits
+            // subscription will re-trigger when the partner's view arrives.
+            addWebContentView(ownNativeView, tabId: ownTabId)
+            return
+        }
+
+        // Give the new tab's webContentView a window via hostView before the
+        // split host moves it. In the "Open as Split" flow this view arrives
+        // orphan; a direct addSubview into the split host would be a
+        // windowless→window transition that RenderWidgetHostViewCocoa does
+        // not always cleanly resume — the new pane stays blank. Parking it
+        // in the (already-in-window) hostView first lets the renderer's
+        // window transition happen in a stable container, so the subsequent
+        // split-host attach is a same-window move that skips the transition.
+        if ownNativeView.window == nil, hostView.window != nil {
+            ownNativeView.removeFromSuperview()
+            hostView.addSubview(ownNativeView)
+        }
+        if partnerNativeView.window == nil, hostView.window != nil {
+            partnerNativeView.removeFromSuperview()
+            hostView.addSubview(partnerNativeView)
+        }
+
+        let (primaryView, secondaryView): (NSView, NSView)
+        if group.primaryTabId == ownTabId {
+            primaryView = ownNativeView
+            secondaryView = partnerNativeView
+        } else {
+            primaryView = partnerNativeView
+            secondaryView = ownNativeView
+        }
+
+        let host: SplitPaneHostView
+        if let existing = currentSplitHost, existing.superview === hostView {
+            existing.update(primary: primaryView, secondary: secondaryView)
+            existing.update(layout: group.layout, ratio: group.ratio)
+            host = existing
+        } else {
+            // Mount the host BEFORE attaching panes: SplitPaneHostView.init no
+            // longer reparents the Chromium native views, because doing so
+            // while the host is windowless tears down the renderer compositor
+            // and blanks both panes. Once the host is in hostView it has a
+            // window, and update(primary:secondary:) can move both panes in
+            // atomically without a viewWillMoveToWindow(nil) transition.
+            //
+            // Do NOT pre-clear hostView.subviews here. When the new tab in an
+            // "Open as Split" flow gets focused before the split notification
+            // arrives, switchToWebContentController has already mounted its
+            // webContentView directly in hostView. Wiping subviews first would
+            // briefly orphan that view (windowless) and the renderer would not
+            // cleanly resume, blanking the new-tab pane. Mount the host on top
+            // instead, then let update() atomically reparent both panes (a
+            // same-window addSubview move skips viewWillMoveToWindow(nil)).
+            let newHost = SplitPaneHostView(layout: group.layout, ratio: group.ratio)
+            newHost.translatesAutoresizingMaskIntoConstraints = false
+            hostView.addSubview(newHost)
+            newHost.snp.makeConstraints { $0.edges.equalToSuperview() }
+            newHost.update(primary: primaryView, secondary: secondaryView)
+            // Drop anything else still parked in hostView (e.g. a stale
+            // native-NTP view from a prior render). The two panes already
+            // moved into newHost above, so they will not match here.
+            for subview in hostView.subviews where subview !== newHost {
+                subview.removeFromSuperview()
+            }
+            currentSplitHost = newHost
+            host = newHost
+        }
+
+        // installSplitContent only runs on the focused VC's mount path, so
+        // the host's "focused pane" is always the side that matches ownTabId.
+        host.focusedPane = (group.primaryTabId == ownTabId) ? .primary : .secondary
+
+        // After the panes are mounted, replay any DevTools that was already
+        // open on either side. Covers split rebuild on controller switch and
+        // DevTools-already-open-before-split cases.
+        restorePerPaneDevToolsState(host: host, group: group)
+
+        let splitId = group.id
+        host.onRatioCommit = { [weak self] newRatio in
+            self?.browserState?.updateSplitRatio(splitId, ratio: newRatio)
+        }
+
+        // Clicking either pane focuses that pane's tab — same as native
+        // browsers. The host reports interactions in its own coordinates
+        // (.primary / .secondary); we map back to Chromium's primary/
+        // secondary tab ids using the group.
+        let primaryTabId = group.primaryTabId
+        let secondaryTabId = group.secondaryTabId
+        host.onPaneInteraction = { [weak self] pane in
+            guard let self else { return }
+            let targetTabId = (pane == .primary) ? primaryTabId : secondaryTabId
+            guard let tab = self.browserState?.tabs.first(where: { $0.guid == targetTabId }),
+                  !tab.isActive else { return }
+            tab.makeSelfActive()
+        }
+    }
+
+    private weak var currentSplitHost: SplitPaneHostView?
+
+    private var isSplitContentMounted: Bool {
+        guard let currentSplitHost else { return false }
+        return currentSplitHost.superview === hostView
     }
 
     private func addWebContentView(_ contentView: NSView, tabId: Int) {
@@ -846,6 +1289,51 @@ class WebContentViewController: NSViewController {
                 AppLogInfo("[DevTools] clearing stale isFrameSyncPaused on plain webContent install (tabId=\(tabId))")
                 hostView.isFrameSyncPaused = false
             }
+        }
+    }
+
+    private func updateGroupOverviewState(_ state: GroupOverviewState?) {
+        guard let browserState else { return }
+        guard let state else {
+            let wasShowingGroupOverview = groupOverviewController != nil
+            hideGroupOverviewIfNeeded()
+            guard wasShowingGroupOverview, isViewLoaded, view.superview != nil else { return }
+            updateContentForTab(associatedTab)
+            return
+        }
+        guard isViewLoaded, view.superview != nil else { return }
+        collapseAIChatIfNeeded()
+        showGroupOverview(token: state.groupToken, browserState: browserState)
+    }
+
+    private func showGroupOverview(token: String, browserState: BrowserState) {
+        if case .groupOverview(let currentToken) = contentMode,
+           currentToken == token {
+            return
+        }
+
+        hostView.subviews.forEach { $0.removeFromSuperview() }
+        groupOverviewController?.view.removeFromSuperview()
+        groupOverviewController?.removeFromParent()
+
+        let controller = GroupOverviewViewController(browserState: browserState,
+                                                     groupToken: token)
+        addChild(controller)
+        hostView.addSubview(controller.view)
+        controller.view.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        groupOverviewController = controller
+        contentMode = .groupOverview(token: token)
+    }
+
+    private func hideGroupOverviewIfNeeded() {
+        guard groupOverviewController != nil else { return }
+        groupOverviewController?.view.removeFromSuperview()
+        groupOverviewController?.removeFromParent()
+        groupOverviewController = nil
+        if case .groupOverview = contentMode {
+            contentMode = nil
         }
     }
 
@@ -970,8 +1458,22 @@ class WebContentViewController: NSViewController {
     /// Attach a docked DevTools view to this tab's hostView.
     /// DevTools goes full-size below webContentView; webContentView stays full-size
     /// initially (covering DevTools) until the first bounds callback shrinks it.
+    ///
+    /// When this tab is currently a pane of a split mounted in this
+    /// controller's `currentSplitHost`, the DevTools view is scoped to that
+    /// pane's container instead of `hostView` — otherwise it would cover the
+    /// whole split, hiding the other pane.
     func attachDevTools(view devToolsView: NSView) {
         guard let tab = associatedTab else { return }
+        if let host = currentSplitHost,
+           let pane = splitPane(forTabId: tab.guid) {
+            attachDevToolsToPane(tabId: tab.guid,
+                                 pane: pane,
+                                 devToolsView: devToolsView,
+                                 host: host,
+                                 tab: tab)
+            return
+        }
         guard let webContentView = tab.webContentView else { return }
 
         // Idempotent: same view already attached in hostView — no-op.
@@ -1036,6 +1538,11 @@ class WebContentViewController: NSViewController {
     /// Detach DevTools from this tab's hostView and restore webContentView to full size.
     func detachDevTools() {
         guard let tab = associatedTab else { return }
+        if let host = currentSplitHost,
+           let pane = splitPane(forTabId: tab.guid) {
+            detachDevToolsFromPane(tabId: tab.guid, pane: pane, host: host, tab: tab)
+            return
+        }
 
         // Remove DevTools view
         tab.devToolsView?.removeFromSuperview()
@@ -1064,10 +1571,21 @@ class WebContentViewController: NSViewController {
     }
 
     /// Update the inspected page bounds (called continuously as DevTools JS resizes).
-    /// Bounds are in web coordinate system (origin top-left, relative to hostView).
+    /// Bounds are in web coordinate system (origin top-left, relative to hostView
+    /// for single-content mode, or relative to the pane container for split mode).
     func updateInspectedPageBounds(_ bounds: CGRect, hide: Bool) {
-        guard let tab = associatedTab,
-              let webContentView = tab.webContentView,
+        guard let tab = associatedTab else { return }
+        if let host = currentSplitHost,
+           let pane = splitPane(forTabId: tab.guid) {
+            updateInspectedPageBoundsForPane(tabId: tab.guid,
+                                             pane: pane,
+                                             bounds: bounds,
+                                             hide: hide,
+                                             host: host,
+                                             tab: tab)
+            return
+        }
+        guard let webContentView = tab.webContentView,
               webContentView.superview === hostView else { return }
 
         // Cache for tab switch restore
@@ -1087,6 +1605,124 @@ class WebContentViewController: NSViewController {
         let nsRect = NSRect(x: bounds.origin.x, y: flippedY,
                             width: bounds.size.width, height: bounds.size.height)
         webContentView.frame = nsRect
+    }
+
+    // MARK: - DevTools (split-pane scoped)
+
+    /// Returns the pane (`.primary` / `.secondary`) the given tab currently
+    /// occupies in this controller's split host, or `nil` when the tab isn't
+    /// part of a split mounted in this controller. Routing helper for the
+    /// DevTools attach/detach/bounds-update paths.
+    func splitPane(forTabId tabId: Int) -> SplitPaneHostView.Pane? {
+        guard currentSplitHost != nil,
+              let group = browserState?.splitGroup(forTabId: tabId) else { return nil }
+        return group.primaryTabId == tabId ? .primary : .secondary
+    }
+
+    /// Attach DevTools to a specific pane of the current split host. Lets the
+    /// container reroute DevTools events for the partner pane (which lives in
+    /// a different tab's controller) into this controller's mounted split.
+    func attachDevToolsToPane(tabId: Int,
+                              pane: SplitPaneHostView.Pane,
+                              devToolsView: NSView) {
+        guard let host = currentSplitHost,
+              let tab = browserState?.tabs.first(where: { $0.guid == tabId }) else { return }
+        attachDevToolsToPane(tabId: tabId,
+                             pane: pane,
+                             devToolsView: devToolsView,
+                             host: host,
+                             tab: tab)
+    }
+
+    func detachDevToolsFromPane(tabId: Int, pane: SplitPaneHostView.Pane) {
+        guard let host = currentSplitHost,
+              let tab = browserState?.tabs.first(where: { $0.guid == tabId }) else { return }
+        detachDevToolsFromPane(tabId: tabId, pane: pane, host: host, tab: tab)
+    }
+
+    func updateInspectedPageBoundsForPane(tabId: Int,
+                                          pane: SplitPaneHostView.Pane,
+                                          bounds: CGRect,
+                                          hide: Bool) {
+        guard let host = currentSplitHost,
+              let tab = browserState?.tabs.first(where: { $0.guid == tabId }) else { return }
+        updateInspectedPageBoundsForPane(tabId: tabId,
+                                         pane: pane,
+                                         bounds: bounds,
+                                         hide: hide,
+                                         host: host,
+                                         tab: tab)
+    }
+
+    private func attachDevToolsToPane(tabId: Int,
+                                      pane: SplitPaneHostView.Pane,
+                                      devToolsView: NSView,
+                                      host: SplitPaneHostView,
+                                      tab: Tab) {
+        if tab.devToolsAttached, tab.devToolsView === devToolsView,
+           devToolsView.superview != nil {
+            return
+        }
+        if tab.devToolsAttached, let stale = tab.devToolsView, stale !== devToolsView {
+            stale.removeFromSuperview()
+        }
+        host.attachDevTools(pane: pane, devToolsView: devToolsView)
+        tab.devToolsAttached = true
+        tab.devToolsView = devToolsView
+        tab.inspectedPageBounds = nil
+        tab.hideInspectedContents = false
+    }
+
+    private func detachDevToolsFromPane(tabId: Int,
+                                        pane: SplitPaneHostView.Pane,
+                                        host: SplitPaneHostView,
+                                        tab: Tab) {
+        host.detachDevTools(pane: pane)
+        tab.devToolsAttached = false
+        tab.devToolsView = nil
+        tab.inspectedPageBounds = nil
+        tab.hideInspectedContents = false
+    }
+
+    private func updateInspectedPageBoundsForPane(tabId: Int,
+                                                  pane: SplitPaneHostView.Pane,
+                                                  bounds: CGRect,
+                                                  hide: Bool,
+                                                  host: SplitPaneHostView,
+                                                  tab: Tab) {
+        tab.inspectedPageBounds = bounds
+        tab.hideInspectedContents = hide
+        host.updateInspectedPageBounds(pane: pane, bounds: bounds, hide: hide)
+    }
+
+    /// After a split host is created / reused / re-attached, re-mount any
+    /// pre-existing per-tab DevTools view into the matching pane container.
+    /// Handles three cases at once: (a) the user opens DevTools on a tab that
+    /// is already in a split, (b) the user joins a tab with attached DevTools
+    /// into a new split (DevTools needs to migrate from hostView), and
+    /// (c) the controller-switch path where the split host is rebuilt from
+    /// scratch (DevTools needs to migrate from the previous host).
+    private func restorePerPaneDevToolsState(host: SplitPaneHostView, group: SplitGroup) {
+        guard let state = browserState else { return }
+        for (tabId, pane) in [(group.primaryTabId, SplitPaneHostView.Pane.primary),
+                              (group.secondaryTabId, SplitPaneHostView.Pane.secondary)] {
+            guard let tab = state.tabs.first(where: { $0.guid == tabId }),
+                  tab.devToolsAttached,
+                  let devToolsView = tab.devToolsView else { continue }
+            host.attachDevTools(pane: pane, devToolsView: devToolsView)
+            if let cachedBounds = tab.inspectedPageBounds {
+                host.updateInspectedPageBounds(pane: pane,
+                                               bounds: cachedBounds,
+                                               hide: tab.hideInspectedContents)
+            }
+        }
+        // The hostView-level `isFrameSyncPaused` only matters for content
+        // directly in hostView. In split mode that's only the splitHost
+        // (snp-constrained, so the flag doesn't affect it). Resume here so a
+        // future single-content transition starts from a clean state.
+        if hostView.isFrameSyncPaused {
+            hostView.isFrameSyncPaused = false
+        }
     }
 
     /// Restore DevTools state when switching back to a tab that has DevTools attached.
@@ -1259,7 +1895,12 @@ class WebContentViewController: NSViewController {
     /// Updates left-container border and inset styling for AI Chat state.
     /// - Parameter isAIChatExpanded: Whether the AI Chat sidebar is expanded.
     private func updateLeftContainerStyle(isAIChatExpanded: Bool) {
-        if isAIChatExpanded {
+        let isPerformanceSplitContent =
+            PhiPreferences.GeneralSettings.loadLayoutMode() == .performance &&
+            isSplitContentMounted
+        let shouldSeparateExpandedChat = isAIChatExpanded && !isPerformanceSplitContent
+
+        if shouldSeparateExpandedChat {
             leftContainerView.layer?.borderWidth = 1
             leftContainerView.phiLayer?.setBorderColor(.border)
             leftContainerInsetConstraint?.update(inset: WebContentConstant.contentEdgeSpacing)
@@ -1268,12 +1909,29 @@ class WebContentViewController: NSViewController {
             leftContainerInsetConstraint?.update(inset: 0)
         }
     }
+
+    private func updateLeftContainerStyleForCurrentAIChatState() {
+        updateLeftContainerStyle(isAIChatExpanded: aiChatSplitViewItem?.isCollapsed == false)
+    }
     
-    /// Collapses AI Chat when the associated tab disables it.
+    /// Collapses AI Chat when the current surface should suppress it.
     private func collapseAIChatIfNeeded() {
-        if aiChatSplitViewItem?.isCollapsed == false {
-            aiChatSplitViewItem?.animator().isCollapsed = true
+        if let tab = associatedTab {
+            browserState?.setAIChatCollapsed(for: tab, collapsed: true)
         }
+        browserState?.aiChatCollapsed = true
+
+        guard let splitViewItem = aiChatSplitViewItem else { return }
+        guard !splitViewItem.isCollapsed else {
+            updateLeftContainerStyle(isAIChatExpanded: false)
+            return
+        }
+
+        isUpdatingAIChatState = true
+        animateAIChatCollapseTransition(splitViewItem, collapsed: true)
+        isUpdatingAIChatState = false
+        updateLeftContainerStyle(isAIChatExpanded: false)
+        persistAIChatSidebarStateIfNeeded(for: associatedTab)
     }
 
     /// Animate AI Chat sidebar expand/collapse with proper width handling.
@@ -1360,7 +2018,14 @@ class WebContentViewController: NSViewController {
         guard let url = tab.url else { return }
 
         let targetWidth: CGFloat
-        if !hasRestoredAIChatWidth,
+        if let partnerWidth = splitPartnerCurrentChatWidth() {
+            // Chat is visually shared across split panes. Match the partner's
+            // current width so flipping pane focus does not snap the chat to a
+            // different per-origin cached value.
+            targetWidth = clampAIChatWidth(partnerWidth)
+            hasRestoredAIChatWidth = true
+            AppLogDebug("[AIChatSidebarCache] expand — matching split partner width=\(targetWidth)")
+        } else if !hasRestoredAIChatWidth,
            browserState?.isIncognito != true,
            tab.aiChatEnabled,
            let cached = AIChatSidebarStateStore.shared.state(for: url) {
