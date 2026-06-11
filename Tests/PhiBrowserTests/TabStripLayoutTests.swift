@@ -455,6 +455,66 @@ final class TabStripLayoutTests: XCTestCase {
         }
     }
 
+    /// Regression: during a whole-group drag the active tab can sit INSIDE
+    /// the dragged range (`excludedGroupRange` only — no single/set form).
+    /// The tight branch must not reserve the active minimum for it,
+    /// otherwise every remaining tab shrinks and dead slack opens before
+    /// the new-tab button for the whole drag.
+    func testGroupedTightLayoutSkipsActiveReservationWhenActiveInsideDraggedGroup() {
+        // Run covers 1...3, active = 2 (inside), whole range excluded →
+        // effective = 6 - 3 = 3.
+        // chipsOverhead = 40 + 2*2 + 1 = 45,
+        // fixed = 6 (start) + 3*5 (per tab) + 2 + 40 (button) = 63,
+        // available = 348 - 63 - 45 = 240 → base = 80 (tight, < 100).
+        let input = TabStripLayoutInput(
+            containerWidth: 348,
+            tabCount: 6,
+            activeTabIndex: 2,
+            spacing: 2,
+            idealTabWidth: 180,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedGroupRange: 1...3,
+            groupRuns: [GroupRun(token: "g", range: 1...3, isCollapsed: false)],
+            chipFullWidths: ["g": 40]
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        for index in [1, 2, 3] {
+            XCTAssertEqual(output.tabFrames[index], .zero,
+                "Dragged group member \(index) must be lifted out of the flow.")
+        }
+        for index in [0, 4, 5] {
+            XCTAssertEqual(output.tabFrames[index].width, 80, accuracy: 0.001,
+                "Tab \(index) must get an even 3-way split; no active reservation for the lifted-out group member.")
+        }
+    }
+
+    /// Ungrouped companion: the dragged active tab arriving via the single
+    /// exclusion form alone must not keep its width reservation either.
+    func testTightLayoutSkipsActiveReservationWhenActiveDraggedViaSingleForm() {
+        // fixed = 6 + 3*5 + 2 + 40 = 63, available = 303 - 63 = 240 → base 80.
+        let input = TabStripLayoutInput(
+            containerWidth: 303,
+            tabCount: 4,
+            activeTabIndex: 1,
+            spacing: 2,
+            idealTabWidth: 180,
+            minTabWidth: 36,
+            activeTabWidth: 100,
+            tabHeight: 32,
+            excludedTabIndex: 1
+        )
+        let output = TabStripLayoutEngine.layoutNormal(input: input)
+
+        XCTAssertEqual(output.tabFrames[1], .zero, "The dragged tab must be lifted out of the flow.")
+        for index in [0, 2, 3] {
+            XCTAssertEqual(output.tabFrames[index].width, 80, accuracy: 0.001,
+                "Tab \(index) must get an even 3-way split when the active tab is dragged out.")
+        }
+    }
+
     // MARK: - Quick-close width lock
 
     /// Quick-close lock: widths come verbatim from `lockedInactiveTabWidth`

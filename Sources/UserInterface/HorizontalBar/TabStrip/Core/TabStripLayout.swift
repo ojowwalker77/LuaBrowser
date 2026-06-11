@@ -45,9 +45,11 @@ struct TabStripLayoutInput {
     /// here. The engine unions all three exclusion forms before
     /// counting, so overlap between them is safe.
     let excludedTabIndices: Set<Int>
-    /// Indices that should render 1.5x the normally-allocated width. Used
-    /// by split-merged cells in the normal zone (the first pane carries
-    /// both favicons; the second pane sits in `excludedTabIndices`).
+    /// Indices of split-merged host cells (the pair's first pane; the
+    /// second pane sits in `excludedTabIndices`). Only `layoutPinned`
+    /// widens these cells to a double slot; the normal-zone paths ignore
+    /// this set on purpose — a merged cell occupies a single tab slot so
+    /// its right-half hit region can't spill into the next cell.
     let wideTabIndices: Set<Int>
     /// Gap insertion index.
     let gapAtIndex: Int?
@@ -283,8 +285,11 @@ enum TabStripLayoutEngine {
                 activeW = baseWidth
                 inactiveW = baseWidth
             } else {
-                // Tight space: protect the active tab.
-                let isActiveExcluded = (input.activeTabIndex.map { input.excludedTabIndices.contains($0) } ?? false)
+                // Tight space: protect the active tab — unless it is lifted
+                // out of the flow in any exclusion form (single, set, or
+                // group range): reserving width for an excluded tab shrinks
+                // every remaining tab and leaves dead slack at the strip end.
+                let isActiveExcluded = (input.activeTabIndex.map { excludedIndices.contains($0) } ?? false)
                 if input.activeTabIndex != nil && !isActiveExcluded {
                     activeW = input.activeTabWidth
                     let remainingForInactive = availableForTabs - activeW
@@ -315,18 +320,11 @@ enum TabStripLayoutEngine {
                     currentX += gapW
                 }
             }
-            // TODO: Consolidate these per-form placeholder branches into a
-            // single `excludedIndices.contains(i)` check (the union built
-            // above for counting); kept separate to keep the drag-width
-            // double-count fix minimal.
-            if input.excludedTabIndices.contains(i) {
-                // Keep indices aligned by inserting a placeholder frame.
-                tabFrames.append(.zero)
-                separatorXs.append(-1000)
-                continue
-            }
-            if let groupRange = input.excludedGroupRange, groupRange.contains(i) {
-                // Whole-group drag member: zero placeholder, no width.
+            // Drag/split exclusions in any form (single, set, or group
+            // range): zero placeholder, no width. Uses the same union as
+            // the width math above so counting and placement can't
+            // disagree about which slots exist.
+            if excludedIndices.contains(i) {
                 tabFrames.append(.zero)
                 separatorXs.append(-1000)
                 continue
@@ -470,8 +468,11 @@ enum TabStripLayoutEngine {
                 activeW = baseWidth
                 inactiveW = baseWidth
             } else {
+                // Mirror `layoutNormalUngrouped`: an active tab lifted out
+                // in ANY exclusion form (single, set, or whole-group range)
+                // earns no width reservation.
                 if let activeIdx = input.activeTabIndex,
-                   input.excludedTabIndex != activeIdx,
+                   !dragExcludedIndices.contains(activeIdx),
                    !collapsedMemberSet.contains(activeIdx) {
                     activeW = input.activeTabWidth
                     let remainingForInactive = availableForTabs - activeW
@@ -580,17 +581,6 @@ enum TabStripLayoutEngine {
                 currentX += gapW
             }
 
-            // TODO: Consolidate these per-form placeholder branches into a
-            // single `dragExcludedIndices.contains(i)` check (the union
-            // built above for counting); kept separate to keep the
-            // drag-width double-count fix minimal.
-            // Excluded (dragged) tab placeholder.
-            if let excluded = input.excludedTabIndex, i == excluded {
-                tabFrames.append(.zero)
-                separatorXs.append(-1000)
-                continue
-            }
-
             // Collapsed-group member: skip frame allocation.
             if collapsedMemberSet.contains(i) {
                 tabFrames.append(.zero)
@@ -598,20 +588,13 @@ enum TabStripLayoutEngine {
                 continue
             }
 
-            // Split-secondary pane (from `normalSplitCollapseInfo` via
-            // the merged `excludedTabIndices` set on the layout input):
-            // the merged cell occupies one slot in the primary's
-            // position, so the secondary collapses to zero-width and
-            // its TabItemView is hidden by `applyLayout`. Mirrors the
-            // ungrouped path's set-form check.
-            if input.excludedTabIndices.contains(i) {
-                tabFrames.append(.zero)
-                separatorXs.append(-1000)
-                continue
-            }
-
-            // Whole-group drag: members are lifted out of flow.
-            if let groupRange = input.excludedGroupRange, groupRange.contains(i) {
+            // Drag/split exclusions in any form (single, set — which
+            // carries the split-secondary panes from
+            // `normalSplitCollapseInfo`, collapsed under their merged
+            // cell — or whole-group range): zero placeholder, no width.
+            // Uses the same union as the width math above so counting
+            // and placement can't disagree about which slots exist.
+            if dragExcludedIndices.contains(i) {
                 tabFrames.append(.zero)
                 separatorXs.append(-1000)
                 continue
