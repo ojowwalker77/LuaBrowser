@@ -137,6 +137,7 @@ class SidebarTabListViewController: NSViewController {
     private var wholeGroupSidebarEscSuppressedTearOff = false
     private var wholeGroupSidebarEndFinalizeDone = false
 
+    private var suppressesFloatingNewTabDuringDrag = false
     private var scrollAnimationGeneration: Int = 0
     private var scrollScheduleGeneration: Int = 0
     private var isActive = false
@@ -3218,14 +3219,16 @@ extension SidebarTabListViewController {
     }
 
     private func updateFloatingNewTabVisibility() {
-        guard isViewLoaded, isActive, let item = newTabButtonItem else {
+        guard isViewLoaded, isActive, !suppressesFloatingNewTabDuringDrag, let item = newTabButtonItem else {
             removeFloatingNewTabCell()
+            outlineView.dragAutoscrollTopObstructionHeight = 0
             return
         }
 
         let row = outlineView.row(forItem: item)
         guard row >= 0 else {
             removeFloatingNewTabCell()
+            outlineView.dragAutoscrollTopObstructionHeight = 0
             return
         }
 
@@ -3242,6 +3245,7 @@ extension SidebarTabListViewController {
             removeFloatingNewTabCell()
         }
 
+        outlineView.dragAutoscrollTopObstructionHeight = shouldShow ? rowRect.height : 0
         setOriginalNewTabCellHidden(shouldShow)
     }
 
@@ -3288,6 +3292,19 @@ extension SidebarTabListViewController {
         floatingNewTabView?.removeFromSuperview()
         floatingNewTabView = nil
         setOriginalNewTabCellHidden(false)
+    }
+
+    private func beginOutlineDestinationDrag() {
+        guard suppressesFloatingNewTabDuringDrag == false else { return }
+        suppressesFloatingNewTabDuringDrag = true
+        removeFloatingNewTabCell()
+        outlineView.dragAutoscrollTopObstructionHeight = 0
+    }
+
+    private func endOutlineDestinationDrag() {
+        guard suppressesFloatingNewTabDuringDrag else { return }
+        suppressesFloatingNewTabDuringDrag = false
+        updateFloatingNewTabVisibility()
     }
 
     private func updateOriginalNewTabCellVisibility(_ cell: NSView) {
@@ -3865,7 +3882,16 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
 // MARK: - Middle Click to Close Tab
 extension SidebarTabListViewController: SideBarOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, draggingEntered sender: any NSDraggingInfo) {
+        beginOutlineDestinationDrag()
         expandFloatingBookmarkParentsIfNeeded()
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, draggingExited sender: (any NSDraggingInfo)?) {
+        endOutlineDestinationDrag()
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, draggingEnded sender: any NSDraggingInfo) {
+        endOutlineDestinationDrag()
     }
     
     func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, movedTo screenPoint: NSPoint) {

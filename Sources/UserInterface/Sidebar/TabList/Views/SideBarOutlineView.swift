@@ -5,6 +5,70 @@
 
 import Cocoa
 
+enum SidebarDragAutoscrollResolver {
+    static func scrollDelta(
+        dragY: CGFloat,
+        visibleRect: CGRect,
+        isFlipped: Bool,
+        topObstructionHeight: CGFloat,
+        hotZoneHeight: CGFloat,
+        minStep: CGFloat,
+        maxStep: CGFloat
+    ) -> CGFloat {
+        let hotZoneHeight = max(0, hotZoneHeight)
+        guard hotZoneHeight > 0, visibleRect.height > 0 else { return 0 }
+
+        let minStep = max(0, minStep)
+        let maxStep = max(minStep, maxStep)
+        let topObstructionHeight = max(0, min(topObstructionHeight, visibleRect.height))
+
+        let topDistance: CGFloat
+        let bottomDistance: CGFloat
+        let topSign: CGFloat
+        let bottomSign: CGFloat
+        if isFlipped {
+            topDistance = dragY - (visibleRect.minY + topObstructionHeight)
+            bottomDistance = visibleRect.maxY - dragY
+            topSign = -1
+            bottomSign = 1
+        } else {
+            topDistance = (visibleRect.maxY - topObstructionHeight) - dragY
+            bottomDistance = dragY - visibleRect.minY
+            topSign = 1
+            bottomSign = -1
+        }
+
+        if topDistance < hotZoneHeight {
+            return topSign * scrollStep(
+                distanceFromEdge: topDistance,
+                hotZoneHeight: hotZoneHeight,
+                minStep: minStep,
+                maxStep: maxStep
+            )
+        }
+        if bottomDistance < hotZoneHeight {
+            return bottomSign * scrollStep(
+                distanceFromEdge: bottomDistance,
+                hotZoneHeight: hotZoneHeight,
+                minStep: minStep,
+                maxStep: maxStep
+            )
+        }
+        return 0
+    }
+
+    private static func scrollStep(
+        distanceFromEdge: CGFloat,
+        hotZoneHeight: CGFloat,
+        minStep: CGFloat,
+        maxStep: CGFloat
+    ) -> CGFloat {
+        let clampedDistance = max(0, min(distanceFromEdge, hotZoneHeight))
+        let intensity = 1 - clampedDistance / hotZoneHeight
+        return minStep + (maxStep - minStep) * intensity
+    }
+}
+
 /// Delegate protocol for handling middle mouse button click events on outline view items
 protocol SideBarOutlineViewDelegate: AnyObject {
     /// Called when a row is clicked with the middle mouse button
@@ -23,17 +87,24 @@ protocol SideBarOutlineViewDelegate: AnyObject {
                      with mouseDownEvent: NSEvent)
     func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, movedTo screenPoint: NSPoint)
     func outlineView(_ outlineView: NSOutlineView, draggingEntered sender: any NSDraggingInfo)
+    func outlineView(_ outlineView: NSOutlineView, draggingExited sender: (any NSDraggingInfo)?)
+    func outlineView(_ outlineView: NSOutlineView, draggingEnded sender: any NSDraggingInfo)
 }
 
 class SideBarOutlineView: NSOutlineView {
     static let indentation = 10
     private static let dragThreshold: CGFloat = 5
+    private static let dragAutoscrollHotZoneHeight: CGFloat = 92
+    private static let dragAutoscrollMinStep: CGFloat = 5
+    private static let dragAutoscrollMaxStep: CGFloat = 22
 
     var bottomPadding: CGFloat = 0 {
         didSet {
             updateDocumentHeightIfNeeded()
         }
     }
+
+    var dragAutoscrollTopObstructionHeight: CGFloat = 0
 
     private(set) var rightClickedRow: Int?
     /// Click location in outline-view coordinates, set together with
@@ -266,6 +337,32 @@ class SideBarOutlineView: NSOutlineView {
         return super.draggingEntered(sender)
     }
 
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingUpdated(sender)
+        if !operation.isEmpty {
+            autoscrollNearEdgeIfNeeded(draggingLocationInWindow: sender.draggingLocation)
+        }
+        return operation
+    }
+
+    override func wantsPeriodicDraggingUpdates() -> Bool {
+        true
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        phiOutlineDelegate?.outlineView(self, draggingExited: sender)
+        super.draggingExited(sender)
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        phiOutlineDelegate?.outlineView(self, draggingEnded: sender)
+    }
+
+    override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
+        phiOutlineDelegate?.outlineView(self, draggingExited: sender)
+        super.concludeDragOperation(sender)
+    }
+
     static func documentHeight(contentHeight: CGFloat, visibleHeight: CGFloat, bottomPadding: CGFloat) -> CGFloat {
         max(visibleHeight, contentHeight + max(0, bottomPadding))
     }
@@ -289,6 +386,32 @@ class SideBarOutlineView: NSOutlineView {
     private func contentHeightForRows() -> CGFloat {
         guard numberOfRows > 0 else { return 0 }
         return rect(ofRow: numberOfRows - 1).maxY
+    }
+
+    func autoscrollNearEdgeIfNeeded(draggingLocationInWindow location: NSPoint) {
+        guard let scrollView = enclosingScrollView else { return }
+
+        let clipView = scrollView.contentView
+        let visibleRect = clipView.documentVisibleRect
+        let dragPoint = convert(location, from: nil)
+        let deltaY = SidebarDragAutoscrollResolver.scrollDelta(
+            dragY: dragPoint.y,
+            visibleRect: visibleRect,
+            isFlipped: isFlipped,
+            topObstructionHeight: dragAutoscrollTopObstructionHeight,
+            hotZoneHeight: Self.dragAutoscrollHotZoneHeight,
+            minStep: Self.dragAutoscrollMinStep,
+            maxStep: Self.dragAutoscrollMaxStep
+        )
+
+        guard abs(deltaY) > 0.5 else { return }
+
+        let maxY = max(0, frame.height - visibleRect.height)
+        let targetY = max(0, min(visibleRect.origin.y + deltaY, maxY))
+        guard abs(targetY - visibleRect.origin.y) > 0.5 else { return }
+
+        clipView.scroll(to: NSPoint(x: visibleRect.origin.x, y: targetY))
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     private func resetTabDragThresholdState() {

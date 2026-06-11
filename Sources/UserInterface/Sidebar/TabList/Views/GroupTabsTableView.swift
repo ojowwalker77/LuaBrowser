@@ -104,6 +104,21 @@ final class GroupTabsTableView: NSTableView {
                                     at: clickLocation)
     }
 
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingUpdated(sender)
+        if !operation.isEmpty {
+            // The inner table is not scroll-backed; when it owns the drag
+            // destination, forward edge autoscroll to the outer outline view.
+            enclosingSidebarOutlineView()?.autoscrollNearEdgeIfNeeded(
+                draggingLocationInWindow: sender.draggingLocation)
+        }
+        return operation
+    }
+
+    override func wantsPeriodicDraggingUpdates() -> Bool {
+        true
+    }
+
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let upRow = row(at: point)
@@ -164,6 +179,17 @@ final class GroupTabsTableView: NSTableView {
             return .mute
         }
 
+        return nil
+    }
+
+    private func enclosingSidebarOutlineView() -> SideBarOutlineView? {
+        var view = superview
+        while let current = view {
+            if let outlineView = current as? SideBarOutlineView {
+                return outlineView
+            }
+            view = current.superview
+        }
         return nil
     }
 }
