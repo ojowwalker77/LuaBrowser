@@ -283,9 +283,9 @@ final class TabItemView: NSView {
         let showMute = viewModel.isCurrentlyAudible || viewModel.isAudioMuted
         let centerY = bounds.height / 2
 
-        // Right-pane mute is only meaningful inside a `.normal` split-merged
-        // cell; reset to hidden up front so recycled cells transitioning into
-        // pinned/compact/non-split modes never leak the partner's mute icon.
+        // Right-pane mute only renders inside split-merged cells; reset to
+        // hidden up front so recycled cells transitioning into non-split
+        // modes never leak the partner's mute icon.
         secondaryMuteButtonHostingView.isHidden = true
 
         switch mode {
@@ -294,6 +294,19 @@ final class TabItemView: NSView {
             // recycled view that previously rendered a normal-mode split
             // doesn't leak its center decoration.
             splitDividerView.isHidden = true
+            // Merged cells surface EITHER pane's audio state as ONE centered
+            // glyph for the whole cell. Per-pane glyphs were tried and read
+            // wrong: [favicon][speaker] mimics a normal tab's "favicon + its
+            // indicator" row, misattributing the partner's sound to the left
+            // pane. The glyph and its mute toggle bind to whichever pane
+            // carries the state, primary first when both do. Primary
+            // recording still outranks audio (single-tab precedence). While
+            // a centered glyph is up, the favicons — and the per-pane
+            // recording corner badges they carry — are hidden, so a narrow
+            // cell shows at most one state at a time by design.
+            let showSecondaryMute = pinnedSplitPartner != nil
+                && (secondaryFaviconViewModel.isCurrentlyAudible
+                    || secondaryFaviconViewModel.isAudioMuted)
             if showRecording {
                 recordingIconHostingView.isHidden = false
                 recordingIconHostingView.frame = centeredFrame(for: recordingIconSize)
@@ -305,6 +318,13 @@ final class TabItemView: NSView {
                 muteButtonHostingView.frame = centeredFrame(for: muteButtonSize)
                 faviconHostingView.isHidden = true
                 secondaryFaviconHostingView.isHidden = true
+                recordingIconHostingView.isHidden = true
+            } else if showSecondaryMute {
+                secondaryMuteButtonHostingView.isHidden = false
+                secondaryMuteButtonHostingView.frame = centeredFrame(for: muteButtonSize)
+                faviconHostingView.isHidden = true
+                secondaryFaviconHostingView.isHidden = true
+                muteButtonHostingView.isHidden = true
                 recordingIconHostingView.isHidden = true
             } else if pinnedSplitPartner != nil {
                 // Two favicons inside one pinned/compact cell. Stack them
@@ -343,9 +363,10 @@ final class TabItemView: NSView {
         case .normal:
             // Split-merged cell: render two halves (favicon + title each)
             // separated by a vertical divider. Each pane carries its own mute
-            // toggle so audible state stays addressable per-pane; the
-            // recording badge is still dropped — the user can manage it via
-            // context menu.
+            // toggle so audible state stays addressable per-pane; recording
+            // also shows per-pane, as the corner badge UnifiedTabFaviconView
+            // overlays on each favicon — only the dedicated centered
+            // recording icon is dropped here.
             if let _ = pinnedSplitPartner {
                 let half = bounds.width / 2
                 faviconHostingView.isHidden = false
@@ -432,6 +453,10 @@ final class TabItemView: NSView {
         let metrics = TabStripMetrics.Content.self
         let mode = layoutMode
         viewModel.isHorizontalCompactMode = (mode == .compact || mode == .pinned)
+        // Mirror onto the partner pane's view model: its mute button shares
+        // the same "non-interactive in compact unless focused" gate, and it
+        // can render centered in a compact merged cell.
+        secondaryFaviconViewModel.isHorizontalCompactMode = viewModel.isHorizontalCompactMode
         
         let titleStartX = layoutFaviconAndMedia(mode: mode)
 
