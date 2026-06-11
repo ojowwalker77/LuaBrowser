@@ -211,6 +211,13 @@ struct CircularIconButton: View {
 /// Red dot on the ⊞ overflow button when an *unpinned* extension has a
 /// non-empty, visible badge on the current tab (so it isn't missed off-toolbar).
 private struct OverflowBadgeDot: View {
+    /// Product decision (2026-06): the dot is force-hidden — with several
+    /// unpinned badge-setting extensions installed (Stylish, Tampermonkey,
+    /// DuckDuckGo, …) it would be lit almost permanently and reads as noise.
+    /// To bring the dot back, flip this to true; the detection logic below is
+    /// intentionally kept working.
+    private static let isEnabled = false
+
     @ObservedObject var manager: ExtensionManager
 
     var body: some View {
@@ -218,7 +225,7 @@ private struct OverflowBadgeDot: View {
         let hasHiddenBadge = manager.badges.contains { id, state in
             !state.text.isEmpty && state.visible && !pinnedIds.contains(id)
         }
-        if hasHiddenBadge {
+        if Self.isEnabled && hasHiddenBadge {
             Circle().fill(.red).frame(width: 6, height: 6)
         }
     }
