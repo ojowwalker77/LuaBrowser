@@ -582,17 +582,17 @@ final class TabStripDragController {
             }
         }
 
-        // Show the insertion gap in the target zone. Reserve room for both
-        // members when the drag carries a split pair.
-        let slotCount = context.siblingSourceIndex == nil ? 1 : 2
+        // Show the insertion gap in the target zone. One slot even for a
+        // split pair: the pair rests as one merged cell and re-merges into
+        // one slot on drop, so a two-slot gap made every other tab shrink
+        // at grab and snap back at drop.
         switch context.targetContainerType {
         case .pinned:
             pinnedGapIndex = context.targetIndex
         case .normal:
             normalGapIndex = context.targetIndex
             if let metrics = delegate?.dragControllerRequestMetrics() {
-                let perTab = calculateAverageTabWidth(from: metrics.normalTabFrames)
-                normalGapWidth = perTab * CGFloat(slotCount)
+                normalGapWidth = calculateAverageTabWidth(from: metrics.normalTabFrames)
             }
         }
 

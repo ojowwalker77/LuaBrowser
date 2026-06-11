@@ -418,8 +418,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             } else {
                 dragSlotPerTab = context?.draggedTabWidth
             }
+            // One slot even for a split pair — it re-merges into a single
+            // cell on drop, matching the cross-window preview's sizing.
             normalGapW = (context?.targetContainerType == .normal)
-                ? draggedSlotsWidth(for: context, perTabWidth: dragSlotPerTab)
+                ? dragSlotPerTab
                 : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
         }
 
@@ -3464,14 +3466,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             set.insert(sibling)
         }
         return set
-    }
-
-    /// Reserved gap width in the target zone: one tab width by default, two
-    /// when carrying a split pair so both members can land contiguously.
-    private func draggedSlotsWidth(for context: TabDragContext?, perTabWidth: CGFloat?) -> CGFloat? {
-        guard let context, let perTabWidth else { return perTabWidth }
-        let slotCount: CGFloat = context.siblingSourceIndex == nil ? 1 : 2
-        return perTabWidth * slotCount
     }
 
     private func handleTabDragUpdate(event: NSEvent) {
