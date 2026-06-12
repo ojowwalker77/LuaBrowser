@@ -27,7 +27,21 @@ class LocalStore {
     private let userStorageURL: URL
     private var cancellable: AnyCancellable?
     private let writeActor: LocalStoreActor?
-    
+
+    /// Serial FIFO queue for background writes. `writeActor` serializes write
+    /// *execution*, but `performBackgroundWrite` previously dispatched each
+    /// write as an independent `Task`, and unstructured tasks carry no
+    /// guarantee of reaching the actor in submission order. A "create record"
+    /// write could therefore land after a follow-up "update field" write that
+    /// targets it, and the update would silently no-op (its fetch finds no
+    /// row). This broke pinned-split pairing: the `splitPartnerGuid` set right
+    /// after the two pinned rows were created would sometimes apply before the
+    /// rows existed, leaving the pair unlinked and rendering as two cells once
+    /// the live SplitGroup went away (e.g. on close). Funnelling every write
+    /// through this stream restores submit-order == apply-order, which every
+    /// caller already assumes.
+    private let writeJobContinuation: AsyncStream<() async -> Void>.Continuation?
+
     @MainActor var mainContext: ModelContext? {
         container?.mainContext
     }
@@ -55,11 +69,23 @@ class LocalStore {
                 configurations: configuration
             )
             container = modelContainer
-            writeActor = LocalStoreActor(modelContainer: modelContainer)
+            let actor = LocalStoreActor(modelContainer: modelContainer)
+            writeActor = actor
+            // Drain queued writes one at a time, in submission order. Buffering
+            // is unbounded so no write is ever dropped, and yields made before
+            // this consumer starts are replayed in order.
+            let (stream, continuation) = AsyncStream<() async -> Void>.makeStream()
+            writeJobContinuation = continuation
+            Task {
+                for await job in stream {
+                    await job()
+                }
+            }
         } catch {
             AppLogError("Failed to create ModelContainer: \(error)")
             container = nil
             writeActor = nil
+            writeJobContinuation = nil
         }
     }
 }
@@ -324,14 +350,21 @@ extension LocalStore {
     
     func performBackgroundWrite(_ block: @escaping (ModelContext) -> Void) {
         guard let writeActor else { return }
-        Task {
+        writeJobContinuation?.yield {
             await writeActor.perform(block)
         }
     }
 
     func performBackgroundWriteAndWait(_ block: @escaping (ModelContext) -> Void) async {
         guard let writeActor else { return }
-        await writeActor.perform(block)
+        // Enqueue through the same FIFO stream so ordering relative to async
+        // writes is preserved, then await this job's completion.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            writeJobContinuation?.yield {
+                await writeActor.perform(block)
+                continuation.resume()
+            }
+        }
     }
     
     // Exposes the main context for UI-bound consumers.
