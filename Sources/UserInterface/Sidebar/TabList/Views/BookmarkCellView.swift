@@ -41,15 +41,59 @@ private final class BookmarkCellViewState {
     var isDropTargetHighlighted = false
 }
 
+private final class VerticallyCenteredBookmarkTextFieldCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        adjustedRect(forBounds: super.drawingRect(forBounds: rect))
+    }
+
+    override func edit(withFrame rect: NSRect,
+                       in controlView: NSView,
+                       editor textObj: NSText,
+                       delegate: Any?,
+                       event: NSEvent?) {
+        super.edit(withFrame: adjustedRect(forBounds: rect),
+                   in: controlView,
+                   editor: textObj,
+                   delegate: delegate,
+                   event: event)
+    }
+
+    override func select(withFrame rect: NSRect,
+                         in controlView: NSView,
+                         editor textObj: NSText,
+                         delegate: Any?,
+                         start selStart: Int,
+                         length selLength: Int) {
+        super.select(withFrame: adjustedRect(forBounds: rect),
+                     in: controlView,
+                     editor: textObj,
+                     delegate: delegate,
+                     start: selStart,
+                     length: selLength)
+    }
+
+    private func adjustedRect(forBounds rect: NSRect) -> NSRect {
+        let titleSize = cellSize(forBounds: rect)
+        let delta = max(0, rect.height - titleSize.height)
+        return rect.insetBy(dx: 0, dy: floor(delta / 2))
+    }
+}
+
 class BookmarkCellView: SidebarCellView {
     private let viewState = BookmarkCellViewState()
     private let primaryTabViewModel = TabViewModel()
     private let secondaryTabViewModel = TabViewModel()
     private let hoverRegionView = SidebarTabHoverRegionView()
+    // Keep the rename field in AppKit instead of the SwiftUI subtree.
+    // Hover-driven SwiftUI updates were rebuilding the representable path and
+    // tearing down the field editor mid-rename. SwiftUI makes this much more
+    // fragile than a plain NSTextField needs to be.
+    private let editField = NSTextField()
     private var hostingView: ThemedHostingView!
     private var faviconLoadHandle: ProfileScopedFaviconLoadHandle?
     private var secondaryFaviconLoadHandle: ProfileScopedFaviconLoadHandle?
     private weak var configuredBookmark: Bookmark?
+    private var isEditingActive = false
 
     weak var browserState: BrowserState?
     weak var editDelegate: BookmarkCellViewDelegate?
@@ -71,6 +115,9 @@ class BookmarkCellView: SidebarCellView {
         secondaryFaviconLoadHandle?.cancel()
         secondaryFaviconLoadHandle = nil
         configuredBookmark = nil
+        isEditingActive = false
+        editField.stringValue = ""
+        editField.isHidden = true
         primaryTabViewModel.prepareForReuse()
         secondaryTabViewModel.prepareForReuse()
         resetState()
@@ -83,22 +130,18 @@ class BookmarkCellView: SidebarCellView {
             secondaryTabViewModel: secondaryTabViewModel,
             onClose: { [weak self] in
                 self?.closeButtonTapped()
-            },
-            onCommitRename: { [weak self] newTitle in
-                self?.commitEditing(newTitle: newTitle)
-            },
-            onCancelRename: { [weak self] in
-                self?.cancelEditing()
-            },
-            isRenameActive: { [weak self] in
-                guard let bookmark = self?.configuredBookmark ?? self?.resolvedBookmark else { return false }
-                return bookmark.isEditing
             }
         ))
         addSubview(hostingView)
         hostingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        // The hosting view renders the display state, while AppKit owns the
+        // inline editor so responder and hover changes stay decoupled.
+        setupEditField()
+        addSubview(editField)
+        updateEditFieldLayout()
 
         hoverRegionView.onHoverChanged = { [weak self] isHovered in
             self?.viewState.isHovered = isHovered
@@ -151,6 +194,49 @@ class BookmarkCellView: SidebarCellView {
         viewState.isDropTargetHighlighted = false
     }
 
+    private func setupEditField() {
+        // Borderless NSTextField still draws text a little high by default, so
+        // use a custom cell to keep the visible text and live editor centered.
+        editField.cell = VerticallyCenteredBookmarkTextFieldCell()
+        editField.font = NSFont.systemFont(ofSize: 13)
+        editField.textColor = .labelColor
+        editField.isEditable = true
+        editField.isSelectable = true
+        editField.isBordered = false
+        editField.isBezeled = false
+        editField.drawsBackground = false
+        editField.backgroundColor = .clear
+        editField.focusRingType = .none
+        editField.usesSingleLineMode = true
+        editField.lineBreakMode = .byClipping
+        editField.cell?.isScrollable = true
+        editField.cell?.wraps = false
+        editField.cell?.isBordered = false
+        editField.cell?.isBezeled = false
+        editField.cell?.focusRingType = .none
+        editField.delegate = self
+        editField.isHidden = true
+    }
+
+    private func updateEditFieldLayout() {
+        // Match the SwiftUI row chrome:
+        // `edgesSpacing` is the outer row inset, `6` is the inner leading
+        // padding before the primary favicon, `16` is the favicon width, `8`
+        // is the gap from the last favicon to the title, and split bookmarks
+        // add another `16 + 8` for the secondary favicon plus its trailing gap.
+        let leadingOffset = WebContentConstant.edgesSpacing
+            + 6
+            + 16
+            + 8
+            + (viewState.showsSecondaryFavicon ? 24 : 0)
+        editField.snp.remakeConstraints { make in
+            make.leading.equalToSuperview().offset(leadingOffset)
+            make.trailing.equalToSuperview().inset(WebContentConstant.edgesSpacing + 8)
+            make.centerY.equalToSuperview()
+            make.height.equalTo(22)
+        }
+    }
+
     override func configureAppearance() {
         guard let bookmark = resolvedBookmark else { return }
         configuredBookmark = bookmark
@@ -167,6 +253,8 @@ class BookmarkCellView: SidebarCellView {
         viewState.isActive = bookmark.isActive
         viewState.isEditing = bookmark.isEditing
         viewState.editText = bookmark.title
+        editField.stringValue = bookmark.title
+        updateEditFieldLayout()
 
         refreshLiveTabs(for: bookmark)
         applyTitleAndSplitState(bookmark: bookmark,
@@ -247,8 +335,7 @@ class BookmarkCellView: SidebarCellView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak bookmark] isEditing in
                 guard let self, let bookmark else { return }
-                self.viewState.isEditing = isEditing
-                self.viewState.editText = bookmark.title
+                self.updateEditingState(isEditing, bookmark: bookmark)
             }
             .store(in: &cancellables)
     }
@@ -365,6 +452,7 @@ class BookmarkCellView: SidebarCellView {
             secondaryFaviconLoadHandle = nil
             viewState.title = primaryTitle
             viewState.editText = primaryTitle
+            updateEditFieldLayout()
             return
         }
 
@@ -380,6 +468,7 @@ class BookmarkCellView: SidebarCellView {
             viewState.title = "\(primaryTitle) • \(resolvedSecondary)"
         }
         viewState.editText = primaryTitle
+        updateEditFieldLayout()
     }
 
     private func loadSecondaryFavicon(bookmark: Bookmark, pageUrl: String) {
@@ -410,13 +499,40 @@ class BookmarkCellView: SidebarCellView {
         resolvedBrowserState?.closeBookmark(bookmark)
     }
 
+    private func updateEditingState(_ isEditing: Bool, bookmark: Bookmark) {
+        viewState.isEditing = isEditing
+        viewState.editText = bookmark.title
+        updateEditFieldLayout()
+
+        if isEditing {
+            editField.isHidden = false
+            editField.stringValue = bookmark.title
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard bookmark.isEditing else { return }
+                // Wait until the field is attached and visible before asking
+                // AppKit for first responder; this mirrors the older pure
+                // AppKit flow and avoids losing the first activation.
+                guard self.window?.makeFirstResponder(self.editField) == true else { return }
+                self.editField.selectText(nil)
+                self.configureFieldEditor()
+                self.isEditingActive = self.editField.currentEditor() != nil
+            }
+        } else {
+            isEditingActive = false
+            editField.isHidden = true
+        }
+    }
+
     private func commitEditing(newTitle rawTitle: String) {
         guard let bookmark = configuredBookmark ?? resolvedBookmark else { return }
         let newTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        isEditingActive = false
         bookmark.isEditing = false
 
         guard !newTitle.isEmpty else {
             viewState.editText = bookmark.title
+            editField.stringValue = bookmark.title
             return
         }
 
@@ -427,8 +543,19 @@ class BookmarkCellView: SidebarCellView {
 
     private func cancelEditing() {
         guard let bookmark = configuredBookmark ?? resolvedBookmark else { return }
+        isEditingActive = false
         bookmark.isEditing = false
         viewState.editText = bookmark.title
+        editField.stringValue = bookmark.title
+    }
+
+    private func configureFieldEditor() {
+        guard let editor = editField.currentEditor() as? NSTextView else { return }
+        editor.drawsBackground = false
+        editor.backgroundColor = .clear
+        editor.textColor = .labelColor
+        editor.insertionPointColor = .labelColor
+        editor.focusRingType = .none
     }
 }
 
@@ -437,9 +564,6 @@ private struct SidebarBookmarkCellContentView: View {
     let primaryTabViewModel: TabViewModel
     let secondaryTabViewModel: TabViewModel
     let onClose: () -> Void
-    let onCommitRename: (String) -> Void
-    let onCancelRename: () -> Void
-    let isRenameActive: () -> Bool
 
     @Environment(\.phiAppearance) private var appearance
 
@@ -481,7 +605,8 @@ private struct SidebarBookmarkCellContentView: View {
                 liveTabViewModel: state.primaryTabIsLive ? primaryTabViewModel : nil
             )
 
-            if state.primaryTabIsLive,
+            if !state.isEditing,
+               state.primaryTabIsLive,
                primaryTabViewModel.isCurrentlyAudible || primaryTabViewModel.isAudioMuted {
                 UnifiedTabMuteButton(viewModel: primaryTabViewModel)
             }
@@ -494,32 +619,21 @@ private struct SidebarBookmarkCellContentView: View {
                     liveTabViewModel: state.secondaryTabIsLive ? secondaryTabViewModel : nil
                 )
 
-                if state.secondaryTabIsLive,
+                if !state.isEditing,
+                   state.secondaryTabIsLive,
                    secondaryTabViewModel.isCurrentlyAudible || secondaryTabViewModel.isAudioMuted {
                     UnifiedTabMuteButton(viewModel: secondaryTabViewModel)
                 }
             }
 
-            if state.isEditing {
-                BookmarkInlineRenameField(
-                    text: Binding(
-                        get: { state.editText },
-                        set: { state.editText = $0 }
-                    ),
-                    onCommit: onCommitRename,
-                    onCancel: onCancelRename,
-                    isRenameActive: isRenameActive
-                )
-                .frame(height: 22)
-            } else {
-                UnifiedTabTitleTextView(
-                    displayTitle: state.title,
-                    isShimmering: false,
-                    isPressed: state.isFolder ? false : state.isPressed
-                )
-                .themedForeground(textColor)
-                .fontWeight(state.isFolder ? .medium : .regular)
-            }
+            UnifiedTabTitleTextView(
+                displayTitle: state.title,
+                isShimmering: false,
+                isPressed: state.isFolder ? false : state.isPressed
+            )
+            .opacity(state.isEditing ? 0 : 1)
+            .themedForeground(textColor)
+            .fontWeight(state.isFolder ? .medium : .regular)
 
             if showCloseButton {
                 UnifiedTabCloseButton(action: onClose)
@@ -570,143 +684,37 @@ private struct BookmarkFaviconView: View {
     }
 }
 
-private struct BookmarkInlineRenameField: NSViewRepresentable {
-    @Binding var text: String
-    let onCommit: (String) -> Void
-    let onCancel: () -> Void
-    let isRenameActive: () -> Bool
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+extension BookmarkCellView: NSTextFieldDelegate {
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        isEditingActive = true
+        configureFieldEditor()
     }
 
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
-        field.font = NSFont.systemFont(ofSize: 13)
-        field.textColor = .labelColor
-        field.isEditable = true
-        field.isSelectable = true
-        field.isBordered = false
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.backgroundColor = .clear
-        field.focusRingType = .none
-        field.usesSingleLineMode = true
-        field.lineBreakMode = .byClipping
-        field.cell?.isScrollable = true
-        field.cell?.wraps = false
-        field.cell?.isBordered = false
-        field.cell?.isBezeled = false
-        field.cell?.focusRingType = .none
-        field.delegate = context.coordinator
-        field.stringValue = text
-        return field
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        viewState.editText = field.stringValue
     }
 
-    func updateNSView(_ nsView: NSTextField, context: Context) {
-        context.coordinator.parent = self
-        if nsView.currentEditor() == nil, nsView.stringValue != text {
-            nsView.stringValue = text
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard isEditingActive else { return }
+        guard let field = obj.object as? NSTextField else { return }
+        if let movement = obj.userInfo?["NSTextMovement"] as? Int,
+           movement == NSTextMovement.cancel.rawValue {
+            cancelEditing()
+            return
         }
-        context.coordinator.activateIfNeeded(nsView)
+        commitEditing(newTitle: field.stringValue)
     }
 
-    static func dismantleNSView(_ nsView: NSTextField, coordinator: Coordinator) {
-        defer { nsView.delegate = nil }
-        guard coordinator.didBeginEditing,
-              !coordinator.didCompleteAction,
-              !coordinator.parent.isRenameActive() else { return }
-        coordinator.commitIfNeeded(nsView.stringValue)
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var parent: BookmarkInlineRenameField
-        var didScheduleFocus = false
-        var didBeginEditing = false
-        var didCompleteAction = false
-
-        init(parent: BookmarkInlineRenameField) {
-            self.parent = parent
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitEditing(newTitle: textView.string)
+            return true
         }
-
-        func activateIfNeeded(_ field: NSTextField) {
-            guard !didBeginEditing, !didScheduleFocus, !didCompleteAction else { return }
-            didScheduleFocus = true
-            DispatchQueue.main.async { [weak field, weak self] in
-                guard let self, let field else { return }
-                guard self.parent.isRenameActive() else {
-                    self.didScheduleFocus = false
-                    return
-                }
-                guard let window = field.window else {
-                    self.didScheduleFocus = false
-                    self.activateIfNeeded(field)
-                    return
-                }
-                guard window.makeFirstResponder(field) else {
-                    self.didScheduleFocus = false
-                    return
-                }
-                self.configureFieldEditor(for: field)
-                field.selectText(nil)
-                self.didScheduleFocus = false
-            }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            cancelEditing()
+            return true
         }
-
-        func controlTextDidBeginEditing(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField else { return }
-            didBeginEditing = true
-            configureFieldEditor(for: field)
-        }
-
-        func controlTextDidChange(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField else { return }
-            parent.text = field.stringValue
-        }
-
-        func controlTextDidEndEditing(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField else { return }
-            guard didBeginEditing else { return }
-            if let movement = obj.userInfo?["NSTextMovement"] as? Int,
-               movement == NSTextMovement.cancel.rawValue {
-                cancelIfNeeded()
-                return
-            }
-            commitIfNeeded(field.stringValue)
-        }
-
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                commitIfNeeded(textView.string)
-                return true
-            }
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                cancelIfNeeded()
-                return true
-            }
-            return false
-        }
-
-        func commitIfNeeded(_ value: String) {
-            guard !didCompleteAction else { return }
-            didCompleteAction = true
-            parent.text = value
-            parent.onCommit(value)
-        }
-
-        private func cancelIfNeeded() {
-            guard !didCompleteAction else { return }
-            didCompleteAction = true
-            parent.onCancel()
-        }
-
-        private func configureFieldEditor(for field: NSTextField) {
-            guard let editor = field.currentEditor() as? NSTextView else { return }
-            editor.drawsBackground = false
-            editor.backgroundColor = .clear
-            editor.textColor = .labelColor
-            editor.insertionPointColor = .labelColor
-            editor.focusRingType = .none
-        }
+        return false
     }
 }
