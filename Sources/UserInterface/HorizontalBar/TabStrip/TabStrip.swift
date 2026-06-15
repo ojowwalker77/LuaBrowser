@@ -3698,7 +3698,9 @@ extension TabStrip: TabStripDragDelegate {
 
         if case let .splitWithFocused(zone) = dropAction {
             clearDraggingPresentation(using: context)
-            performSplitWithFocused(draggedTab: tab, zone: zone)
+            performSplitWithFocused(draggedTab: tab,
+                                    fromPinnedZone: context.sourceContainerType == .pinned,
+                                    zone: zone)
             // Treat the drop as consumed locally — the dragged tab stayed in
             // this window, so don't run the tear-off path.
             browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
@@ -4057,12 +4059,25 @@ extension TabStrip: TabStripDragDelegate {
     /// create/replace decision lives in `SplitTabDropContainer.commitSplitDrop`
     /// so both entry points stay identical.
     private func performSplitWithFocused(draggedTab: Tab,
+                                         fromPinnedZone: Bool,
                                          zone: SplitTabDropContainer.DropZone) {
         guard browserState.splitGroup(forTabId: draggedTab.guid) == nil,
               let dropContainer = unsafeBrowserWindowController?.mainSplitViewController
                 .webContentContainerViewController.splitTabDropContainer else { return }
+        // A tab dragged out of the pinned zone must keep its pinned status:
+        // route it as `.pinnedTab` so the drop demotes it into a normal split
+        // (leaving a pinned placeholder at its slot), exactly as the
+        // sidebar/vertical-layout drag does via the pasteboard. Passing
+        // `.normalTab` here would form the split with the tab still pinned —
+        // splits are never allowed to live in the pinned strip.
+        let source: SplitTabDropContainer.DragSource
+        if fromPinnedZone, let dbGuid = draggedTab.guidInLocalDB, !dbGuid.isEmpty {
+            source = .pinnedTab(dbGuid: dbGuid)
+        } else {
+            source = .normalTab(tabId: draggedTab.guid)
+        }
         dropContainer.commitSplitDrop(state: browserState,
-                                      source: .normalTab(tabId: draggedTab.guid),
+                                      source: source,
                                       zone: zone)
     }
 
