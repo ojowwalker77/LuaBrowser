@@ -3956,14 +3956,12 @@ class BrowserState {
         return true
     }
 
-    /// Detaches any live Chromium tab still backed by a bookmark that is about
-    /// to be deleted, so the tab survives as a plain normal tab. Without this
-    /// the tab keeps a stale `guidInLocalDB`, which keeps it out of tab groups.
-    /// A split-view bookmark binds its live split via `splitBookmarkBindings`
-    /// instead; the binding is dropped so the split moves back into the
-    /// normal tab list rather than staying hidden behind a deleted cell.
-    /// For a folder, all descendant bookmarks are processed.
-    func detachOpenTabsForRemovedBookmark(_ bookmark: Bookmark) {
+    /// Closes any live Chromium tab still backed by a bookmark that is about
+    /// to be deleted. The bookmark custom value is cleared before close so
+    /// Chromium does not keep a stale bookmark identity while tearing the tab
+    /// down. Split-backed bookmarks first remove the split through Chromium as
+    /// a unit. For a folder, all descendant bookmarks are processed.
+    func closeOpenTabsForRemovedBookmark(_ bookmark: Bookmark) {
         var guids: [String] = []
         func collect(_ node: Bookmark) {
             if node.isFolder {
@@ -3974,27 +3972,50 @@ class BrowserState {
         }
         collect(bookmark)
 
-        var unboundSplit = false
+        var tabIdsToClose = Set<Int>()
+        var tabsToClose: [Tab] = []
+        var splitIdsToRemove = Set<String>()
+        var orderedSplitIdsToRemove: [String] = []
+        func appendTabToClose(_ tab: Tab) {
+            guard tabIdsToClose.insert(tab.guid).inserted else { return }
+            tabsToClose.append(tab)
+        }
+        func appendSplitToRemove(_ splitId: String) {
+            guard splitIdsToRemove.insert(splitId).inserted else { return }
+            orderedSplitIdsToRemove.append(splitId)
+        }
+
         for guid in guids {
-            if splitBookmarkBindings[guid] != nil {
+            if let splitId = splitBookmarkBindings[guid] {
                 splitBookmarkBindings.removeValue(forKey: guid)
-                syncSplitBookmarkOpenedState(bookmarkGuid: guid)
-                unboundSplit = true
+                appendSplitToRemove(splitId)
+                if let group = splits.first(where: { $0.id == splitId }) {
+                    for tabId in [group.primaryTabId, group.secondaryTabId] {
+                        if let tab = tabs.first(where: { $0.guid == tabId }) {
+                            appendTabToClose(tab)
+                        }
+                    }
+                }
                 continue
             }
-            guard let chromiumTab = tabs.first(where: { $0.guidInLocalDB == guid }) else { continue }
-            migrateAIChatTab(for: chromiumTab, toNewIdentifier: nil)
-            chromiumTab.guidInLocalDB = nil
-            chromiumTab.webContentWrapper?.updateTabCustomValue("")
-            insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
-                                     at: normalTabOrder.count,
-                                     syncChromiumOrder: true)
+
+            if let chromiumTab = tabs.first(where: { $0.guidInLocalDB == guid }) {
+                appendTabToClose(chromiumTab)
+            }
         }
-        // The unbound panes were filtered out of the sidebar while bound;
-        // refilter so they reappear as a normal split pair (mirrors
-        // `handleSplitRemoved`).
-        if unboundSplit {
-            updateNormalTabs()
+
+        for tab in tabsToClose {
+            migrateAIChatTab(for: tab, toNewIdentifier: nil)
+            tab.guidInLocalDB = nil
+            tab.webContentWrapper?.updateTabCustomValue("")
+        }
+
+        for splitId in orderedSplitIdsToRemove {
+            removeSplit(splitId)
+        }
+
+        for tab in tabsToClose {
+            tab.close()
         }
     }
 

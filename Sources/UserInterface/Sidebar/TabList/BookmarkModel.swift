@@ -428,7 +428,7 @@ class BookmarkManager: ObservableObject {
     
     func removeBookmark(_ bookmark: Bookmark) {
         guard let profileId = browserState?.profileId else { return }
-        browserState?.detachOpenTabsForRemovedBookmark(bookmark)
+        browserState?.closeOpenTabsForRemovedBookmark(bookmark)
         browserState?.localStore.deleteBookmark(bookmark.guid, profileId: profileId)
     }
     

@@ -211,32 +211,6 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
     }
 
-    func testDeletedOpenBookmarkTabReturnsToEndOfNormalTabs() throws {
-        let state = try makeState()
-        seedNormalTabs(state)
-
-        let bookmark = Bookmark(guid: "bookmark-p",
-                                title: "Bookmark P",
-                                url: "https://p.example")
-        bookmark.isOpened = true
-        state.bookmarkManager.rootFolder.addChild(bookmark)
-
-        let bookmarkLiveTab = Tab(guid: 9,
-                                  url: "https://p.example",
-                                  isActive: true,
-                                  index: 1,
-                                  customGuid: bookmark.guid)
-        state.tabs.insert(bookmarkLiveTab, at: 1)
-        state.updateNormalTabs()
-
-        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3])
-
-        state.detachOpenTabsForRemovedBookmark(bookmark)
-
-        XCTAssertNil(bookmarkLiveTab.guidInLocalDB)
-        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 9])
-    }
-
     func testToggleSplitPinStatusUnpinsOpenPinnedSplitOnce() throws {
         let state = try makeState()
         seedNormalTabs(state)
