@@ -2391,17 +2391,8 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Arc.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Arc.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2544,17 +2535,8 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Arc.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Arc.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2763,17 +2745,8 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Arc.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Arc.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2821,17 +2794,8 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Arc.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Arc.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3022,17 +2986,8 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Arc.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Arc.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationUsageDescription = "Websites may use your location for features on their site.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
