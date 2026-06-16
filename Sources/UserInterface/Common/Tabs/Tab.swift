@@ -461,6 +461,29 @@ extension Tab {
     }
 }
 
+extension Tab {
+    /// Aggregate "capturing media" signal that drives the tab's recording
+    /// badge. Matches the rule the normal-tab favicon badge uses (microphone,
+    /// camera, screen share) so split panes light up under the same
+    /// conditions as standalone tabs.
+    var isCapturingMedia: Bool {
+        isCapturingAudio || isCapturingVideo || isSharingScreen
+    }
+}
+
+extension Tab {
+    /// Test seam: the capture flags are normally driven by Chromium KVO,
+    /// which is absent in unit tests. Lets tests exercise the recording
+    /// indicator path without a live WebContents.
+    func setCaptureStateForTesting(audio: Bool = false,
+                                   video: Bool = false,
+                                   sharingScreen: Bool = false) {
+        isCapturingAudio = audio
+        isCapturingVideo = video
+        isSharingScreen = sharingScreen
+    }
+}
+
 extension String {
     var isNTP: Bool {
         hasPrefix("chrome://newtab") || hasPrefix("phi://newtab")
