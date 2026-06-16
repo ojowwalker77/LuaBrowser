@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Cocoa
+import Symbols
 
 enum SidebarDragAutoscrollResolver {
     static func scrollDelta(
@@ -69,6 +70,139 @@ enum SidebarDragAutoscrollResolver {
     }
 }
 
+private final class SidebarDragAutoscrollCueView: NSView {
+    enum Edge: CaseIterable, Hashable {
+        case top
+        case bottom
+    }
+
+    private let symbolImageView = NSImageView(frame: .zero)
+    private var isAnimating = false
+
+    var edge: Edge = .top {
+        didSet {
+            guard edge != oldValue else { return }
+            updateSymbol()
+            needsDisplay = true
+            if isAnimating {
+                restartSymbolEffect()
+            }
+        }
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupViews()
+    }
+
+    override func layout() {
+        super.layout()
+        let side: CGFloat = 18
+        symbolImageView.frame = NSRect(
+            x: floor((bounds.width - side) * 0.5),
+            y: floor((bounds.height - side) * 0.5),
+            width: side,
+            height: side
+        )
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let baseColor = NSColor.white
+        let gradient: NSGradient?
+        switch edge {
+        case .top:
+            gradient = NSGradient(colors: [
+                baseColor.withAlphaComponent(0.18),
+                baseColor.withAlphaComponent(0.08),
+                baseColor.withAlphaComponent(0.0)
+            ])
+        case .bottom:
+            gradient = NSGradient(colors: [
+                baseColor.withAlphaComponent(0.0),
+                baseColor.withAlphaComponent(0.08),
+                baseColor.withAlphaComponent(0.18)
+            ])
+        }
+
+        gradient?.draw(
+            from: NSPoint(x: bounds.midX, y: bounds.minY),
+            to: NSPoint(x: bounds.midX, y: bounds.maxY),
+            options: []
+        )
+    }
+
+    func startAnimatingIfNeeded() {
+        guard !isAnimating else { return }
+        isAnimating = true
+        addSymbolEffectIfAvailable()
+    }
+
+    private func restartSymbolEffect() {
+        if #available(macOS 15.0, *) {
+            symbolImageView.removeAllSymbolEffects(options: .default, animated: false)
+        }
+        addSymbolEffectIfAvailable()
+    }
+
+    func stopAnimating() {
+        guard isAnimating else { return }
+        isAnimating = false
+        if #available(macOS 15.0, *) {
+            symbolImageView.removeAllSymbolEffects(options: .default, animated: false)
+        }
+    }
+
+    private func addSymbolEffectIfAvailable() {
+        if #available(macOS 15.0, *) {
+            let effect: WiggleSymbolEffect = edge == .top ? .wiggle.up : .wiggle.down
+            symbolImageView.addSymbolEffect(
+                effect.wholeSymbol,
+                options: .speed(1.2).repeat(.periodic),
+                animated: true
+            )
+        }
+    }
+
+    private func setupViews() {
+        wantsLayer = true
+        layer?.masksToBounds = false
+        symbolImageView.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(symbolImageView)
+        updateTheme()
+        updateSymbol()
+    }
+
+    func updateTheme() {
+        symbolImageView.contentTintColor = ThemedColor.themeColor.resolve(in: self)
+        needsDisplay = true
+    }
+
+    private func updateSymbol() {
+        let symbolName = edge == .top
+            ? "arrowtriangle.up.2.fill"
+            : "arrowtriangle.down.2.fill"
+        symbolImageView.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: nil
+        )
+    }
+}
+
 /// Delegate protocol for handling middle mouse button click events on outline view items
 protocol SideBarOutlineViewDelegate: AnyObject {
     /// Called when a row is clicked with the middle mouse button
@@ -97,6 +231,7 @@ class SideBarOutlineView: NSOutlineView {
     private static let dragAutoscrollHotZoneHeight: CGFloat = 92
     private static let dragAutoscrollMinStep: CGFloat = 5
     private static let dragAutoscrollMaxStep: CGFloat = 22
+    private static let dragAutoscrollCueHeight: CGFloat = 44
 
     var bottomPadding: CGFloat = 0 {
         didSet {
@@ -120,6 +255,7 @@ class SideBarOutlineView: NSOutlineView {
     private var pendingTabMouseDownEvent: NSEvent?
     private var tabDragThresholdPassed = false
     private var tabDragBelowThresholdLogged = false
+    private var dragAutoscrollCueViews: [SidebarDragAutoscrollCueView.Edge: SidebarDragAutoscrollCueView] = [:]
 
     override func setFrameSize(_ newSize: NSSize) {
         var adjusted = newSize
@@ -334,14 +470,15 @@ class SideBarOutlineView: NSOutlineView {
     
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         phiOutlineDelegate?.outlineView(self, draggingEntered: sender)
-        return super.draggingEntered(sender)
+        let operation = super.draggingEntered(sender)
+        updateDragAutoscrollCueVisibility()
+        return operation
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
         let operation = super.draggingUpdated(sender)
-        if !operation.isEmpty {
-            autoscrollNearEdgeIfNeeded(draggingLocationInWindow: sender.draggingLocation)
-        }
+        updateDragAutoscrollCueVisibility()
+        autoscrollNearEdgeIfNeeded(draggingLocationInWindow: sender.draggingLocation)
         return operation
     }
 
@@ -350,15 +487,18 @@ class SideBarOutlineView: NSOutlineView {
     }
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        hideDragAutoscrollCue()
         phiOutlineDelegate?.outlineView(self, draggingExited: sender)
         super.draggingExited(sender)
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
+        hideDragAutoscrollCue()
         phiOutlineDelegate?.outlineView(self, draggingEnded: sender)
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
+        hideDragAutoscrollCue()
         phiOutlineDelegate?.outlineView(self, draggingExited: sender)
         super.concludeDragOperation(sender)
     }
@@ -410,8 +550,108 @@ class SideBarOutlineView: NSOutlineView {
         let targetY = max(0, min(visibleRect.origin.y + deltaY, maxY))
         guard abs(targetY - visibleRect.origin.y) > 0.5 else { return }
 
+        let edge = dragAutoscrollEdge(forDeltaY: deltaY)
+        guard canAutoscroll(for: edge, visibleRect: visibleRect) else { return }
+
         clipView.scroll(to: NSPoint(x: visibleRect.origin.x, y: targetY))
         scrollView.reflectScrolledClipView(clipView)
+        updateDragAutoscrollCueVisibility()
+    }
+
+    func hideDragAutoscrollCue() {
+        for cueView in dragAutoscrollCueViews.values {
+            cueView.stopAnimating()
+            cueView.removeFromSuperview()
+        }
+        dragAutoscrollCueViews.removeAll()
+    }
+
+    func updateDragAutoscrollCueVisibility() {
+        guard let scrollView = enclosingScrollView else {
+            hideDragAutoscrollCue()
+            return
+        }
+
+        let visibleRect = scrollView.contentView.documentVisibleRect
+        let visibleEdges = SidebarDragAutoscrollCueView.Edge.allCases.filter {
+            hasInvisibleRow(for: $0, visibleRect: visibleRect)
+        }
+        let visibleEdgeSet = Set(visibleEdges)
+
+        for edge in SidebarDragAutoscrollCueView.Edge.allCases where !visibleEdgeSet.contains(edge) {
+            hideDragAutoscrollCue(edge: edge)
+        }
+        for edge in visibleEdges {
+            showDragAutoscrollCue(edge: edge, in: scrollView)
+        }
+    }
+
+    private func hideDragAutoscrollCue(edge: SidebarDragAutoscrollCueView.Edge) {
+        guard let cueView = dragAutoscrollCueViews.removeValue(forKey: edge) else { return }
+        cueView.stopAnimating()
+        cueView.removeFromSuperview()
+    }
+
+    private func showDragAutoscrollCue(edge: SidebarDragAutoscrollCueView.Edge, in scrollView: NSScrollView) {
+        let cueView = dragAutoscrollCueViews[edge] ?? SidebarDragAutoscrollCueView(frame: .zero)
+        dragAutoscrollCueViews[edge] = cueView
+        cueView.edge = edge
+
+        if cueView.superview == nil {
+            scrollView.addFloatingSubview(cueView, for: .vertical)
+        }
+        cueView.updateTheme()
+
+        let size = scrollView.contentSize
+        let height = min(Self.dragAutoscrollCueHeight, size.height)
+        let y: CGFloat
+        if let superview = cueView.superview, !superview.isFlipped {
+            y = edge == .top ? max(0, size.height - height) : 0
+        } else {
+            y = edge == .top ? 0 : max(0, size.height - height)
+        }
+        cueView.frame = NSRect(x: 0, y: y, width: size.width, height: height)
+        cueView.startAnimatingIfNeeded()
+    }
+
+    private func dragAutoscrollEdge(forDeltaY deltaY: CGFloat) -> SidebarDragAutoscrollCueView.Edge {
+        if isFlipped {
+            return deltaY < 0 ? .top : .bottom
+        }
+        return deltaY > 0 ? .top : .bottom
+    }
+
+    private func hasInvisibleRow(
+        for edge: SidebarDragAutoscrollCueView.Edge,
+        visibleRect: NSRect
+    ) -> Bool {
+        guard numberOfRows > 0 else { return false }
+
+        let firstRowRect = rect(ofRow: 0)
+        let lastRowRect = rect(ofRow: numberOfRows - 1)
+        let rowBounds = firstRowRect.union(lastRowRect)
+        let tolerance: CGFloat = 0.5
+
+        switch (edge, isFlipped) {
+        case (.top, true):
+            return rowBounds.minY < visibleRect.minY - tolerance
+        case (.bottom, true):
+            return rowBounds.maxY > visibleRect.maxY + tolerance
+        case (.top, false):
+            return rowBounds.maxY > visibleRect.maxY + tolerance
+        case (.bottom, false):
+            return rowBounds.minY < visibleRect.minY - tolerance
+        }
+    }
+
+    private func canAutoscroll(
+        for edge: SidebarDragAutoscrollCueView.Edge,
+        visibleRect: NSRect
+    ) -> Bool {
+        if edge == .bottom {
+            return true
+        }
+        return hasInvisibleRow(for: edge, visibleRect: visibleRect)
     }
 
     private func resetTabDragThresholdState() {
