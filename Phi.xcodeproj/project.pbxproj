@@ -212,6 +212,14 @@
 		5EA17ABC0000000000000103 /* SearchTabsNativeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000113 /* SearchTabsNativeProvider.swift */; };
 		5EA17ABC0000000000000104 /* SearchTabsAggregator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000114 /* SearchTabsAggregator.swift */; };
 		5EA17ABC0000000000000105 /* SearchTabsDataController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000115 /* SearchTabsDataController.swift */; };
+		5EA17ABC0000000000000106 /* SearchTabsActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000116 /* SearchTabsActionExecutor.swift */; };
+		5EA17ABC0000000000000107 /* SearchTabsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000117 /* SearchTabsViewModel.swift */; };
+		5EA17ABC0000000000000108 /* SearchTabsTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000118 /* SearchTabsTextField.swift */; };
+		5EA17ABC0000000000000109 /* SearchTabsResultCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000119 /* SearchTabsResultCellView.swift */; };
+		5EA17ABC000000000000010A /* SearchTabsResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC000000000000011A /* SearchTabsResultsView.swift */; };
+		5EA17ABC000000000000010B /* SearchTabsBookmarkMenuPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC000000000000011B /* SearchTabsBookmarkMenuPresenter.swift */; };
+		5EA17ABC000000000000010C /* SearchTabsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC000000000000011C /* SearchTabsViewController.swift */; };
+		5EA17ABC000000000000010D /* SearchTabsContainerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC000000000000011D /* SearchTabsContainerViewController.swift */; };
 		AB1000000000000000000FA1 /* TabMultiSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1000000000000000000FA2 /* TabMultiSelection.swift */; };
 		AB1000000000000000000FB1 /* TabMultiSelectionMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */; };
 		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
@@ -617,6 +625,14 @@
 		5EA17ABC0000000000000113 /* SearchTabsNativeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsNativeProvider.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000114 /* SearchTabsAggregator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsAggregator.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000115 /* SearchTabsDataController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsDataController.swift; sourceTree = "<group>"; };
+		5EA17ABC0000000000000116 /* SearchTabsActionExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsActionExecutor.swift; sourceTree = "<group>"; };
+		5EA17ABC0000000000000117 /* SearchTabsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsViewModel.swift; sourceTree = "<group>"; };
+		5EA17ABC0000000000000118 /* SearchTabsTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsTextField.swift; sourceTree = "<group>"; };
+		5EA17ABC0000000000000119 /* SearchTabsResultCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsResultCellView.swift; sourceTree = "<group>"; };
+		5EA17ABC000000000000011A /* SearchTabsResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsResultsView.swift; sourceTree = "<group>"; };
+		5EA17ABC000000000000011B /* SearchTabsBookmarkMenuPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsBookmarkMenuPresenter.swift; sourceTree = "<group>"; };
+		5EA17ABC000000000000011C /* SearchTabsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsViewController.swift; sourceTree = "<group>"; };
+		5EA17ABC000000000000011D /* SearchTabsContainerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsContainerViewController.swift; sourceTree = "<group>"; };
 		AB1000000000000000000FA2 /* TabMultiSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMultiSelection.swift; sourceTree = "<group>"; };
 		AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMultiSelectionMenu.swift; sourceTree = "<group>"; };
 		AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAgentEndpointResolver.swift; sourceTree = "<group>"; };
@@ -1277,6 +1293,14 @@
 				5EA17ABC0000000000000113 /* SearchTabsNativeProvider.swift */,
 				5EA17ABC0000000000000114 /* SearchTabsAggregator.swift */,
 				5EA17ABC0000000000000115 /* SearchTabsDataController.swift */,
+				5EA17ABC0000000000000116 /* SearchTabsActionExecutor.swift */,
+				5EA17ABC0000000000000117 /* SearchTabsViewModel.swift */,
+				5EA17ABC0000000000000118 /* SearchTabsTextField.swift */,
+				5EA17ABC0000000000000119 /* SearchTabsResultCellView.swift */,
+				5EA17ABC000000000000011A /* SearchTabsResultsView.swift */,
+				5EA17ABC000000000000011B /* SearchTabsBookmarkMenuPresenter.swift */,
+				5EA17ABC000000000000011C /* SearchTabsViewController.swift */,
+				5EA17ABC000000000000011D /* SearchTabsContainerViewController.swift */,
 			);
 			path = SearchTabs;
 			sourceTree = "<group>";
@@ -2080,6 +2104,14 @@
 				5EA17ABC0000000000000103 /* SearchTabsNativeProvider.swift in Sources */,
 				5EA17ABC0000000000000104 /* SearchTabsAggregator.swift in Sources */,
 				5EA17ABC0000000000000105 /* SearchTabsDataController.swift in Sources */,
+				5EA17ABC0000000000000106 /* SearchTabsActionExecutor.swift in Sources */,
+				5EA17ABC0000000000000107 /* SearchTabsViewModel.swift in Sources */,
+				5EA17ABC0000000000000108 /* SearchTabsTextField.swift in Sources */,
+				5EA17ABC0000000000000109 /* SearchTabsResultCellView.swift in Sources */,
+				5EA17ABC000000000000010A /* SearchTabsResultsView.swift in Sources */,
+				5EA17ABC000000000000010B /* SearchTabsBookmarkMenuPresenter.swift in Sources */,
+				5EA17ABC000000000000010C /* SearchTabsViewController.swift in Sources */,
+				5EA17ABC000000000000010D /* SearchTabsContainerViewController.swift in Sources */,
 				CCBF8F4D2E6543E800B9A99E /* TabSectionController.swift in Sources */,
 				373D84032F3C801B00430BE6 /* AuthManagerExternalBrowserWebAuthUserAgent.swift in Sources */,
 				373D84052F9D500100000001 /* AuthManager+Reauthentication.swift in Sources */,

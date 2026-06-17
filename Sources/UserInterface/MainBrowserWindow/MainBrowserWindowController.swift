@@ -17,6 +17,7 @@ class MainBrowserWindowController: NSWindowController {
     let profileId: String
     
     var omniBoxContainerViewController: OmniBoxContainerViewController?
+    var searchTabsContainerViewController: SearchTabsContainerViewController?
     
     private lazy var toastContainerViewController: OverlayToastViewController = {
         return OverlayToastViewController(state: browserState)
@@ -28,6 +29,10 @@ class MainBrowserWindowController: NSWindowController {
     
     lazy var omnibackgroundView: EventBlockBgView = {
        return EventBlockBgView()
+    }()
+
+    lazy var searchTabsBackgroundView: EventBlockBgView = {
+        EventBlockBgView()
     }()
     
     private var originalContentView: NSView?

@@ -721,6 +721,41 @@ final class SearchTabsDataTests: XCTestCase {
         XCTAssertTrue(snapshot.items.isEmpty)
     }
 
+    func testActionExecutorUsesCurrentWindowForChromiumActions() throws {
+        let state = try makeSearchTabsState()
+        var activated: (tabId: Int64, windowId: Int64)?
+        var restored: (sessionId: Int64, windowId: Int64)?
+        let executor = SearchTabsActionExecutor(
+            browserState: state,
+            activateChromiumTab: { tabId, windowId in
+                activated = (tabId, windowId)
+                return true
+            },
+            restoreClosedTab: { sessionId, windowId in
+                restored = (sessionId, windowId)
+                return true
+            }
+        )
+
+        XCTAssertTrue(executor.perform(.activateChromiumTab(tabId: 101, windowId: 999)))
+        XCTAssertTrue(executor.perform(.restoreClosedTab(sessionId: 202, sourceEntrySessionId: 303, sourceEntryType: "tab")))
+
+        XCTAssertEqual(activated?.tabId, 101)
+        XCTAssertEqual(activated?.windowId, Int64(state.windowId))
+        XCTAssertEqual(restored?.sessionId, 202)
+        XCTAssertEqual(restored?.windowId, Int64(state.windowId))
+    }
+
+    func testActionExecutorReleasedStateReturnsFalse() {
+        let executor = SearchTabsActionExecutor(
+            browserState: nil,
+            activateChromiumTab: { _, _ in true },
+            restoreClosedTab: { _, _ in true }
+        )
+
+        XCTAssertFalse(executor.perform(.activateChromiumTab(tabId: 101, windowId: 7)))
+    }
+
     private func makeSearchTabsState(isIncognito: Bool = false) throws -> BrowserState {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -28,6 +28,10 @@ extension MainBrowserWindowController {
     }
     
     func handleCloseTab() -> Bool {
+        if searchTabsContainerViewController?.hasShown ?? false {
+            searchTabsContainerViewController?.hideSearchTabs()
+            return true
+        }
         if omniBoxContainerViewController?.hasShown ?? false {
             omniBoxContainerViewController?.hideOmniBox()
             return true
@@ -114,6 +118,43 @@ extension MainBrowserWindowController {
             // Already showing, just hide it
             omniBoxContainerViewController?.hideOmniBox(fromAddressBar: fromAddressBar)
         }
+    }
+
+    @objc func toggleSearchTabs() {
+        if searchTabsContainerViewController?.hasShown ?? false {
+            searchTabsContainerViewController?.hideSearchTabs()
+            return
+        }
+
+        if omniBoxContainerViewController?.hasShown ?? false {
+            omniBoxContainerViewController?.hideOmniBox()
+        }
+
+        if searchTabsContainerViewController == nil {
+            searchTabsContainerViewController = SearchTabsContainerViewController(
+                browserState: browserState,
+                superView: searchTabsBackgroundView
+            )
+        }
+
+        guard let contentView = contentViewController?.view else {
+            return
+        }
+
+        contentView.addSubview(searchTabsBackgroundView)
+        searchTabsBackgroundView.snp.remakeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        if let containerView = searchTabsContainerViewController?.view,
+           containerView.superview == nil {
+            searchTabsBackgroundView.addSubview(containerView)
+            containerView.snp.makeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+        }
+
+        searchTabsContainerViewController?.showSearchTabs()
     }
     
     @IBAction func toggleBookmark(_ sender: Any?) {
