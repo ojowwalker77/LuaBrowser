@@ -437,6 +437,17 @@ class BookmarkManager: ObservableObject {
         return getAllBookmarks().first { !$0.isFolder && $0.url == normalized }
     }
 
+    /// Finds an existing split-view bookmark whose primary pane matches `url`.
+    /// Unlike `findBookmark(byURL:)`, this only matches bookmarks that carry a
+    /// secondary URL, so a split's Cmd+D toggle won't collide with a plain
+    /// single-page bookmark sharing the same primary URL.
+    func findSplitBookmark(byPrimaryURL url: String) -> Bookmark? {
+        guard let normalized = browserState?.localStore.normalizedURL(from: url)?.absoluteString else { return nil }
+        return getAllBookmarks().first {
+            !$0.isFolder && $0.url == normalized && $0.secondaryUrl?.isEmpty == false
+        }
+    }
+
     func moveBookmark(_ bookmark: Bookmark, to newParent: Bookmark, at index: Int? = nil) {
         guard let profileId = browserState?.profileId else { return }
         browserState?.localStore.moveBookmark(bookmark.guid, profileId: profileId, to: newParent.guid, newIndex: index ?? Int.max)

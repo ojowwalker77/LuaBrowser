@@ -124,6 +124,24 @@ extension MainBrowserWindowController {
         guard let tab = state.focusingTab,
               let url = tab.url, !url.isEmpty else { return }
 
+        // When the focused tab is one half of a split, bookmark the whole pair
+        // (matching the right-click "Add Split to Bookmark"), keyed off the
+        // split's primary pane so the toggle round-trips with `openBookmark`.
+        if let group = state.splitGroup(forTabId: tab.guid),
+           let primaryTab = state.tabs.first(where: { $0.guid == group.primaryTabId }),
+           let primaryURL = primaryTab.url, !primaryURL.isEmpty {
+            if let existing = state.bookmarkManager.findSplitBookmark(byPrimaryURL: primaryURL) {
+                presentBookmarkEditor(for: existing)
+            } else if state.addSplitBookmarkFromTab(tab) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    if let newBookmark = self?.browserState.bookmarkManager.findSplitBookmark(byPrimaryURL: primaryURL) {
+                        self?.presentBookmarkEditor(for: newBookmark)
+                    }
+                }
+            }
+            return
+        }
+
         if let existing = state.bookmarkManager.findBookmark(byURL: url) {
             presentBookmarkEditor(for: existing)
         } else {
@@ -159,11 +177,18 @@ extension MainBrowserWindowController {
         let state = browserState
         let bookmarkGuid = bookmark.guid
         let originalParentGuid = bookmark.parent?.guid
+        // Pass the existing secondary URL and title into the editor so a split
+        // bookmark shows the Left/Right name + URL fields and preserves the
+        // values when those rows are left untouched.
+        let initialSecondaryUrl = bookmark.secondaryUrl
+        let initialSecondaryTitle = bookmark.secondaryTitle
 
         EditPinnedTabPresenter.presentModal(
             mode: .editOrMoveBookmark,
             title: bookmark.title,
             urlString: bookmark.url ?? "",
+            secondaryUrlString: initialSecondaryUrl,
+            secondaryTitleString: initialSecondaryTitle,
             modelContainer: state.localStore.container,
             profileId: state.profileId,
             initialFolderGuid: originalParentGuid,
@@ -180,10 +205,17 @@ extension MainBrowserWindowController {
                 return guid
             },
             onSave: { result in
+                // Use double-optional for the split fields: `.none` leaves them
+                // alone (non-split bookmark untouched), `.some(value)` writes —
+                // including `.some("")` to clear.
+                let secondaryUrlUpdate: String?? = (initialSecondaryUrl == nil) ? nil : .some(result.secondaryUrl ?? "")
+                let secondaryTitleUpdate: String?? = (initialSecondaryUrl == nil) ? nil : .some(result.secondaryTitle ?? "")
                 state.bookmarkManager.updateBookmark(
                     guid: bookmarkGuid,
                     title: result.title,
-                    url: result.url
+                    url: result.url,
+                    secondaryUrl: secondaryUrlUpdate,
+                    secondaryTitle: secondaryTitleUpdate
                 )
                 if let newParentGuid = result.parentFolderGuid,
                    newParentGuid != originalParentGuid {
