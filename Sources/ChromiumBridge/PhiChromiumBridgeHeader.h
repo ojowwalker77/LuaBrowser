@@ -340,6 +340,14 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 // Unlike createNewTabWithUrl, this reuses an existing tab for the same URL when possible.
 - (void)openTabWithUrl:(NSString *)urlString windowId:(int64_t)windowId;
 
+- (NSDictionary<NSString *, id> *)getSearchTabsDataWithWindowId:(int64_t)windowId;
+
+- (BOOL)activateSearchTabWithTabId:(int64_t)tabId
+                          windowId:(int64_t)windowId;
+
+- (BOOL)openRecentlyClosedSearchEntryWithSessionId:(int64_t)sessionId
+                                          windowId:(int64_t)windowId;
+
 - (void)moveTabWithWindowId:(int64_t)windowId
                       tabId:(int64_t)tabId
                 beforeTabId:(int64_t)anchorTabId;
