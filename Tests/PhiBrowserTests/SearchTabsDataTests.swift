@@ -266,4 +266,162 @@ final class SearchTabsDataTests: XCTestCase {
             ),
         ])
     }
+
+    func testNativeProviderReturnsBookmarkRootOnlyForEmptyQuery() {
+        let bookmark = Bookmark(
+            guid: "bookmark-1",
+            title: "Docs",
+            url: "https://docs.example",
+            profileId: "profile-1"
+        )
+        let provider = SearchTabsNativeProvider(
+            profileId: "profile-1",
+            windowId: 42,
+            bookmarks: [bookmark]
+        )
+
+        let withRoot = provider.snapshot(includeBookmarkRoot: true)
+        let withoutRoot = provider.snapshot(includeBookmarkRoot: false)
+
+        XCTAssertEqual(withRoot.bookmarkRoot?.kind, .bookmarkRoot)
+        XCTAssertEqual(withRoot.bookmarkRoot?.providerOrder, Int.max)
+        XCTAssertEqual(withRoot.bookmarks.count, 1)
+        XCTAssertEqual(withRoot.bookmarks.first?.guid, "bookmark-1")
+        XCTAssertNil(withoutRoot.bookmarkRoot)
+    }
+
+    func testNativeProviderSkipsNativeResultsForIncognito() {
+        let pinnedTab = Tab(
+            guid: 100,
+            url: "https://pinned.example",
+            isActive: false,
+            index: 0,
+            title: "Pinned",
+            customGuid: "pin-1"
+        )
+        let bookmark = Bookmark(
+            guid: "bookmark-1",
+            title: "Docs",
+            url: "https://docs.example",
+            profileId: "otr-profile"
+        )
+        let provider = SearchTabsNativeProvider(
+            profileId: "otr-profile",
+            windowId: 42,
+            isIncognito: true,
+            pinnedTabs: [pinnedTab],
+            bookmarks: [bookmark]
+        )
+
+        let snapshot = provider.snapshot(includeBookmarkRoot: true)
+
+        XCTAssertTrue(snapshot.pins.isEmpty)
+        XCTAssertTrue(snapshot.bookmarks.isEmpty)
+        XCTAssertNil(snapshot.bookmarkRoot)
+    }
+
+    func testNativeProviderBuildsPinnedSplitAsSingleEntry() throws {
+        let left = Tab(
+            guid: 101,
+            url: "https://left.example",
+            isActive: true,
+            index: 0,
+            title: "Left",
+            customGuid: "pin-left"
+        )
+        let right = Tab(
+            guid: 102,
+            url: "https://right.example",
+            isActive: false,
+            index: 1,
+            title: "Right",
+            customGuid: "pin-right"
+        )
+        left.splitPartnerGuid = "pin-right"
+        right.splitPartnerGuid = "pin-left"
+        left.isOpenned = true
+        right.isOpenned = true
+
+        let provider = SearchTabsNativeProvider(
+            profileId: "profile-1",
+            windowId: 42,
+            pinnedTabs: [left, right],
+            focusingTab: left,
+            pinnedSplitPair: { tab in
+                switch tab.guidInLocalDB {
+                case "pin-left", "pin-right":
+                    return ("pin-left", "pin-right")
+                default:
+                    return nil
+                }
+            }
+        )
+
+        let snapshot = provider.snapshot(includeBookmarkRoot: false)
+
+        XCTAssertEqual(snapshot.pins.count, 1)
+        let entry = try XCTUnwrap(snapshot.pins.first)
+        XCTAssertEqual(entry.kind, .pin)
+        XCTAssertEqual(entry.primary.localGuid, "pin-left")
+        XCTAssertEqual(entry.secondary?.localGuid, "pin-right")
+        XCTAssertEqual(entry.displayMode, .split)
+        XCTAssertTrue(entry.state.isSplit)
+        XCTAssertTrue(entry.state.isOpen)
+        XCTAssertTrue(entry.state.isActive)
+    }
+
+    func testNativeProviderBuildsSplitBookmarkAsSingleEntry() throws {
+        let bookmark = Bookmark(
+            guid: "bookmark-1",
+            title: "Mail",
+            url: "https://mail.example",
+            secondaryUrl: "https://calendar.example",
+            secondaryTitle: "Calendar",
+            profileId: "profile-1"
+        )
+        let provider = SearchTabsNativeProvider(
+            profileId: "profile-1",
+            windowId: 42,
+            bookmarks: [bookmark]
+        )
+
+        let snapshot = provider.snapshot(includeBookmarkRoot: false)
+
+        XCTAssertEqual(snapshot.bookmarks.count, 1)
+        let entry = try XCTUnwrap(snapshot.bookmarks.first)
+        XCTAssertEqual(entry.kind, .bookmark)
+        XCTAssertEqual(entry.displayMode, .split)
+        XCTAssertEqual(entry.primary.title, "Mail")
+        XCTAssertEqual(entry.secondary?.title, "Calendar")
+    }
+
+    func testNativeProviderFallsBackToSecondaryURLWhenSplitBookmarkTitleIsBlank() throws {
+        let nilTitleBookmark = Bookmark(
+            guid: "bookmark-1",
+            title: "Mail",
+            url: "https://mail.example",
+            secondaryUrl: "https://calendar.example",
+            secondaryTitle: nil,
+            profileId: "profile-1"
+        )
+        let emptyTitleBookmark = Bookmark(
+            guid: "bookmark-2",
+            title: "Docs",
+            url: "https://docs.example",
+            secondaryUrl: "https://tasks.example",
+            secondaryTitle: "",
+            profileId: "profile-1"
+        )
+        let provider = SearchTabsNativeProvider(
+            profileId: "profile-1",
+            windowId: 42,
+            bookmarks: [nilTitleBookmark, emptyTitleBookmark]
+        )
+
+        let snapshot = provider.snapshot(includeBookmarkRoot: false)
+
+        XCTAssertEqual(snapshot.bookmarks.count, 2)
+        XCTAssertEqual(try XCTUnwrap(snapshot.bookmarks.first).secondary?.title, "https://calendar.example")
+        XCTAssertEqual(try XCTUnwrap(snapshot.bookmarks.last).secondary?.title, "https://tasks.example")
+    }
 }
