@@ -651,6 +651,63 @@ final class SearchTabsDataTests: XCTestCase {
         XCTAssertNil(item.splitRelation)
     }
 
+    func testDataControllerAttachesSplitRelationToOpenChromiumTab() throws {
+        let state = try makeSearchTabsState()
+        let mail = Tab(
+            guid: 50,
+            url: "https://mail.example",
+            isActive: true,
+            index: 0,
+            title: "Mail"
+        )
+        let calendar = Tab(
+            guid: 51,
+            url: "https://calendar.example",
+            isActive: false,
+            index: 1,
+            title: "Calendar"
+        )
+        state.tabs = [mail, calendar]
+        state.splits = [
+            SplitGroup(
+                id: "split-50-51",
+                primaryTabId: 50,
+                secondaryTabId: 51,
+                layout: .vertical,
+                ratio: 0.5
+            ),
+        ]
+        let chromium = SearchTabsChromiumProvider(fetchData: { _ in
+            [
+                "openTabs": [
+                    [
+                        "tabId": 50,
+                        "windowId": 7,
+                        "index": 0,
+                        "title": "Mail",
+                        "url": "https://mail.example",
+                        "split": true,
+                        "hostWindow": true,
+                        "lastActiveElapsedMs": 10,
+                    ],
+                ],
+            ]
+        })
+        let controller = SearchTabsDataController(browserState: state, chromiumProvider: chromium)
+
+        let snapshot = controller.snapshot(query: "")
+        let item = try XCTUnwrap(snapshot.items.first)
+        let relation = try XCTUnwrap(item.splitRelation)
+
+        XCTAssertEqual(item.displayMode, .single)
+        XCTAssertTrue(item.state.isSplit)
+        XCTAssertEqual(relation.splitId, "split-50-51")
+        XCTAssertEqual(relation.role, .primary)
+        XCTAssertEqual(relation.partnerTabId, 51)
+        XCTAssertEqual(relation.partnerTitle, "Calendar")
+        XCTAssertEqual(relation.partnerURL, "https://calendar.example")
+    }
+
     func testDataControllerReleasedStateUsesDefaultProfileAndWindowZero() {
         let controller = SearchTabsDataController(
             browserState: nil,
@@ -662,6 +719,14 @@ final class SearchTabsDataTests: XCTestCase {
         XCTAssertEqual(snapshot.profileId, LocalStore.defaultProfileId)
         XCTAssertEqual(snapshot.windowId, 0)
         XCTAssertTrue(snapshot.items.isEmpty)
+    }
+
+    private func makeSearchTabsState(isIncognito: Bool = false) throws -> BrowserState {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
+        return BrowserState(windowId: 7, localStore: store, profileId: "Default", isIncognito: isIncognito)
     }
 
     private func makeOpenTab(

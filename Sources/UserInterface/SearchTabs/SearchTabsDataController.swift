@@ -43,7 +43,27 @@ final class SearchTabsDataController {
             profileId: state.profileId,
             windowId: state.windowId,
             chromium: chromiumProvider.snapshot(windowId: state.windowId),
-            native: nativeProvider.snapshot(includeBookmarkRoot: normalizedQuery.isEmpty)
+            native: nativeProvider.snapshot(includeBookmarkRoot: normalizedQuery.isEmpty),
+            splitRelation: { tabId in
+                Self.splitRelation(for: tabId, in: state)
+            }
+        )
+    }
+
+    private static func splitRelation(for tabId: Int, in state: BrowserState) -> SearchTabsSplitRelation? {
+        guard let group = state.splitGroup(forTabId: tabId),
+              let partnerId = group.partnerTabId(of: tabId),
+              let partner = state.tabs.first(where: { $0.guid == partnerId }) else {
+            return nil
+        }
+
+        return SearchTabsSplitRelation(
+            splitId: group.id,
+            layout: group.layout,
+            role: group.primaryTabId == tabId ? .primary : .secondary,
+            partnerTabId: partnerId,
+            partnerTitle: partner.title,
+            partnerURL: partner.url
         )
     }
 }

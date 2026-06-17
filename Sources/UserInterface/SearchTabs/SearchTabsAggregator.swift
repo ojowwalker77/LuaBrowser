@@ -12,13 +12,18 @@ enum SearchTabsAggregator {
         windowId: Int,
         chromium: SearchTabsChromiumSnapshot,
         native: SearchTabsNativeSnapshot,
-        generatedAt: Date = Date()
+        generatedAt: Date = Date(),
+        splitRelation: (Int) -> SearchTabsSplitRelation? = { _ in nil }
     ) -> SearchTabsSnapshot {
         let normalizedQuery = SearchTabsQueryMatcher.normalizedQuery(query)
         let isEmptyQuery = normalizedQuery.isEmpty
 
         let openItems = chromium.openTabs.compactMap { tab in
-            makeOpenItem(tab: tab, normalizedQuery: normalizedQuery)
+            makeOpenItem(
+                tab: tab,
+                normalizedQuery: normalizedQuery,
+                splitRelation: splitRelation
+            )
         }
         let nativeItems = makeNativeItems(native: native, normalizedQuery: normalizedQuery)
         let closedItems = chromium.closedTabs.compactMap { tab in
@@ -40,7 +45,8 @@ enum SearchTabsAggregator {
 
     private static func makeOpenItem(
         tab: ChromiumSearchOpenTab,
-        normalizedQuery: String
+        normalizedQuery: String,
+        splitRelation: (Int) -> SearchTabsSplitRelation?
     ) -> SearchTabsItem? {
         guard let tabId = intValue(tab.tabId),
               let windowId = intValue(tab.windowId) else {
@@ -72,7 +78,7 @@ enum SearchTabsAggregator {
             displayMode: .single,
             primary: pane,
             secondary: nil,
-            splitRelation: nil,
+            splitRelation: splitRelation(tabId),
             state: SearchTabsItemState(
                 isOpen: true,
                 isActive: tab.active,
