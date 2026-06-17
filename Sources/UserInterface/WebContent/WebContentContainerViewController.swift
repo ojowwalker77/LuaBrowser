@@ -1031,6 +1031,20 @@ class WebContentContainerViewController: NSViewController {
 
     /// Scenario 2: Switch to a new unpainted tab (add view below, wait for first paint)
     private func switchToNewUnpaintedTab(controller: WebContentViewController, tab: Tab, identifier: String) {
+        // Defensive: a live host controller can be handed back here when a
+        // controller is reused for a colliding bookmark/pinned identifier.
+        // Re-pointing the current live host into the unpainted-pending slot
+        // would later trip the bookmark-bar host assertion in
+        // cancelPendingNewTabSwitchIfNeeded. If this controller is already the
+        // live host, switch to it synchronously instead of pending it. The
+        // duplicate-binding root cause is fixed Chromium-side at restore; this
+        // guard remains as a second layer.
+        if controller === currentWebContentController {
+            switchToWebContentController(controller)
+            currentTabIdentifier = identifier
+            return
+        }
+
         // Cancel any existing timeout
         pendingNewTabTimeoutWorkItem?.cancel()
         pendingNewTabTimeoutWorkItem = nil
