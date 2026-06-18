@@ -158,9 +158,12 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 browserType: browserType,
                 profileId: profileId
             )
-            if browserType != .shadow {
-                mainWindowController.window?.makeKeyAndOrderFront(nil)
-            } else {
+            // Do NOT force key/front here. Chromium's BrowserWindow Show() /
+            // ShowInactive() runs post-ctor on this same NSWindow and drives
+            // visibility + activation with the correct intent; forcing
+            // makeKeyAndOrderFront here made chrome.windows.create({focused:false})
+            // come to the foreground (the focused param was effectively ignored).
+            if browserType == .shadow {
                 AppLogInfo("🌐 Shadow window controller initialized but hidden.")
             }
             AppLogInfo("🌐 [Chromium] ✅ Window controller created and displayed (user logged in)")
