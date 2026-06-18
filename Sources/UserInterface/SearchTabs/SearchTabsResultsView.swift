@@ -363,18 +363,19 @@ private final class SearchTabsSectionHeaderView: NSTableCellView {
 
     private func setupViews() {
         addSubview(titleLabel)
-        addSubview(toggleButton)
+//        addSubview(toggleButton)
 
         titleLabel.snp.makeConstraints { make in
             make.leading.equalToSuperview()
             make.centerY.equalToSuperview().offset(1)
-            make.trailing.lessThanOrEqualTo(toggleButton.snp.leading).offset(-8)
+//            make.trailing.lessThanOrEqualTo(toggleButton.snp.leading).offset(-8)
+            make.trailing.lessThanOrEqualToSuperview().offset(-8)
         }
-        toggleButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview()
-            make.centerY.equalTo(titleLabel)
-            make.width.height.equalTo(16)
-        }
+//        toggleButton.snp.makeConstraints { make in
+//            make.trailing.equalToSuperview()
+//            make.centerY.equalTo(titleLabel)
+//            make.width.height.equalTo(16)
+//        }
     }
 
     @objc private func toggleSection() {

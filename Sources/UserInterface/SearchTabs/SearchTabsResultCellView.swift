@@ -49,10 +49,14 @@ final class SearchTabsResultCellView: NSTableCellView {
     }()
 
     private lazy var titleLabel: NSTextField = {
-        let label = SearchTabsResultCellView.makeLabel(font: .systemFont(ofSize: 13, weight: .regular))
+        let label = SearchTabsResultCellView.makeLabel(
+            font: .systemFont(ofSize: 13, weight: .regular),
+            textField: TrailingFadeTextField(),
+            lineBreakMode: .byClipping,
+            truncatesLastVisibleLine: false
+        )
         label.textColor = .labelColor
         label.maximumNumberOfLines = 1
-        label.lineBreakMode = .byTruncatingTail
         return label
     }()
 
@@ -254,14 +258,20 @@ final class SearchTabsResultCellView: NSTableCellView {
         }
     }
 
-    private static func makeLabel(font: NSFont) -> NSTextField {
-        let label = NSTextField()
+    private static func makeLabel(
+        font: NSFont,
+        textField: NSTextField = NSTextField(),
+        lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+        truncatesLastVisibleLine: Bool = true
+    ) -> NSTextField {
+        let label = textField
         label.isEditable = false
         label.isBordered = false
         label.drawsBackground = false
         label.font = font
-        label.lineBreakMode = .byTruncatingTail
-        label.cell?.truncatesLastVisibleLine = true
+        label.lineBreakMode = lineBreakMode
+        label.cell?.lineBreakMode = lineBreakMode
+        label.cell?.truncatesLastVisibleLine = truncatesLastVisibleLine
         label.cell?.usesSingleLineMode = true
         label.cell?.wraps = false
         return label
