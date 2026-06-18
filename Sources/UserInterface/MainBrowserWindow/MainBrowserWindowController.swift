@@ -96,6 +96,12 @@ class MainBrowserWindowController: NSWindowController {
                                                selector: #selector(myWindowWillClose(_:)),
                                                name: NSWindow.willCloseNotification,
                                                object: window)
+        // A window created minimized never runs its content view-appearance
+        // lifecycle; restore it when the window is deminiaturized from the Dock.
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(handleWindowDidDeminiaturize(_:)),
+                                               name: NSWindow.didDeminiaturizeNotification,
+                                               object: window)
         browserState.themeContext.themeAppearancePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
@@ -115,6 +121,14 @@ class MainBrowserWindowController: NSWindowController {
         setupContentView()
         applyThemeAppearance(to: window)
         window.setFrame(frameToRestore, display: true)
+    }
+
+    /// A window created minimized never runs its content view-appearance
+    /// lifecycle (AppKit doesn't run appearance for a Dock/off-screen window),
+    /// and deminiaturizing doesn't re-trigger it — leaving the restored window
+    /// blank. Drive the content setup now that the window is visible again.
+    @objc private func handleWindowDidDeminiaturize(_ note: Notification) {
+        mainSplitViewController.phiHandleRestoreFromMinimized()
     }
 
     private func applyThemeAppearance(to window: NSWindow) {

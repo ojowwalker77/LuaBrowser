@@ -813,6 +813,19 @@ class WebContentContainerViewController: NSViewController {
         }
     }
     
+    /// Drive the active tab's content mount after the window is restored from
+    /// the Dock. A window created minimized never runs `viewWillAppear` for
+    /// this controller (AppKit doesn't run appearance for a Dock/off-screen
+    /// window, and deminiaturizing doesn't re-trigger it), so the `$focusingTab`
+    /// subscription that mounts tab content was never installed. Re-run the
+    /// appearance-time setup (idempotent) and drive the current tab.
+    func mountActiveTabForRestore() {
+        viewWillAppear()
+        if let tab = browserState?.focusingTab {
+            handleFocusingTabChanged(tab)
+        }
+    }
+
     private func handleTabsChanged(_ tabs: [Tab]) {
         guard let state = browserState else { return }
         
