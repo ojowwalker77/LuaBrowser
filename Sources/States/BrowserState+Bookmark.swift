@@ -251,6 +251,13 @@ extension BrowserState {
         // `splitBookmarkBindings` directly.
         if bookmark.chromiumTabGuid != -1 { bookmark.chromiumTabGuid = -1 }
         bookmark.setWebContentWrapper(nil)
+        if let splitId = splitBookmarkBindings[bookmarkGuid],
+           let group = splits.first(where: { $0.id == splitId }),
+           let primaryTab = tabs.first(where: { $0.guid == group.primaryTabId }) {
+            bookmark.setCanonicalFaviconSource(primaryTab.webContentWrapper)
+        } else {
+            bookmark.clearCanonicalFaviconSource()
+        }
         let isActive: Bool = {
             guard let splitId = splitBookmarkBindings[bookmarkGuid],
                   let group = splits.first(where: { $0.id == splitId }),

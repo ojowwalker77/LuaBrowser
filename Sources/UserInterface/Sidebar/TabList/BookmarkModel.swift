@@ -41,6 +41,7 @@ class Bookmark: WebContentRepresentable {
     private(set) var webContentWrapper: (WebContentWrapper & NSObject)?
     private(set) var children: [Bookmark] = []
     private var cancellables = Set<AnyCancellable>()
+    private var canonicalFaviconCancellables = Set<AnyCancellable>()
     private var faviconSnapshotUpdater: ((Data) -> Void)?
     
     init(guid: String = UUID().uuidString,
@@ -118,6 +119,9 @@ class Bookmark: WebContentRepresentable {
     
     /// Stores the associated web-content wrapper for an opened bookmark tab.
     func setWebContentWrapper(_ wrapper: (WebContentWrapper & NSObject)?) {
+        if wrapper == nil {
+            clearCanonicalFaviconSource()
+        }
         if let currentWrapper = webContentWrapper, let wrapper, currentWrapper === wrapper {
             return
         }
@@ -126,6 +130,39 @@ class Bookmark: WebContentRepresentable {
         }
         self.webContentWrapper = wrapper
         setupObservers(for: wrapper)
+        if let wrapper {
+            setCanonicalFaviconSource(wrapper)
+        }
+    }
+
+    func setCanonicalFaviconSource<Wrapper: WebContentWrapper & NSObject>(_ wrapper: Wrapper?) {
+        clearCanonicalFaviconSource()
+
+        guard let wrapper else { return }
+
+        updateCachedFaviconDataIfNeeded(wrapper.favIconData, forWrapperURL: wrapper.urlString)
+
+        wrapper.publisher(for: \.favIconData)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak wrapper] data in
+                guard let self, let wrapper else { return }
+                self.updateCachedFaviconDataIfNeeded(data, forWrapperURL: wrapper.urlString)
+            }
+            .store(in: &canonicalFaviconCancellables)
+
+        wrapper.publisher(for: \.urlString)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak wrapper] urlString in
+                guard let self, let wrapper else { return }
+                self.updateCachedFaviconDataIfNeeded(wrapper.favIconData, forWrapperURL: urlString)
+            }
+            .store(in: &canonicalFaviconCancellables)
+    }
+
+    func clearCanonicalFaviconSource() {
+        canonicalFaviconCancellables.forEach { $0.cancel() }
+        canonicalFaviconCancellables.removeAll()
     }
     
     func setFaviconSnapshotUpdater(_ updater: @escaping (Data) -> Void) {
@@ -153,15 +190,44 @@ class Bookmark: WebContentRepresentable {
             .store(in: &cancellables)
 
         liveFaviconData = wrapper.favIconData
-        updateCachedFaviconData(wrapper.favIconData, persist: false)
 
         wrapper.publisher(for: \.favIconData)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] data in
                 self?.liveFaviconData = data
-                self?.updateCachedFaviconData(data, persist: true)
             }
             .store(in: &cancellables)
+    }
+
+    private func updateCachedFaviconDataIfNeeded(_ data: Data?, forWrapperURL wrapperURLString: String?) {
+        guard let bookmarkURLString = canonicalURLString(url),
+              canonicalURLString(wrapperURLString) == bookmarkURLString else { return }
+        updateCachedFaviconData(data, persist: true)
+    }
+
+    private func canonicalURLString(_ rawURLString: String?) -> String? {
+        guard let rawURLString = rawURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawURLString.isEmpty else {
+            return nil
+        }
+
+        let processedURLString: String
+        if rawURLString.hasPrefix("phi://") || URL(string: rawURLString)?.scheme == nil {
+            processedURLString = URLProcessor.processUserInput(rawURLString)
+        } else {
+            processedURLString = rawURLString
+        }
+        guard var components = URLComponents(string: processedURLString) else {
+            return processedURLString
+        }
+
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        if components.path == "/" {
+            components.path = ""
+        }
+        return components.url?.absoluteString ?? processedURLString
     }
 }
 
