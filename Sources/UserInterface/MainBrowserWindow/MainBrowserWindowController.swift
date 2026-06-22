@@ -85,7 +85,12 @@ class MainBrowserWindowController: NSWindowController {
         window.isMovableByWindowBackground = true
         window.animationBehavior = .none
         //        window.delegate = self
-        window.setFrameAutosaveName("mainBrowserWindow")
+        // Chromium owns window placement (CreateParams override bounds / WindowSizer
+        // / saved-placement prefs / --window-size/--window-position). The shared
+        // "mainBrowserWindow" frame autosave loaded a remembered frame and clobbered
+        // that for every windows.create window, so it is intentionally not used.
+        // (The not-logged-in/dangling window is hidden then force-sized on restore,
+        // so it never depended on this autosave.)
         let frameToRestore = window.frame
         applyThemeAppearance(to: window)
         
