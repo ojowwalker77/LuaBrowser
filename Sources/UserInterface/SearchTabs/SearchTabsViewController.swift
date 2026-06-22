@@ -25,6 +25,12 @@ enum SearchTabsPanelDisplayMode: Equatable {
 final class SearchTabsViewController: NSViewController {
     @Published private(set) var contentSize: NSSize
     var didRequestDismiss: (() -> Void)?
+    var maximumContentSize: NSSize {
+        NSSize(width: displayMode.panelWidth, height: baseHeight + maxResultsHeight)
+    }
+    var usesFullWidthLayout: Bool {
+        displayMode == .normal
+    }
 
     private var displayMode: SearchTabsPanelDisplayMode
     private let viewModel: SearchTabsViewModel

@@ -249,10 +249,23 @@ final class SearchTabsContainerViewController: NSViewController {
             return
         }
 
-        let width = min(size.width, parentBounds.width - 32)
-        let height = min(size.height, parentBounds.height - 64)
-        let x = max(16, (parentBounds.width - width) / 2)
-        let y = max(24, parentBounds.height - height - 72)
+        let horizontalMargin: CGFloat = 16
+        let verticalMargin: CGFloat = 32
+        let maxWidth = max(parentBounds.width - horizontalMargin * 2, 0)
+        let maxHeight = max(parentBounds.height - verticalMargin * 2, 0)
+        guard maxWidth > 0, maxHeight > 0 else {
+            return
+        }
+
+        let width = min(size.width, maxWidth)
+        let height = min(size.height, maxHeight)
+        let maximumContentHeight = searchTabsController?.maximumContentSize.height ?? size.height
+        let centeredHeight = min(maximumContentHeight, maxHeight)
+        let centeredTopY = (parentBounds.height + centeredHeight) / 2
+        let x = max(horizontalMargin, (parentBounds.width - width) / 2)
+        let y = searchTabsController?.usesFullWidthLayout == true
+            ? max(verticalMargin, centeredTopY - height)
+            : max(24, parentBounds.height - height - 72)
         searchTabsView.frame = NSRect(x: x, y: y, width: width, height: height)
     }
 
