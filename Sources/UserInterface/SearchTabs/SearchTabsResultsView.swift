@@ -152,7 +152,7 @@ final class SearchTabsResultsView: NSView {
 
         isProgrammaticSelection = true
         tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
-        tableView.scrollRowToVisible(selectedRow)
+        scrollRowToVisibleIfNeeded(selectedRow)
         isProgrammaticSelection = false
 
         guard !dataSourceChanged, oldSelectedRow != selectedRow else {
@@ -164,6 +164,23 @@ final class SearchTabsResultsView: NSView {
             rowsToReload.insert(oldSelectedRow)
         }
         tableView.reloadData(forRowIndexes: rowsToReload, columnIndexes: IndexSet(integer: 0))
+    }
+
+    private func scrollRowToVisibleIfNeeded(_ row: Int) {
+        tableView.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+
+        let visibleRect = tableView.visibleRect
+        guard visibleRect.height > 0 else {
+            return
+        }
+
+        let rowRect = tableView.rect(ofRow: row)
+        guard !visibleRect.intersects(rowRect) else {
+            return
+        }
+
+        tableView.scrollRowToVisible(row)
     }
 
     func normalizeScrollPositionIfNeeded() {

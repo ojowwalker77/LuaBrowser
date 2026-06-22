@@ -1147,7 +1147,7 @@
       "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"
     },
     "Search Tabs" : {
-      "comment" : "Search Tabs - Placeholder text for the native tab search field"
+      "comment" : "Search Tabs - Button tooltip and accessibility label\nSearch Tabs - Placeholder text for the native tab search field"
     },
     "Select Phi User Data Backup" : {
       "comment" : "Debug import user data - NSOpenPanel title for choosing a Phi user data zip"

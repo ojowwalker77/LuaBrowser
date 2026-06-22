@@ -46,6 +46,9 @@ private struct TabStripSearchTabsButton: View {
 
     private let buttonSize: CGFloat = 24
     private let cornerRadius: CGFloat = 6
+    private var searchTabsLabel: String {
+        NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
+    }
 
     var body: some View {
         Button {
@@ -67,12 +70,13 @@ private struct TabStripSearchTabsButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: buttonSize, height: buttonSize)
+        .help(searchTabsLabel)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovering = hovering
             }
         }
-        .accessibilityLabel(Text("Search Tabs"))
+        .accessibilityLabel(Text(searchTabsLabel))
     }
 }
 

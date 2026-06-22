@@ -36,6 +36,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }()
 
     private lazy var searchTabsButton: HoverableButtonNSView = {
+        let label = NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
         let image = NSImage.configureSymbolImage(systemName: "magnifyingglass", pointSize: 15, weight: .regular, color: .black)
         let config = HoverableButtonConfig(image: image,
                                            imageSize: .init(width: 16, height: 16),
@@ -44,6 +45,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                                            imageTintColor: .textPrimary,
                                            cornerRadius: 4)
         let button = HoverableButtonNSView(config: config, target: self, selector: #selector(searchTabsButtonClicked))
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
         button.isHidden = true
         return button
     }()

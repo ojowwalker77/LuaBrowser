@@ -59,6 +59,10 @@ extension MainBrowserWindowController {
     }
     
     @objc func toggleOmniBox(fromAddressBar: Bool, addressView: NSView? = nil) {
+        if searchTabsContainerViewController?.hasShown ?? false {
+            searchTabsContainerViewController?.hideSearchTabs()
+        }
+
         if omniBoxContainerViewController?.hasShown ?? false == false {
             if omniBoxContainerViewController == nil {
                 omniBoxContainerViewController = OmniBoxContainerViewController(browserState: self.browserState, superView: omnibackgroundView)
