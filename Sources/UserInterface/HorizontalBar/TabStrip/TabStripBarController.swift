@@ -247,7 +247,7 @@ final class TabStripBarController: NSViewController {
     /// gesture in vertical layouts.
     private func activateAdjacentSpace(by step: Int) {
         guard PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional,
-              PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() else { return }
+              spacesPickerEligible else { return }
         let spaces = SpaceManager.shared.spaces
         guard let slot = browserState.windowController?.slot ?? SpaceManager.shared.keySlot,
               let currentId = slot.activeSpaceId,
@@ -268,10 +268,18 @@ final class TabStripBarController: NSViewController {
     /// chip pinned to the leading edge (just past the traffic lights); the tab
     /// strip starts right after it. When the feature is off the picker
     /// collapses to zero width and the tab strip reclaims the leading inset.
+    /// Whether the active-Space picker should appear in this window: the master
+    /// Spaces flag must be on AND the window must not be Incognito. Off-the-record
+    /// sessions are a single ephemeral context with no Spaces, so the chip and its
+    /// swipe-to-switch gesture are suppressed (mirroring the sidebar layout).
+    private var spacesPickerEligible: Bool {
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() && !browserState.isIncognito
+    }
+
     private func applySpacesPickerVisibility() {
         guard let spacesView = spacesPickerHostingView,
               let rightButtons = rightButtonsHostingView else { return }
-        let enabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+        let enabled = spacesPickerEligible
         guard lastSpacesPickerEnabled != enabled else { return }
         lastSpacesPickerEnabled = enabled
 

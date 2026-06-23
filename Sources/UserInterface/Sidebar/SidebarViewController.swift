@@ -384,8 +384,16 @@ class SidebarViewController: NSViewController {
         // and scrolls its label vertically on switch (see SpacesStripView).
         // It remains a child hosting controller of this VC for theming; only
         // its view lives in the header.
-        addChild(spacesStripHostingController)
-        headerView.mountSpaceSwitch(spacesStripHostingController.view)
+        //
+        // Incognito windows have no Spaces: an off-the-record session is a
+        // single ephemeral context, so skip mounting entirely (matching how AI
+        // chat and memory are suppressed above). Not mounting leaves the header's
+        // address bar pinned directly under the nav row — its default no-strip
+        // layout — and avoids spinning up a SpaceWindowSlot for the window.
+        if !state.isIncognito {
+            addChild(spacesStripHostingController)
+            headerView.mountSpaceSwitch(spacesStripHostingController.view)
+        }
 
         mainStackView.addArrangedSubview(tabList.view)
         tabList.view.snp.makeConstraints { make in
