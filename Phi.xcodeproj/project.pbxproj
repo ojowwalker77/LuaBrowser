@@ -127,12 +127,6 @@
 		37DEB33A2F63F0F500129429 /* TabDataModelSchemaV1.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEB3392F63F0F500129429 /* TabDataModelSchemaV1.swift */; };
 		37DEB33E2F63F13700129429 /* TabDataModelSchemaV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEB33D2F63F13700129429 /* TabDataModelSchemaV2.swift */; };
 		37DEB42F2F67C0F000129429 /* TabDataModelSchemaV3.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEB42E2F67C0F000129429 /* TabDataModelSchemaV3.swift */; };
-		CCAA00062F00010000000001 /* TabDataModelSchemaV7.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */; };
-		CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00010000000000000002 /* LocalStore+SpaceURLRule.swift */; };
-		CC4F00020000000000000001 /* URLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00020000000000000002 /* URLRouter.swift */; };
-		CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */; };
-		CC4F00040000000000000001 /* CreateSpacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00040000000000000002 /* CreateSpacePanel.swift */; };
-		CC4F00050000000000000001 /* SpaceChooserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00050000000000000002 /* SpaceChooserView.swift */; };
 		37E6AF402EEC30E80078CCD8 /* ChatButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E6AF3F2EEC30E80078CCD8 /* ChatButton.swift */; };
 		37E9E91B2FC84DEA00815832 /* TabDataModelSchemaV4.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E9E9192FC84DEA00815832 /* TabDataModelSchemaV4.swift */; };
 		37E9E91C2FC84DEA00815832 /* TabDataModelSchemaV5.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E9E91A2FC84DEA00815832 /* TabDataModelSchemaV5.swift */; };
@@ -304,7 +298,15 @@
 		CC450ACD2EA251D3004EE144 /* HoverableButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC450ACC2EA251D3004EE144 /* HoverableButton.swift */; };
 		CC450AE42EA74AD5004EE144 /* CommandDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC450AE32EA74AD5004EE144 /* CommandDispatcher.swift */; };
 		CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */ = {isa = PBXBuildFile; fileRef = CC4BFB922E9798ED00CC6162 /* Auth0.plist */; };
+		CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00010000000000000002 /* LocalStore+SpaceURLRule.swift */; };
+		CC4F00020000000000000001 /* URLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00020000000000000002 /* URLRouter.swift */; };
+		CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */; };
+		CC4F00040000000000000001 /* CreateSpacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00040000000000000002 /* CreateSpacePanel.swift */; };
+		CC4F00050000000000000001 /* SpaceChooserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4F00050000000000000002 /* SpaceChooserView.swift */; };
 		CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5025FB2E702603004223DC /* NSImage+Extension.swift */; };
+		CC59CE000001000000000001 /* SpaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000001000000000002 /* SpaceManager.swift */; };
+		CC59CE000002000000000001 /* SpacesStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000002000000000002 /* SpacesStripView.swift */; };
+		CC59CE000003000000000001 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000003000000000002 /* ProfileManager.swift */; };
 		CC5C51F62FB5C5560044D255 /* credits.html in Resources */ = {isa = PBXBuildFile; fileRef = CC5C51F52FB5C5560044D255 /* credits.html */; };
 		CC6335F72E4B29E000A176DA /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6335F62E4B29E000A176DA /* Logging.swift */; };
 		CC6335F92E4DF65700A176DA /* PhiLogFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6335F82E4DF65700A176DA /* PhiLogFormatter.swift */; };
@@ -327,6 +329,7 @@
 		CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = CC99097B2EBC9F090046BC81 /* login-bg.mp4 */; };
 		CC9AF3442EC192BC00C27C98 /* AppControlle+LaunchInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */; };
 		CCAA00012F00010000000001 /* PinnedSplitItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00012F00010000000002 /* PinnedSplitItem.swift */; };
+		CCAA00062F00010000000001 /* TabDataModelSchemaV7.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */; };
 		CCB53DC32E6EBF68004BF233 /* OmniBoxViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DC22E6EBF68004BF233 /* OmniBoxViewController.swift */; };
 		CCB53DCB2E6EC437004BF233 /* OmniBoxSuggestionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DC72E6EC437004BF233 /* OmniBoxSuggestionView.swift */; };
 		CCB53DCC2E6EC437004BF233 /* OmniBoxViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DCA2E6EC437004BF233 /* OmniBoxViewModel.swift */; };
@@ -355,9 +358,6 @@
 		CCBF8F822E67F7C400B9A99E /* ExtensionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F812E67F7C400B9A99E /* ExtensionManager.swift */; };
 		CCBF8FA22E698A7400B9A99E /* MainBrowserWindowControllersManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8FA12E698A7400B9A99E /* MainBrowserWindowControllersManager.swift */; };
 		CCBF8FA52E69915200B9A99E /* ApplicationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8FA42E69915200B9A99E /* ApplicationState.swift */; };
-		CC59CE000001000000000001 /* SpaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000001000000000002 /* SpaceManager.swift */; };
-		CC59CE000002000000000001 /* SpacesStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000002000000000002 /* SpacesStripView.swift */; };
-		CC59CE000003000000000001 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000003000000000002 /* ProfileManager.swift */; };
 		CCBF8FA72E69948D00B9A99E /* BrowserState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8FA62E69948D00B9A99E /* BrowserState.swift */; };
 		CCCA86782EB316CC0071E30A /* ReorderingCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCA86772EB316CC0071E30A /* ReorderingCollectionView.swift */; };
 		CCCD5E362EB1C36300E78FC1 /* DefaultExtensionManifestWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCD5E352EB1C36300E78FC1 /* DefaultExtensionManifestWriter.swift */; };
@@ -591,12 +591,6 @@
 		37DEB3392F63F0F500129429 /* TabDataModelSchemaV1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV1.swift; sourceTree = "<group>"; };
 		37DEB33D2F63F13700129429 /* TabDataModelSchemaV2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV2.swift; sourceTree = "<group>"; };
 		37DEB42E2F67C0F000129429 /* TabDataModelSchemaV3.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV3.swift; sourceTree = "<group>"; };
-		CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV7.swift; sourceTree = "<group>"; };
-		CC4F00010000000000000002 /* LocalStore+SpaceURLRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalStore+SpaceURLRule.swift"; sourceTree = "<group>"; };
-		CC4F00020000000000000002 /* URLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLRouter.swift; sourceTree = "<group>"; };
-		CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceURLRulesEditor.swift; sourceTree = "<group>"; };
-		CC4F00040000000000000002 /* CreateSpacePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateSpacePanel.swift; sourceTree = "<group>"; };
-		CC4F00050000000000000002 /* SpaceChooserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceChooserView.swift; sourceTree = "<group>"; };
 		37E6AF3F2EEC30E80078CCD8 /* ChatButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatButton.swift; sourceTree = "<group>"; };
 		37E9E9192FC84DEA00815832 /* TabDataModelSchemaV4.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV4.swift; sourceTree = "<group>"; };
 		37E9E91A2FC84DEA00815832 /* TabDataModelSchemaV5.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV5.swift; sourceTree = "<group>"; };
@@ -769,8 +763,16 @@
 		CC450ACC2EA251D3004EE144 /* HoverableButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoverableButton.swift; sourceTree = "<group>"; };
 		CC450AE32EA74AD5004EE144 /* CommandDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandDispatcher.swift; sourceTree = "<group>"; };
 		CC4BFB922E9798ED00CC6162 /* Auth0.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Auth0.plist; sourceTree = "<group>"; };
+		CC4F00010000000000000002 /* LocalStore+SpaceURLRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalStore+SpaceURLRule.swift"; sourceTree = "<group>"; };
+		CC4F00020000000000000002 /* URLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLRouter.swift; sourceTree = "<group>"; };
+		CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceURLRulesEditor.swift; sourceTree = "<group>"; };
+		CC4F00040000000000000002 /* CreateSpacePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateSpacePanel.swift; sourceTree = "<group>"; };
+		CC4F00050000000000000002 /* SpaceChooserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceChooserView.swift; sourceTree = "<group>"; };
 		CC5025FB2E702603004223DC /* NSImage+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSImage+Extension.swift"; sourceTree = "<group>"; };
 		CC50262C2E716982004223DC /* OmniBoxViewController+Suggestion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OmniBoxViewController+Suggestion.swift"; sourceTree = "<group>"; };
+		CC59CE000001000000000002 /* SpaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceManager.swift; sourceTree = "<group>"; };
+		CC59CE000002000000000002 /* SpacesStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesStripView.swift; sourceTree = "<group>"; };
+		CC59CE000003000000000002 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = "<group>"; };
 		CC5C51F52FB5C5560044D255 /* credits.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = credits.html; sourceTree = "<group>"; };
 		CC6335F62E4B29E000A176DA /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		CC6335F82E4DF65700A176DA /* PhiLogFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiLogFormatter.swift; sourceTree = "<group>"; };
@@ -796,6 +798,7 @@
 		CC99097B2EBC9F090046BC81 /* login-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-bg.mp4"; sourceTree = "<group>"; };
 		CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppControlle+LaunchInfo.swift"; sourceTree = "<group>"; };
 		CCAA00012F00010000000002 /* PinnedSplitItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSplitItem.swift; sourceTree = "<group>"; };
+		CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV7.swift; sourceTree = "<group>"; };
 		CCB53DC22E6EBF68004BF233 /* OmniBoxViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxViewController.swift; sourceTree = "<group>"; };
 		CCB53DC62E6EC437004BF233 /* OmniBoxModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxModels.swift; sourceTree = "<group>"; };
 		CCB53DC72E6EC437004BF233 /* OmniBoxSuggestionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxSuggestionView.swift; sourceTree = "<group>"; };
@@ -824,9 +827,6 @@
 		CCBF8F812E67F7C400B9A99E /* ExtensionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionManager.swift; sourceTree = "<group>"; };
 		CCBF8FA12E698A7400B9A99E /* MainBrowserWindowControllersManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainBrowserWindowControllersManager.swift; sourceTree = "<group>"; };
 		CCBF8FA42E69915200B9A99E /* ApplicationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationState.swift; sourceTree = "<group>"; };
-		CC59CE000001000000000002 /* SpaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceManager.swift; sourceTree = "<group>"; };
-		CC59CE000002000000000002 /* SpacesStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesStripView.swift; sourceTree = "<group>"; };
-		CC59CE000003000000000002 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = "<group>"; };
 		CCBF8FA62E69948D00B9A99E /* BrowserState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserState.swift; sourceTree = "<group>"; };
 		CCCA86772EB316CC0071E30A /* ReorderingCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReorderingCollectionView.swift; sourceTree = "<group>"; };
 		CCCD5E352EB1C36300E78FC1 /* DefaultExtensionManifestWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultExtensionManifestWriter.swift; sourceTree = "<group>"; };
@@ -1669,17 +1669,6 @@
 			path = Sidebar;
 			sourceTree = "<group>";
 		};
-		CC59CE000002000000000003 /* Spaces */ = {
-			isa = PBXGroup;
-			children = (
-				CC59CE000002000000000002 /* SpacesStripView.swift */,
-				CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */,
-				CC4F00040000000000000002 /* CreateSpacePanel.swift */,
-				CC4F00050000000000000002 /* SpaceChooserView.swift */,
-			);
-			path = Spaces;
-			sourceTree = "<group>";
-		};
 		CC376D022EC6D5DB00270B93 /* DynamicColor */ = {
 			isa = PBXGroup;
 			children = (
@@ -1741,6 +1730,26 @@
 				CC4351C82ECAD209009D8FC3 /* CustomSlider.swift */,
 			);
 			path = Welcome;
+			sourceTree = "<group>";
+		};
+		CC59CE000001000000000003 /* Space */ = {
+			isa = PBXGroup;
+			children = (
+				CC59CE000001000000000002 /* SpaceManager.swift */,
+				CC4F00020000000000000002 /* URLRouter.swift */,
+			);
+			path = Space;
+			sourceTree = "<group>";
+		};
+		CC59CE000002000000000003 /* Spaces */ = {
+			isa = PBXGroup;
+			children = (
+				CC59CE000002000000000002 /* SpacesStripView.swift */,
+				CC4F00030000000000000002 /* SpaceURLRulesEditor.swift */,
+				CC4F00040000000000000002 /* CreateSpacePanel.swift */,
+				CC4F00050000000000000002 /* SpaceChooserView.swift */,
+			);
+			path = Spaces;
 			sourceTree = "<group>";
 		};
 		CC6335FC2E4ED0DF00A176DA /* Logging */ = {
@@ -1911,15 +1920,6 @@
 				3777EEF32FC4442700C85E41 /* FloatingNewTabView.swift */,
 			);
 			path = Views;
-			sourceTree = "<group>";
-		};
-		CC59CE000001000000000003 /* Space */ = {
-			isa = PBXGroup;
-			children = (
-				CC59CE000001000000000002 /* SpaceManager.swift */,
-				CC4F00020000000000000002 /* URLRouter.swift */,
-			);
-			path = Space;
 			sourceTree = "<group>";
 		};
 		CCBF8FA32E69913C00B9A99E /* States */ = {

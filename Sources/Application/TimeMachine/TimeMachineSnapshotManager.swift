@@ -23,6 +23,8 @@ enum TimeMachineSnapshotError: Error, LocalizedError {
 }
 
 struct TimeMachineSnapshotManager {
+    typealias BackupTraceReporter = (TimeMachineBackupTrace) -> Void
+
     private let paths: TimeMachinePaths
     private let policyLoader: TimeMachineRollbackPolicyLoader
     private let catalogStore: TimeMachineCatalogStore
@@ -33,6 +35,7 @@ struct TimeMachineSnapshotManager {
     private let uptimeProvider: () -> TimeInterval
     private let idProvider: () -> UUID
     private let fileCloner: TimeMachineFileCloner
+    private let backupTraceReporter: BackupTraceReporter
     private let fileManager: FileManager
 
     init(
@@ -52,6 +55,7 @@ struct TimeMachineSnapshotManager {
         uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         idProvider: @escaping () -> UUID = UUID.init,
         fileCloner: TimeMachineFileCloner = TimeMachineFileCloner(),
+        backupTraceReporter: @escaping BackupTraceReporter = SentryService.captureTimeMachineBackupTrace,
         fileManager: FileManager = .default
     ) {
         self.paths = paths
@@ -64,6 +68,7 @@ struct TimeMachineSnapshotManager {
         self.uptimeProvider = uptimeProvider
         self.idProvider = idProvider
         self.fileCloner = fileCloner
+        self.backupTraceReporter = backupTraceReporter
         self.fileManager = fileManager
     }
 
@@ -139,10 +144,52 @@ struct TimeMachineSnapshotManager {
             )
             try catalogStore.appendCompletedBackup(record)
             AppLogInfo("[TimeMachine] Backup catalog updated for snapshot \(id.uuidString).")
-            AppLogInfo("[TimeMachine] Backup \(id.uuidString) completed in \(formatDuration(since: startedAt)).")
+            let duration = elapsedDuration(since: startedAt)
+            let snapshotSizeBytes = TimeMachineFileMetrics.sizeBytes(at: snapshotURL, fileManager: fileManager)
+            backupTraceReporter(
+                TimeMachineBackupTrace(
+                    result: .succeeded,
+                    backupID: id,
+                    bundleIdentifier: paths.bundleIdentifier,
+                    currentVersion: currentVersion,
+                    currentBuild: currentBuild,
+                    backupTriggerBuild: policy.backupTriggerBuild,
+                    rollbackVersion: policy.rollbackVersion,
+                    rollbackBuild: policy.rollbackBuild,
+                    includeChromiumData: policy.includeChromiumData,
+                    duration: duration,
+                    snapshotSizeBytes: snapshotSizeBytes,
+                    errorDescription: nil,
+                    errorType: nil
+                )
+            )
+            AppLogInfo(
+                "[TimeMachine] Backup \(id.uuidString) completed in \(formatDuration(duration)); " +
+                "size=\(snapshotSizeBytes.map(String.init) ?? "unknown") bytes."
+            )
             return record
         } catch {
-            AppLogError("[TimeMachine] Backup \(id.uuidString) failed after \(formatDuration(since: startedAt)): \(error.localizedDescription)")
+            let duration = elapsedDuration(since: startedAt)
+            let snapshotSizeBytes = TimeMachineFileMetrics.sizeBytes(at: stagingURL, fileManager: fileManager)
+                ?? TimeMachineFileMetrics.sizeBytes(at: snapshotURL, fileManager: fileManager)
+            backupTraceReporter(
+                TimeMachineBackupTrace(
+                    result: .failed,
+                    backupID: id,
+                    bundleIdentifier: paths.bundleIdentifier,
+                    currentVersion: currentVersion,
+                    currentBuild: currentBuild,
+                    backupTriggerBuild: policy.backupTriggerBuild,
+                    rollbackVersion: policy.rollbackVersion,
+                    rollbackBuild: policy.rollbackBuild,
+                    includeChromiumData: policy.includeChromiumData,
+                    duration: duration,
+                    snapshotSizeBytes: snapshotSizeBytes,
+                    errorDescription: error.localizedDescription,
+                    errorType: String(describing: type(of: error))
+                )
+            )
+            AppLogError("[TimeMachine] Backup \(id.uuidString) failed after \(formatDuration(duration)): \(error.localizedDescription)")
             try? fileManager.removeItem(at: stagingURL)
             try? fileManager.removeItem(at: snapshotURL)
             throw error
@@ -257,7 +304,14 @@ struct TimeMachineSnapshotManager {
     }
 
     private func formatDuration(since startedAt: TimeInterval) -> String {
-        let elapsed = max(0, uptimeProvider() - startedAt)
-        return String(format: "%.3fs", elapsed)
+        formatDuration(elapsedDuration(since: startedAt))
+    }
+
+    private func elapsedDuration(since startedAt: TimeInterval) -> TimeInterval {
+        max(0, uptimeProvider() - startedAt)
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        String(format: "%.3fs", max(0, duration))
     }
 }

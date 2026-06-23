@@ -7,6 +7,7 @@ import Foundation
 
 struct TimeMachineStartupRecoveryGate {
     typealias RecoveryLauncher = (URL, [String]) throws -> Void
+    typealias RestoreRecoveryTraceReporter = (TimeMachineRestoreRecoveryTrace) -> Void
 
     private let paths: TimeMachinePaths
     private let journalStore: TimeMachineRestoreJournalStore
@@ -14,6 +15,7 @@ struct TimeMachineStartupRecoveryGate {
     private let isExecutableFile: (String) -> Bool
     private let recoveryLauncher: RecoveryLauncher
     private let dateProvider: () -> Date
+    private let restoreRecoveryTraceReporter: RestoreRecoveryTraceReporter
     private let logger: (String) -> Void
 
     init(
@@ -23,6 +25,7 @@ struct TimeMachineStartupRecoveryGate {
         isExecutableFile: @escaping (String) -> Bool = FileManager.default.isExecutableFile(atPath:),
         recoveryLauncher: @escaping RecoveryLauncher = Self.launchRecoveryProcess,
         dateProvider: @escaping () -> Date = Date.init,
+        restoreRecoveryTraceReporter: @escaping RestoreRecoveryTraceReporter = SentryService.captureTimeMachineRestoreRecoveryTrace,
         logger: @escaping (String) -> Void = { AppLogInfo("[TimeMachine] \($0)") }
     ) {
         self.paths = paths
@@ -34,6 +37,7 @@ struct TimeMachineStartupRecoveryGate {
         self.isExecutableFile = isExecutableFile
         self.recoveryLauncher = recoveryLauncher
         self.dateProvider = dateProvider
+        self.restoreRecoveryTraceReporter = restoreRecoveryTraceReporter
         self.logger = logger
     }
 
@@ -46,6 +50,7 @@ struct TimeMachineStartupRecoveryGate {
             pendingJournals = try journalStore.pendingJournalsNeedingRecovery()
         } catch {
             logger("Failed to inspect pending restore recovery state: \(error.localizedDescription)")
+            reportRecoveryTrace(status: .inspectionFailed, journal: nil, reason: "pending journal inspection failed", error: error)
             return false
         }
 
@@ -62,6 +67,7 @@ struct TimeMachineStartupRecoveryGate {
             let arguments = Self.recoveryArguments(operationID: journal.operationID, rootURL: paths.rootURL)
             try recoveryLauncher(helperURL, arguments)
             logger("Launched restore recovery helper for operation \(journal.operationID.uuidString).")
+            reportRecoveryTrace(status: .launched, journal: journal, reason: nil, error: nil)
             return true
         } catch {
             return handleRecoveryLaunchFailure(journal: journal, error: error)
@@ -105,6 +111,12 @@ struct TimeMachineStartupRecoveryGate {
     private func handleUnavailableHelper(journal: TimeMachineRestoreJournal, helperURL: URL) -> Bool {
         if journal.phase.hasStartedDestructiveSwap {
             logger("Pending restore \(journal.operationID.uuidString) needs recovery, but helper is unavailable at \(helperURL.path). Blocking startup.")
+            reportRecoveryTrace(
+                status: .blocked,
+                journal: journal,
+                reason: "helper is unavailable",
+                error: nil
+            )
             return true
         }
 
@@ -118,6 +130,12 @@ struct TimeMachineStartupRecoveryGate {
     private func handleRecoveryLaunchFailure(journal: TimeMachineRestoreJournal, error: Error) -> Bool {
         if journal.phase.hasStartedDestructiveSwap {
             logger("Failed to launch restore recovery helper for operation \(journal.operationID.uuidString): \(error.localizedDescription). Blocking startup.")
+            reportRecoveryTrace(
+                status: .blocked,
+                journal: journal,
+                reason: "helper launch failed",
+                error: error
+            )
             return true
         }
 
@@ -136,9 +154,30 @@ struct TimeMachineStartupRecoveryGate {
         do {
             try journalStore.write(failedJournal)
             logger("Marked pending restore \(journal.operationID.uuidString) as failed before destructive swap because \(reason).")
+            reportRecoveryTrace(status: .markedFailed, journal: failedJournal, reason: reason, error: nil)
         } catch {
             logger("Failed to mark pending restore \(journal.operationID.uuidString) as failed after \(reason): \(error.localizedDescription)")
         }
+    }
+
+    private func reportRecoveryTrace(
+        status: TimeMachineRestoreRecoveryTrace.Status,
+        journal: TimeMachineRestoreJournal?,
+        reason: String?,
+        error: Error?
+    ) {
+        restoreRecoveryTraceReporter(
+            TimeMachineRestoreRecoveryTrace(
+                status: status,
+                operationID: journal?.operationID,
+                bundleIdentifier: paths.bundleIdentifier,
+                phase: journal?.phase,
+                hasStartedDestructiveSwap: journal?.phase.hasStartedDestructiveSwap,
+                reason: reason,
+                errorDescription: error?.localizedDescription,
+                errorType: error.map { String(describing: type(of: $0)) }
+            )
+        )
     }
 
     private func removeEmptyManagedDirectoryIfNeeded(_ url: URL, description: String) {

@@ -107,6 +107,30 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.isEmpty)
     }
 
+    func testSnapshotReportsBackupSizeAndDuration() throws {
+        let fixture = try makeFixture(includePreferences: true)
+        try writePolicy(fixture: fixture, includeChromiumData: true)
+        let uptime = UptimeSequence([10, 12.5])
+        var traces: [TimeMachineBackupTrace] = []
+        let manager = makeManager(
+            fixture: fixture,
+            uptimeProvider: uptime.next,
+            backupTraceReporter: { traces.append($0) }
+        )
+
+        let record = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
+
+        let snapshotURL = fixture.paths.url(forRelativePath: record.snapshotRelativePath)
+        let trace = try XCTUnwrap(traces.first)
+        XCTAssertEqual(traces.count, 1)
+        XCTAssertEqual(trace.result, .succeeded)
+        XCTAssertEqual(trace.backupID, record.id)
+        XCTAssertEqual(trace.bundleIdentifier, "com.phibrowser.Mac")
+        XCTAssertEqual(trace.duration, 2.5)
+        XCTAssertEqual(trace.snapshotSizeBytes, TimeMachineFileMetrics.sizeBytes(at: snapshotURL))
+        XCTAssertGreaterThan(trace.snapshotSizeBytes ?? 0, 0)
+    }
+
     private struct Fixture {
         let rootURL: URL
         let paths: TimeMachinePaths
@@ -166,7 +190,11 @@ final class TimeMachineSnapshotTests: XCTestCase {
         try data.write(to: fixture.policyURL)
     }
 
-    private func makeManager(fixture: Fixture) -> TimeMachineSnapshotManager {
+    private func makeManager(
+        fixture: Fixture,
+        uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        backupTraceReporter: @escaping TimeMachineSnapshotManager.BackupTraceReporter = { _ in }
+    ) -> TimeMachineSnapshotManager {
         TimeMachineSnapshotManager(
             paths: fixture.paths,
             policyLoader: TimeMachineRollbackPolicyLoader(policyURLProvider: { fixture.policyURL }),
@@ -175,8 +203,10 @@ final class TimeMachineSnapshotTests: XCTestCase {
             phiDataURLProvider: { fixture.phiDataURL },
             preferencesURLProvider: { fixture.preferencesURL },
             dateProvider: { Date(timeIntervalSince1970: 1_781_020_800) },
+            uptimeProvider: uptimeProvider,
             idProvider: { UUID(uuidString: "00000000-0000-0000-0000-000000000700")! },
-            fileCloner: TimeMachineFileCloner()
+            fileCloner: TimeMachineFileCloner(),
+            backupTraceReporter: backupTraceReporter
         )
     }
 
@@ -197,5 +227,17 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(TimeMachineSnapshotManifest.self, from: data)
+    }
+}
+
+private final class UptimeSequence {
+    private var values: [TimeInterval]
+
+    init(_ values: [TimeInterval]) {
+        self.values = values
+    }
+
+    func next() -> TimeInterval {
+        values.removeFirst()
     }
 }

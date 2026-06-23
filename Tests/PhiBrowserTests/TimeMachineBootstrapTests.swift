@@ -27,9 +27,16 @@ final class TimeMachineBootstrapTests: XCTestCase {
             paths: fixture.paths
         )
         var launches: [(url: URL, arguments: [String])] = []
-        let gate = makeGate(fixture: fixture) { url, arguments in
-            launches.append((url, arguments))
-        }
+        var traces: [TimeMachineRestoreRecoveryTrace] = []
+        let gate = makeGate(
+            fixture: fixture,
+            recoveryLauncher: { url, arguments in
+                launches.append((url, arguments))
+            },
+            restoreRecoveryTraceReporter: { trace in
+                traces.append(trace)
+            }
+        )
 
         XCTAssertTrue(gate.recoverPendingRestoreIfNeeded())
 
@@ -37,8 +44,14 @@ final class TimeMachineBootstrapTests: XCTestCase {
         XCTAssertEqual(launches.first?.url, helperURL)
         XCTAssertEqual(
             launches.first?.arguments,
-            TimeMachineStartupRecoveryGate.recoveryArguments(operationID: operationID, rootURL: fixture.paths.rootURL)
+                TimeMachineStartupRecoveryGate.recoveryArguments(operationID: operationID, rootURL: fixture.paths.rootURL)
         )
+        let trace = try XCTUnwrap(traces.first)
+        XCTAssertEqual(traces.count, 1)
+        XCTAssertEqual(trace.status, .launched)
+        XCTAssertEqual(trace.operationID, operationID)
+        XCTAssertEqual(trace.phase, .dataSwapped)
+        XCTAssertEqual(trace.hasStartedDestructiveSwap, true)
     }
 
     func testTerminalJournalPhasesDoNotBlockStartup() throws {
@@ -271,13 +284,15 @@ final class TimeMachineBootstrapTests: XCTestCase {
 
     private func makeGate(
         fixture: Fixture,
-        recoveryLauncher: @escaping TimeMachineStartupRecoveryGate.RecoveryLauncher
+        recoveryLauncher: @escaping TimeMachineStartupRecoveryGate.RecoveryLauncher,
+        restoreRecoveryTraceReporter: @escaping TimeMachineStartupRecoveryGate.RestoreRecoveryTraceReporter = { _ in }
     ) -> TimeMachineStartupRecoveryGate {
         TimeMachineStartupRecoveryGate(
             paths: fixture.paths,
             journalStore: TimeMachineRestoreJournalStore(paths: fixture.paths),
             recoveryLauncher: recoveryLauncher,
             dateProvider: { Date(timeIntervalSince1970: 1_781_020_801) },
+            restoreRecoveryTraceReporter: restoreRecoveryTraceReporter,
             logger: { _ in }
         )
     }

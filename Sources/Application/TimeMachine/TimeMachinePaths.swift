@@ -12,6 +12,7 @@ struct TimeMachinePaths {
     static let pendingDirectoryName = "Pending"
     static let emergencyDirectoryName = "Emergency"
     static let journalFilename = "restore-journal.json"
+    static let sentryTraceQueueFilename = "pending-sentry-traces.json"
 
     let rootURL: URL
     let bundleIdentifier: String
@@ -56,6 +57,10 @@ struct TimeMachinePaths {
 
     var emergencyRootURL: URL {
         rootURL.appendingPathComponent(Self.emergencyDirectoryName, isDirectory: true)
+    }
+
+    var sentryTraceQueueURL: URL {
+        rootURL.appendingPathComponent(Self.sentryTraceQueueFilename, isDirectory: false)
     }
 
     func snapshotURL(id: UUID) -> URL {

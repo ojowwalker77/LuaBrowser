@@ -238,7 +238,7 @@ struct TimeMachineInstallPlan: Codable, Equatable {
     }
 }
 
-enum TimeMachineRestorePreparationStage: String, CaseIterable {
+enum TimeMachineRestorePreparationStage: String, Codable, CaseIterable {
     case preparing
     case downloadingPackage
     case expandingPackage
@@ -256,6 +256,66 @@ struct TimeMachineRestorePreparationProgress: Equatable {
         self.stage = stage
         self.fractionCompleted = fractionCompleted.map { min(max($0, 0), 1) }
     }
+}
+
+struct TimeMachineBackupTrace: Codable, Equatable {
+    enum Result: String, Codable {
+        case succeeded
+        case failed
+    }
+
+    let result: Result
+    let backupID: UUID
+    let bundleIdentifier: String
+    let currentVersion: String
+    let currentBuild: Int
+    let backupTriggerBuild: Int
+    let rollbackVersion: String
+    let rollbackBuild: Int
+    let includeChromiumData: Bool
+    let duration: TimeInterval
+    let snapshotSizeBytes: UInt64?
+    let errorDescription: String?
+    let errorType: String?
+}
+
+struct TimeMachineRestorePreparationTrace: Codable, Equatable {
+    enum Result: String, Codable {
+        case succeeded
+        case failed
+    }
+
+    let result: Result
+    let operationID: UUID
+    let backupID: UUID
+    let bundleIdentifier: String
+    let rollbackVersion: String
+    let rollbackBuild: Int
+    let includeChromiumData: Bool
+    let duration: TimeInterval
+    let lastStage: TimeMachineRestorePreparationStage
+    let packageSizeBytes: UInt64?
+    let operationSizeBytes: UInt64?
+    let errorDescription: String?
+    let errorType: String?
+}
+
+struct TimeMachineRestoreRecoveryTrace: Codable, Equatable {
+    enum Status: String, Codable {
+        case launched
+        case blocked
+        case markedFailed
+        case inspectionFailed
+    }
+
+    let status: Status
+    let operationID: UUID?
+    let bundleIdentifier: String
+    let phase: TimeMachineRestorePhase?
+    let hasStartedDestructiveSwap: Bool?
+    let reason: String?
+    let errorDescription: String?
+    let errorType: String?
 }
 
 enum TimeMachineRestorePhase: String, Codable, CaseIterable {
@@ -296,4 +356,49 @@ struct TimeMachineRestoreJournal: Codable, Equatable {
     var updatedAt: Date
     let planRelativePath: String
     let helperRelativePath: String
+}
+
+enum TimeMachineFileMetrics {
+    static func sizeBytes(at url: URL, fileManager: FileManager = .default) -> UInt64? {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+
+        if !isDirectory.boolValue {
+            return fileSizeBytes(at: url, fileManager: fileManager)
+        }
+
+        let resourceKeys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .fileSizeKey]
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: resourceKeys,
+            options: [],
+            errorHandler: nil
+        ) else {
+            return nil
+        }
+
+        var total: UInt64 = 0
+        for case let itemURL as URL in enumerator {
+            guard let values = try? itemURL.resourceValues(forKeys: Set(resourceKeys)) else {
+                continue
+            }
+            if values.isDirectory == true {
+                continue
+            }
+            if values.isRegularFile == true || values.fileSize != nil {
+                total += UInt64(max(values.fileSize ?? 0, 0))
+            }
+        }
+        return total
+    }
+
+    private static func fileSizeBytes(at url: URL, fileManager: FileManager) -> UInt64? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return size.uint64Value
+    }
 }
