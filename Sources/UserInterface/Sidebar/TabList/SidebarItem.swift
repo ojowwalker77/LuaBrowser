@@ -159,6 +159,8 @@ extension NSPasteboard.PasteboardType {
     static let pinnedTab = NSPasteboard.PasteboardType("com.phibrowser.pinnedTab")
     /// Normal-tab pasteboard type storing `guid`.
     static let normalTab = NSPasteboard.PasteboardType("com.phibrowser.normalTab")
+    /// Multi-selection normal-tab pasteboard type storing comma-separated guids.
+    static let normalTabs = NSPasteboard.PasteboardType("com.phibrowser.normalTabs")
     /// Bookmark pasteboard type storing the bookmark GUID.
     static let phiBookmark = NSPasteboard.PasteboardType("com.phibrowser.bookmark")
     /// Source window identifier used for cross-window drags.

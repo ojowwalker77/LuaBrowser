@@ -49,7 +49,7 @@ final class TabStripDragGapIndexTests: XCTestCase {
             xFrame: CGRect(x: 400, y: 0, width: 100, height: 32),
             tabFrames: frames,
             chipFrames: [],
-            excludedIndex: 0,
+            excludedIndices: [0],
             previousIndex: 0
         )
 

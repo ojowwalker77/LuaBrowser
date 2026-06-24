@@ -83,6 +83,33 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertEqual(state.orderedMultiSelectedTabs.map(\.guid), [10, 20, 30])
     }
 
+    func testDragSelectionExpandsSplitPartner() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.focuseTab(state.tabs[0])
+
+        state.toggleMultiSelection(for: state.tabs[1])
+
+        XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[1]), [1, 2, 3])
+        XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[2]), [1, 2, 3])
+    }
+
+    func testMoveNormalTabsLocallyMovesIdsAsOrderedBlock() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4, 5])
+
+        state.moveNormalTabsLocally(tabIds: [4, 2], to: 5, syncChromiumOrder: false)
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 3, 5, 2, 4])
+    }
+
     func testPinnedTabToggleClearsSelection() throws {
         let state = try makeState()
         seed(state, guids: [1, 2])

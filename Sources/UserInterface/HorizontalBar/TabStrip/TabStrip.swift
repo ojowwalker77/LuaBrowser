@@ -221,6 +221,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     // Source view of the split partner, hidden during the drag and revealed
     // when the drag ends. nil for non-split drags.
     private weak var draggingSiblingSourceView: TabItemView?
+    // Additional selected source views hidden during a multi-selection drag.
+    private var draggingAdditionalSourceViews: [TabItemView] = []
     // Resolved layout for the sibling proxy: its index in the source zone and
     // pixel offset from the primary proxy at drag start (positive when the
     // partner is to the right). nil for non-split drags.
@@ -427,7 +429,9 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // One slot even for a split pair — it re-merges into a single
             // cell on drop, matching the cross-window preview's sizing.
             normalGapW = (context?.targetContainerType == .normal)
-                ? dragSlotPerTab
+                ? dragSlotPerTab.map {
+                    $0 * CGFloat(max(1, context?.draggingTabIds.count ?? 1))
+                }
                 : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
         }
 
@@ -3377,16 +3381,27 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let mouseLoc = event.locationInWindow
         updateDragScreenPoint(from: event)
         pendingDropAction = nil
+        draggingAdditionalSourceViews.removeAll()
         browserState.tabDraggingSession.begin(
             draggingItem: tab,
             screenLocation: lastDragScreenPoint,
             containerView: self
         )
         let id = tab.uniqueId
+        let multiDragIds = !isPinned
+            ? browserState.multiSelectionDragTabIds(startingFrom: tab)
+            : nil
+        let multiDragSourceIndices: Set<Int> = {
+            guard let multiDragIds else { return [] }
+            let idSet = Set(multiDragIds)
+            return Set(browserState.normalTabs.enumerated().compactMap { index, tab in
+                idSet.contains(tab.guid) ? index : nil
+            })
+        }()
         // Resolve the dragged tab's split partner — when present, both members
         // lift, follow the cursor, and drop together. Pinned tabs cannot
         // currently belong to splits, so this only fires in the normal zone.
-        let siblingInfo = !isPinned ? resolveDragSibling(for: tab) : nil
+        let siblingInfo = (!isPinned && multiDragIds == nil) ? resolveDragSibling(for: tab) : nil
         // Merged-split source cell: the strip renders the pair as one wide
         // cell via `pinnedSplitPartners`; the drag proxy must match that
         // layout (two favicons + titles + divider) instead of the
@@ -3443,6 +3458,16 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             view.alphaValue = 0
             TabStripAnimationHelper.animateLift(proxy)
 
+            if let multiDragIds {
+                let representedIds = Set(multiDragIds)
+                for selectedTab in browserState.normalTabs
+                where representedIds.contains(selectedTab.guid) && selectedTab !== tab {
+                    guard let selectedView = normalTabViews[selectedTab.uniqueId] else { continue }
+                    selectedView.alphaValue = 0
+                    draggingAdditionalSourceViews.append(selectedView)
+                }
+            }
+
             // Build a sibling proxy so the partner lifts alongside the
             // dragged tab; otherwise the user sees a single tab animate even
             // though the data layer moves the whole split. Skipped for the
@@ -3488,9 +3513,11 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             mouseLocation: mouseLoc,
             // Keep the initial frame in overlay coordinates for drag math.
             tabFrame: dragOverlay.convert(frame, from: isPinned ? pinnedContainer : normalContainer),
-            siblingSourceIndex: siblingInfo?.index
+            siblingSourceIndex: siblingInfo?.index,
+            sourceExcludedIndices: multiDragIds == nil ? nil : multiDragSourceIndices,
+            draggingTabIds: multiDragIds
         )
-        if browserState.multiSelection.isActive {
+        if browserState.multiSelection.isActive, multiDragIds == nil {
             browserState.clearMultiSelection()
         }
     }
@@ -3515,12 +3542,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// Indices excluded from the source zone's layout: the dragged tab and
     /// (for split-pair drags) its partner.
     private func sourceExclusionSet(for context: TabDragContext?) -> Set<Int> {
-        guard let context else { return [] }
-        var set: Set<Int> = [context.sourceIndex]
-        if let sibling = context.siblingSourceIndex {
-            set.insert(sibling)
-        }
-        return set
+        context?.sourceExcludedIndices ?? []
     }
 
     private func handleTabDragUpdate(event: NSEvent) {
@@ -3695,6 +3717,15 @@ extension TabStrip: TabStripDragDelegate {
         let screenPoint = lastDragScreenPoint
         let dropAction = pendingDropAction ?? .local
         pendingDropAction = nil
+
+        if context.isMultiTabDrag {
+            handleMultiTabDragEnd(context: context,
+                                  toZone: toZone,
+                                  toIndex: toIndex,
+                                  dropAction: dropAction,
+                                  screenPoint: screenPoint)
+            return
+        }
 
         if case let .external(externalDrop) = dropAction {
             clearDraggingPresentation(using: context)
@@ -4032,6 +4063,127 @@ extension TabStrip: TabStripDragDelegate {
         // Then reset the UI back to a clean non-drag layout.
         performLayout(context: .dataChanged)
         browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
+    }
+
+    private func handleMultiTabDragEnd(context: TabDragContext,
+                                       toZone: TabContainerType,
+                                       toIndex: Int,
+                                       dropAction: PendingDropAction,
+                                       screenPoint: CGPoint?) {
+        clearDraggingPresentation(using: context)
+        defer {
+            browserState.clearMultiSelection()
+            performLayout(context: .dataChanged)
+            browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
+        }
+
+        guard case .local = dropAction, toZone == .normal else {
+            return
+        }
+
+        let draggedIds = context.draggingTabIds
+        let draggedIdSet = Set(draggedIds)
+        let draggedTabs = browserState.normalTabs.filter { draggedIdSet.contains($0.guid) }
+        guard draggedTabs.count > 1 else { return }
+
+        let target = multiDragGroupTarget(context: context,
+                                          toIndex: toIndex,
+                                          draggedTabs: draggedTabs)
+        let desiredTokenById: [Int: String?] = Dictionary(
+            uniqueKeysWithValues: draggedTabs.map { tab in
+                let desired: String?
+                if let token = target.joinToken {
+                    desired = token
+                } else if target.preserveExistingMembership {
+                    desired = tab.groupToken
+                } else {
+                    desired = nil
+                }
+                return (tab.guid, desired)
+            }
+        )
+
+        let membershipUpdates: [(tabId: Int, newToken: String?)] = draggedTabs.compactMap { tab in
+            let desired = desiredTokenById[tab.guid] ?? nil
+            guard tab.groupToken != desired else { return nil }
+            return (tab.guid, desired)
+        }
+        let membershipWillChange = !membershipUpdates.isEmpty
+
+        browserState.moveNormalTabsLocally(tabIds: draggedIds,
+                                           to: toIndex,
+                                           syncChromiumOrder: !membershipWillChange)
+
+        if membershipWillChange {
+            let removeIds = draggedTabs.compactMap { tab -> NSNumber? in
+                let desired = desiredTokenById[tab.guid] ?? nil
+                guard tab.groupToken != nil, tab.groupToken != desired else { return nil }
+                return NSNumber(value: Int64(tab.guid))
+            }
+            let addIds = draggedTabs.compactMap { tab -> NSNumber? in
+                let desired = desiredTokenById[tab.guid] ?? nil
+                guard desired != nil, tab.groupToken != desired else { return nil }
+                return NSNumber(value: Int64(tab.guid))
+            }
+            let bridge = ChromiumLauncher.sharedInstance().bridge
+            if !removeIds.isEmpty {
+                bridge?.removeTabsFromGroup(withWindowId: Int64(browserState.windowId),
+                                            tabIds: removeIds)
+            }
+            if let joinToken = target.joinToken, !addIds.isEmpty {
+                bridge?.addTabsToGroup(withWindowId: Int64(browserState.windowId),
+                                       tabIds: addIds,
+                                       tokenHex: joinToken)
+            }
+            browserState.applyOptimisticGroupMembership(updates: membershipUpdates)
+            browserState.syncNormalTabsRelativeOrderToChromium(tabIds: draggedIds)
+        }
+    }
+
+    private func multiDragGroupTarget(context: TabDragContext,
+                                      toIndex: Int,
+                                      draggedTabs: [Tab])
+    -> (joinToken: String?, preserveExistingMembership: Bool) {
+        let draggedIdSet = Set(context.draggingTabIds)
+        let sandwichToken: String? = {
+            let order = browserState.normalTabs
+            let leftIndex: Int? = {
+                let upper = min(toIndex, order.count) - 1
+                guard upper >= 0 else { return nil }
+                return stride(from: upper, through: 0, by: -1)
+                    .first { !draggedIdSet.contains(order[$0].guid) }
+            }()
+            let rightIndex = (max(0, toIndex)..<order.count)
+                .first { !draggedIdSet.contains(order[$0].guid) }
+            guard let leftIndex,
+                  let rightIndex,
+                  let leftToken = order[leftIndex].groupToken,
+                  leftToken == order[rightIndex].groupToken else {
+                return nil
+            }
+            return leftToken
+        }()
+
+        if let token = sandwichToken
+            ?? context.targetGroupForLeadingJoin
+            ?? context.targetGroupForTrailingJoin {
+            return (token, false)
+        }
+
+        let sourceTokens = Set(draggedTabs.map(\.groupToken))
+        if sourceTokens.count == 1,
+           let token = draggedTabs.first?.groupToken,
+           let run = currentGroupRuns().first(where: { $0.token == token }) {
+            let outsideRange = toIndex < run.range.lowerBound
+                || toIndex > run.range.upperBound + 1
+            let leadingLeave = context.targetGroupForLeadingLeave == token
+            let trailingLeave = context.targetGroupForTrailingLeave == token
+            if !outsideRange && !leadingLeave && !trailingLeave {
+                return (nil, true)
+            }
+        }
+
+        return (nil, false)
     }
 
     /// Resolves the group token a single dropped pinned tab should join,
@@ -4379,6 +4531,9 @@ extension TabStrip: TabStripDragDelegate {
             }
             siblingSourceView.alphaValue = 1
         }
+        for sourceView in draggingAdditionalSourceViews {
+            sourceView.alphaValue = 1
+        }
         // Clear proxy views and cached drag state.
         draggingProxyView?.removeFromSuperview()
         draggingProxyView = nil
@@ -4386,6 +4541,7 @@ extension TabStrip: TabStripDragDelegate {
         draggingSiblingProxyView = nil
         draggingSourceView = nil
         draggingSiblingSourceView = nil
+        draggingAdditionalSourceViews.removeAll()
         draggingSiblingPlacement = nil
         draggingPresentationZone = nil
         draggingMergedPartner = nil

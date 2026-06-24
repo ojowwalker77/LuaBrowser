@@ -895,6 +895,32 @@ class BrowserState {
         return normalTabs.filter { target.contains($0.guid) }
     }
 
+    /// Tab ids represented by a multi-selection drag that starts from `tab`.
+    /// Split panes expand to include their partner so drag/reorder never tears
+    /// an active split apart. Returns `nil` when the drag should behave as a
+    /// regular single-tab drag.
+    func multiSelectionDragTabIds(startingFrom tab: Tab) -> [Int]? {
+        guard TabMultiSelection.isEnabled, multiSelection.isActive else { return nil }
+        let selectedIds = Set(orderedMultiSelectedTabs.map(\.guid))
+        guard !selectedIds.isEmpty else { return nil }
+
+        var representedIds = selectedIds
+        for tabId in selectedIds {
+            guard let group = splitGroup(forTabId: tabId),
+                  !group.isPinned,
+                  let partnerId = group.partnerTabId(of: tabId) else {
+                continue
+            }
+            representedIds.insert(partnerId)
+        }
+
+        let orderedIds = normalTabs
+            .map(\.guid)
+            .filter { representedIds.contains($0) }
+        guard orderedIds.count > 1, orderedIds.contains(tab.guid) else { return nil }
+        return orderedIds
+    }
+
     private func isBookmarkBackedTab(_ tab: Tab) -> Bool {
         guard !tab.isPinned, let guid = tab.guidInLocalDB, !guid.isEmpty else { return false }
         return bookmarkManager.bookmark(withGuid: guid) != nil
@@ -2178,6 +2204,68 @@ class BrowserState {
 
         if syncChromiumOrder {
             syncNormalTabRelativeOrderToChromium(tabId: guid)
+        }
+    }
+
+    /// Reorders an arbitrary set of normal tabs as a stable block. Used by
+    /// temporary multi-selection drag: selected ids are ordered by
+    /// `normalTabOrder`, removed from their original positions, then inserted
+    /// together at the requested pre-removal destination.
+    func moveNormalTabsLocally(tabIds: [Int],
+                               to toIndex: Int,
+                               syncChromiumOrder: Bool = true) {
+        var seen = Set<Int>()
+        let requestedIds = tabIds.filter { seen.insert($0).inserted }
+        guard requestedIds.count > 1 else {
+            if let id = requestedIds.first,
+               let fromIndex = normalTabOrder.firstIndex(of: id) {
+                moveNormalTabLocally(from: fromIndex,
+                                     to: toIndex,
+                                     syncChromiumOrder: syncChromiumOrder)
+            }
+            return
+        }
+
+        let requestedSet = Set(requestedIds)
+        let movingIds = normalTabOrder.filter { requestedSet.contains($0) }
+        guard movingIds.count > 1,
+              let firstSourceIndex = normalTabOrder.firstIndex(of: movingIds[0]) else {
+            return
+        }
+
+        let snappedToIndex = snapDropOutsideSplitPair(toIndex: toIndex,
+                                                      fromIndex: firstSourceIndex)
+        let clampedToIndex = min(max(0, snappedToIndex), normalTabOrder.count)
+        let removedBeforeTarget = normalTabOrder
+            .prefix(clampedToIndex)
+            .filter { requestedSet.contains($0) }
+            .count
+        var insertIndex = clampedToIndex - removedBeforeTarget
+
+        var newOrder = normalTabOrder.filter { !requestedSet.contains($0) }
+        insertIndex = min(max(0, insertIndex), newOrder.count)
+        newOrder.insert(contentsOf: movingIds, at: insertIndex)
+        guard newOrder != normalTabOrder else { return }
+
+        let movingSet = Set(movingIds)
+        var externalChildren: Set<Int> = []
+        for tabId in movingIds {
+            for childId in nativeRelationGraph.directChildren(of: tabId)
+            where !movingSet.contains(childId) {
+                externalChildren.insert(childId)
+            }
+        }
+
+        nativeRelationGraph.fixOpenersAfterMovingSlice(movingSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        normalTabOrder = newOrder
+        updateNormalTabs()
+
+        if syncChromiumOrder {
+            syncNormalTabsRelativeOrderToChromium(tabIds: movingIds)
         }
     }
 

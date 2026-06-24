@@ -30,6 +30,14 @@ final class TabDragContext {
     /// Set so the partner lifts alongside the dragged tab and the layout
     /// engine excludes both indices.
     let siblingSourceIndex: Int?
+    /// All source indices that should leave layout flow during this drag.
+    /// Single-tab drags contain `sourceIndex`; split-pair and multi-selection
+    /// drags contain every represented tab index.
+    let sourceExcludedIndices: Set<Int>
+    /// Normal-tab ids represented by this drag. Single-tab drags contain only
+    /// `draggingTab.guid`; multi-selection drags carry the selected block in
+    /// normal-tab order.
+    let draggingTabIds: [Int]
 
     // MARK: - Target State
 
@@ -121,6 +129,10 @@ final class TabDragContext {
         sourceContainerType != targetContainerType
     }
 
+    var isMultiTabDrag: Bool {
+        draggingTabIds.count > 1
+    }
+
     var currentTabFrame: CGRect {
         var frame = initialTabFrame
         let deltaX = currentMouseLocation.x - initialMouseLocation.x
@@ -156,7 +168,9 @@ final class TabDragContext {
         sourceIndex: Int,
         initialMouseLocation: CGPoint,
         initialTabFrame: CGRect,
-        siblingSourceIndex: Int? = nil
+        siblingSourceIndex: Int? = nil,
+        sourceExcludedIndices: Set<Int>? = nil,
+        draggingTabIds: [Int]? = nil
     ) {
         self.draggingTab = draggingTab
         self.sourceContainerType = sourceContainerType
@@ -165,6 +179,16 @@ final class TabDragContext {
         self.initialTabFrame = initialTabFrame
         self.draggedTabWidth = initialTabFrame.width
         self.siblingSourceIndex = siblingSourceIndex
+        if let sourceExcludedIndices {
+            self.sourceExcludedIndices = sourceExcludedIndices
+        } else {
+            var excluded: Set<Int> = [sourceIndex]
+            if let siblingSourceIndex {
+                excluded.insert(siblingSourceIndex)
+            }
+            self.sourceExcludedIndices = excluded
+        }
+        self.draggingTabIds = draggingTabIds ?? [draggingTab.guid]
 
         // Start with the source position as the initial target.
         self.targetContainerType = sourceContainerType

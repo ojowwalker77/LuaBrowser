@@ -79,6 +79,13 @@ protocol TabGroupCellViewDelegate: AnyObject {
                       intoGroupToken token: String,
                       atNormalTabsIdx normalTabsIdx: Int) -> Bool
 
+    /// Drop landed in the inner table for a temporary multi-selection.
+    /// Controller owns the selected-id reorder and group-membership batch.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptTabsWithGuids tabIds: [Int],
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int) -> Bool
+
     /// Inner table can accept bookmarks that can become group members.
     /// The controller owns bookmark lookup, so validation stays routed
     /// through this boundary before the cell shows a drop indicator.
@@ -1293,6 +1300,17 @@ extension TabGroupCellView: GroupTabsDragSource {
                 intoGroupToken: group.token,
                 atNormalTabsIdx: normalTabsIdx,
                 groupIndex: groupIndex) ?? false
+        } else if let idsPayload = pasteboard.string(forType: .normalTabs) {
+            var seen = Set<Int>()
+            let ids = idsPayload
+                .split(separator: ",")
+                .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .filter { seen.insert($0).inserted }
+            accepted = groupCellDelegate?.tabGroupCell(
+                self,
+                didAcceptTabsWithGuids: ids,
+                intoGroupToken: group.token,
+                atNormalTabsIdx: normalTabsIdx) ?? false
         } else if let guidString = pasteboard.string(forType: .normalTab),
                   let guid = Int(guidString),
                   let tab = state.tabs.first(where: { $0.guid == guid }) {

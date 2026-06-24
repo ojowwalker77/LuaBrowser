@@ -735,6 +735,25 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
     }
     
     // MARK: - Drag and Drop Source Methods
+
+    private func configureNormalTabDragPayload(_ pasteboardItem: NSPasteboardItem,
+                                               startingFrom tab: Tab) {
+        pasteboardItem.setString(String(tab.guid), forType: .normalTab)
+        pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+        if let ids = browserState.multiSelectionDragTabIds(startingFrom: tab) {
+            pasteboardItem.setString(ids.map(String.init).joined(separator: ","),
+                                     forType: .normalTabs)
+        }
+    }
+
+    private func normalTabIds(from pasteboard: NSPasteboard) -> [Int] {
+        guard let payload = pasteboard.string(forType: .normalTabs) else { return [] }
+        var seen = Set<Int>()
+        return payload
+            .split(separator: ",")
+            .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { seen.insert($0).inserted }
+    }
     
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let sidebarItem = item as? SidebarItem else { return nil }
@@ -743,8 +762,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
 
         if let tab = sidebarItem as? Tab {
             // Phase 3: grouped tabs are draggable. Resolver decides drop intent.
-            pasteboardItem.setString(String(tab.guid), forType: .normalTab)
-            pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+            configureNormalTabDragPayload(pasteboardItem, startingFrom: tab)
             AppLogDebug(
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] pasteboardWriter normalTab " +
                 "guid=\(tab.guid) windowId=\(browserState.windowId)"
@@ -758,8 +776,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             // that a dragged tab belongs to a split and move both panes
             // together (`moveSplitPairOrderLocally`,
             // `pinSplitInsertingAtPinnedIndex`, `addSplitBookmarkFromTab`).
-            pasteboardItem.setString(String(pair.leftTab.guid), forType: .normalTab)
-            pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+            configureNormalTabDragPayload(pasteboardItem, startingFrom: pair.leftTab)
             return pasteboardItem
         }
 
@@ -1204,6 +1221,108 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
 
         return []
     }
+
+    private func acceptNormalTabBatchDrop(tabIds: [Int],
+                                          outlineView: NSOutlineView,
+                                          info: NSDraggingInfo,
+                                          resolvedItem: Any?,
+                                          resolvedIndex: Int) -> Bool {
+        guard !isCrossWindowDrag(info.draggingPasteboard),
+              tabIds.count > 1 else {
+            return false
+        }
+        if resolvedItem is Bookmark {
+            return false
+        }
+        if resolvedItem == nil {
+            let proposedRow = resolvedIndex == NSOutlineViewDropOnItemIndex
+                ? outlineView.numberOfRows
+                : resolvedIndex
+            if isRowInBookmarkSection(proposedRow) {
+                return false
+            }
+        }
+
+        let dropCtx = buildDropContext(
+            outlineView: outlineView,
+            info: info,
+            proposedItem: resolvedItem,
+            proposedChildIndex: resolvedIndex)
+        let intent = SidebarGroupDropResolver.resolve(dropCtx)
+        AppLogDebug("[TAB_GROUPS][SIDEBAR_DRAG] batch accept intent=\(intent) " +
+                    "windowId=\(browserState.windowId) tabIds=\(tabIds)")
+
+        let (newToken, targetIdx): (String?, Int) = {
+            switch intent {
+            case .joinAtFront(let token, let index):
+                return (token, index)
+            case .reorderInGroup(let token, let index):
+                return (token, index)
+            case .rootInsert(let index):
+                return (nil, index)
+            case .rejected:
+                return (nil, -1)
+            }
+        }()
+        guard targetIdx >= 0 else {
+            setDropFeedback(.none)
+            return false
+        }
+        return commitNormalTabBatchDrop(tabIds: tabIds,
+                                        to: targetIdx,
+                                        targetGroupToken: newToken)
+    }
+
+    private func commitNormalTabBatchDrop(tabIds: [Int],
+                                          to targetIdx: Int,
+                                          targetGroupToken: String?) -> Bool {
+        let requestedSet = Set(tabIds)
+        let draggedTabs = browserState.normalTabs.filter { requestedSet.contains($0.guid) }
+        guard draggedTabs.count > 1 else { return false }
+
+        let desiredTokenById: [Int: String?] = Dictionary(
+            uniqueKeysWithValues: draggedTabs.map { ($0.guid, targetGroupToken) }
+        )
+        let membershipUpdates: [(tabId: Int, newToken: String?)] = draggedTabs.compactMap { tab in
+            let desired = desiredTokenById[tab.guid] ?? nil
+            guard tab.groupToken != desired else { return nil }
+            return (tab.guid, desired)
+        }
+        let membershipWillChange = !membershipUpdates.isEmpty
+
+        browserState.moveNormalTabsLocally(tabIds: tabIds,
+                                           to: targetIdx,
+                                           syncChromiumOrder: !membershipWillChange)
+
+        if membershipWillChange {
+            let removeIds = draggedTabs.compactMap { tab -> NSNumber? in
+                let desired = desiredTokenById[tab.guid] ?? nil
+                guard tab.groupToken != nil, tab.groupToken != desired else { return nil }
+                return NSNumber(value: Int64(tab.guid))
+            }
+            let addIds = draggedTabs.compactMap { tab -> NSNumber? in
+                let desired = desiredTokenById[tab.guid] ?? nil
+                guard desired != nil, tab.groupToken != desired else { return nil }
+                return NSNumber(value: Int64(tab.guid))
+            }
+            let bridge = ChromiumLauncher.sharedInstance().bridge
+            if !removeIds.isEmpty {
+                bridge?.removeTabsFromGroup(withWindowId: Int64(browserState.windowId),
+                                            tabIds: removeIds)
+            }
+            if let targetGroupToken, !addIds.isEmpty {
+                bridge?.addTabsToGroup(withWindowId: Int64(browserState.windowId),
+                                       tabIds: addIds,
+                                       tokenHex: targetGroupToken)
+            }
+            browserState.applyOptimisticGroupMembership(updates: membershipUpdates)
+            browserState.syncNormalTabsRelativeOrderToChromium(tabIds: tabIds)
+        }
+
+        browserState.clearMultiSelection()
+        setDropFeedback(.none)
+        return true
+    }
     
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         AppLogDebug(
@@ -1373,6 +1492,15 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             }
             
             return handleFavoriteTabDropToNormalList(tabGuid: pinnedTabId, destinationIndex: resolvedIndex)
+        }
+
+        let batchTabIds = normalTabIds(from: pasteboard)
+        if batchTabIds.count > 1 {
+            return acceptNormalTabBatchDrop(tabIds: batchTabIds,
+                                            outlineView: outlineView,
+                                            info: info,
+                                            resolvedItem: resolvedItem,
+                                            resolvedIndex: resolvedIndex)
         }
 
         if let draggedItemId = pasteboard.string(forType: .normalTab),
@@ -1667,6 +1795,11 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             sessionItem = pair.leftTab
         } else {
             sessionItem = draggedItems.first
+        }
+        if let tab = sessionItem as? Tab,
+           browserState.multiSelection.isActive,
+           browserState.multiSelectionDragTabIds(startingFrom: tab) == nil {
+            browserState.clearMultiSelection()
         }
         browserState.tabDraggingSession.begin(
             draggingItem: sessionItem,
@@ -3770,7 +3903,8 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
             "[TAB_GROUPS][INNER_DRAG] controller.beginDragging tab=\(tab.guid) " +
             "token=\(tab.groupToken ?? "nil") eventWindowPoint=\(mouseDownEvent.locationInWindow)"
         )
-        if browserState.multiSelection.isActive {
+        let multiDragIds = browserState.multiSelectionDragTabIds(startingFrom: tab)
+        if browserState.multiSelection.isActive, multiDragIds == nil {
             browserState.clearMultiSelection()
         }
         guard let image = rowView.createDraggingImage() else { return }
@@ -3780,8 +3914,7 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
         )
 
         let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(String(tab.guid), forType: .normalTab)
-        pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+        configureNormalTabDragPayload(pasteboardItem, startingFrom: tab)
         AppLogDebug(
             "[TAB_GROUPS][INNER_DRAG] controller.pasteboard types=[normalTab, sourceWindowId] " +
             "windowId=\(browserState.windowId)"
@@ -3939,6 +4072,15 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
     }
 
     func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptTabsWithGuids tabIds: [Int],
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int) -> Bool {
+        commitNormalTabBatchDrop(tabIds: tabIds,
+                                 to: normalTabsIdx,
+                                 targetGroupToken: token)
+    }
+
+    func tabGroupCell(_ cell: TabGroupCellView,
                       canAcceptBookmarkWithGuid guid: String) -> Bool {
         guard let bookmark = findBookmark(withId: guid) else {
             return false
@@ -4049,7 +4191,8 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
             )
             return
         }
-        if browserState.multiSelection.isActive {
+        let multiDragIds = browserState.multiSelectionDragTabIds(startingFrom: tab)
+        if browserState.multiSelection.isActive, multiDragIds == nil {
             browserState.clearMultiSelection()
         }
         guard let image = rowView.createDraggingImage() else {
@@ -4060,8 +4203,7 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         }
 
         let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(String(tab.guid), forType: .normalTab)
-        pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
+        configureNormalTabDragPayload(pasteboardItem, startingFrom: tab)
 
         let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
         let frame = outlineView.convert(rowView.bounds, from: rowView)
