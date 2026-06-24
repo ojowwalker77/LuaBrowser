@@ -1099,6 +1099,13 @@ class BrowserState {
         }
         return nil
     }
+
+    /// Resolve a normal tab by its Chromium guid. Crash-page bridge events only
+    /// target normal tabs: AI Chat tabs are blocked at the Chromium dispatch
+    /// (`sad_tab_helper.cc`), so this intentionally does NOT search `aiChatTabs`.
+    func resolveTab(_ tabId: Int) -> Tab? {
+        tabs.first(where: { $0.guid == tabId })
+    }
     
     /// Create an AI Chat tab associated with the specified identifier
     /// - Parameters:
@@ -1157,6 +1164,9 @@ class BrowserState {
                 return
             }
             aiChatTabs[identifier] = tab
+            // AI Chat tabs never show a native crash page — discard any buffered
+            // crash for this tab so it doesn't linger in the buffer.
+            _ = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid)
             return  // Don't add to regular tabs
         }
 
@@ -1188,6 +1198,12 @@ class BrowserState {
                                              hiddenOpenerTabIds: preseededHiddenOpenerTabIds)
 
         tabs.append(tab)
+        // Cross-window drag: a crash event may have been buffered before this
+        // tab existed on the Mac side (Coordinator.showCrashPage). Apply it now
+        // that the tab is in `tabs` so the new window shows the crash page.
+        if let bufferedCrash = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid) {
+            tab.crashState = bufferedCrash
+        }
         // If Chromium emitted a kCreated/kJoined for this tab while it was
         // still in flight, restore the group membership now that the Tab
         // exists. Sidebar reactivity comes through the group's

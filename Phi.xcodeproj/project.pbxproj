@@ -223,6 +223,8 @@
 		8E9E96AD2F0F6E64002D0D21 /* TabStripState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96A62F0F6E64002D0D21 /* TabStripState.swift */; };
 		8E9E96AE2F0F6E64002D0D21 /* TabStripMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96A52F0F6E64002D0D21 /* TabStripMetrics.swift */; };
 		8E9E96AF2F0F6E64002D0D21 /* TabStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */; };
+		8EA1FD942FEA95140060DCFF /* CrashPageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD932FEA95140060DCFF /* CrashPageData.swift */; };
+		8EA1FD962FEB74530060DCFF /* RendererCrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
 		8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
@@ -680,6 +682,8 @@
 		8E9E96A62F0F6E64002D0D21 /* TabStripState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripState.swift; sourceTree = "<group>"; };
 		8E9E96A82F0F6E64002D0D21 /* TabItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabItemView.swift; sourceTree = "<group>"; };
 		8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStrip.swift; sourceTree = "<group>"; };
+		8EA1FD932FEA95140060DCFF /* CrashPageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashPageData.swift; sourceTree = "<group>"; };
+		8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererCrashViewController.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
 		8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DownloadSafety.xcstrings; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
@@ -1398,6 +1402,7 @@
 		8EF36C022F4E9E7000FCC91E /* Tabs */ = {
 			isa = PBXGroup;
 			children = (
+				8EA1FD932FEA95140060DCFF /* CrashPageData.swift */,
 				B02587112E43038B001B08FC /* Tab.swift */,
 				8EF36C052F4E9EC100FCC91E /* TabContentView.swift */,
 				8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */,
@@ -1946,6 +1951,7 @@
 		CCEF2CF22E57075700FDDEB2 /* WebContent */ = {
 			isa = PBXGroup;
 			children = (
+				8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */,
 				8E5D8B002FDFFAD30039CBE3 /* WebContentSnapshotter.swift */,
 				8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */,
 				376CE2F12F2722480093D937 /* NativeNTP */,
@@ -2287,6 +2293,7 @@
 				5EA17ABC0000000000000107 /* SearchTabsViewModel.swift in Sources */,
 				5EA17ABC0000000000000108 /* SearchTabsTextField.swift in Sources */,
 				5EA17ABC0000000000000109 /* SearchTabsResultCellView.swift in Sources */,
+				8EA1FD962FEB74530060DCFF /* RendererCrashViewController.swift in Sources */,
 				5EA17ABC000000000000010A /* SearchTabsResultsView.swift in Sources */,
 				5EA17ABC000000000000010B /* SearchTabsBookmarkMenuPresenter.swift in Sources */,
 				5EA17ABC000000000000010C /* SearchTabsViewController.swift in Sources */,
@@ -2326,6 +2333,7 @@
 				37686A9C2F10D61E00DC3990 /* UserDefaultsRegistration.swift in Sources */,
 				3769C6B32EFA540300A94DE0 /* GradientColorLabel.swift in Sources */,
 				376581FB2EEA9D6200D3E031 /* BookmarkRowView.swift in Sources */,
+				8EA1FD942FEA95140060DCFF /* CrashPageData.swift in Sources */,
 				37C76E162F8FAD510042FE45 /* SharedTokenLock.swift in Sources */,
 				37D4F5122F6A5CB100F9E67D /* OverlayScrollView.swift in Sources */,
 				B0F370CB2E43261A000B51F9 /* EventBus.swift in Sources */,

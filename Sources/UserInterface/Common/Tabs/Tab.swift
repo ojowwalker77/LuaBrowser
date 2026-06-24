@@ -95,6 +95,12 @@ class Tab: WebContentRepresentable {
     @Published var aiChatCollapsed: Bool = true
     @Published var aiChatEnabled: Bool = false
 
+    /// Native renderer crash-page state, set by `PhiChromiumCoordinator` from
+    /// the `showCrashPage` bridge event and cleared on teardown. Non-nil drives
+    /// the content host to show the crash view in place of the dead web content
+    /// (the tab's `webContentView` is intentionally NOT niled on crash).
+    @Published var crashState: CrashPageData?
+
     /// Use native NTP rendering when the tab URL is an NTP URL.
     var usesNativeNTP: Bool = false
 

@@ -19,6 +19,10 @@ import SwiftUI
     /// overlay is `isReleasedWhenClosed = false` and AppKit only detaches it
     /// from the parent, it doesn't drop our dictionary reference).
     private var chooserCloseObservers: [Int64: NSObjectProtocol] = [:]
+    /// Crash payloads that arrived before their (cross-window-dragged) tab was
+    /// created on the Mac side, keyed by Chromium tab guid. Drained by
+    /// `BrowserState.handleNewTabFromChromium` when the tab appears.
+    private var pendingCrashBuffer: [Int: CrashPageData] = [:]
 }
 
 extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
@@ -446,6 +450,69 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     @objc func actionIconChanged(_ info: [AnyHashable : Any]) {
         let windowId = (info["windowId"] as? NSNumber)?.intValue ?? 0
         EventBus.shared.send(ExtensionEvent(browserId: windowId, action: .iconChanged(info: info)))
+    }
+
+    /// Renderer crash page arrived for `tabId` in `windowId` (both pre-resolved
+    /// by Chromium; the WebContents may be mid-teardown). Resolve the tab and
+    /// install the crash state synchronously so show/hide stay ordered. Must be
+    /// `@objc`: this is an optional protocol selector and Chromium gates the
+    /// whole crash page on `respondsToSelector:` for it.
+    @objc func showCrashPage(_ tabId: Int64, windowId: Int64, data: [AnyHashable : Any]) {
+        // Runs on Chromium's UI/main thread today (= AppKit main = MainActor), but
+        // that isn't type-enforced. Mirror tabWillBeRemove: assert and skip rather
+        // than trap if it ever arrives off-main — a crash notification must never
+        // take down the browser process.
+        guard Thread.isMainThread else {
+            assertionFailure("showCrashPage off the main thread; skipping crash page")
+            return
+        }
+        MainActor.assumeIsolated {
+            guard let windowController = MainBrowserWindowControllersManager.shared
+                    .getAllWindows()
+                    .first(where: { $0.windowId == Int(windowId) }),
+                  let tab = windowController.browserState.resolveTab(Int(tabId)) else {
+                // Cross-window drag can replay a crash before the destination
+                // window's tab exists on the Mac side. Buffer it; the tab's
+                // creation (BrowserState.handleNewTabFromChromium) drains it.
+                pendingCrashBuffer[Int(tabId)] = CrashPageData(dictionary: data)
+                return
+            }
+            tab.crashState = CrashPageData(dictionary: data)
+        }
+    }
+
+    /// Remove and return a buffered crash payload for a tab that has now been
+    /// created (cross-window drag). Returns nil if none was buffered.
+    func drainPendingCrash(tabId: Int) -> CrashPageData? {
+        pendingCrashBuffer.removeValue(forKey: tabId)
+    }
+
+    /// Renderer recovered (committed a non-crashed navigation). Clear the crash
+    /// state for `tabId`. Optional selector → `@objc` required.
+    @objc func hideCrashPage(_ tabId: Int64, windowId: Int64) {
+        guard Thread.isMainThread else {
+            assertionFailure("hideCrashPage off the main thread; skipping crash page teardown")
+            return
+        }
+        MainActor.assumeIsolated {
+            guard let windowController = MainBrowserWindowControllersManager.shared
+                    .getAllWindows()
+                    .first(where: { $0.windowId == Int(windowId) }),
+                  let tab = windowController.browserState.resolveTab(Int(tabId)) else {
+                // The crash may have been buffered before the tab existed (a
+                // cross-window drag replays show before creation). Recovery can
+                // arrive in that same pre-creation window — drop the stale
+                // payload so the tab's later creation doesn't replay a crash the
+                // renderer has already recovered from.
+                pendingCrashBuffer.removeValue(forKey: Int(tabId))
+                return
+            }
+            // Clear immediately by design: a renderer crash is rare, and a brief
+            // blank while the page reloads usefully signals the reload is under
+            // way (rather than looking stuck). No fixed delay / staleness token
+            // is needed — bridge show/hide run synchronously and in order here.
+            tab.crashState = nil
+        }
     }
     
     func newTabCreated(withInfo tabInfo: [AnyHashable : Any], windowId: Int64) {

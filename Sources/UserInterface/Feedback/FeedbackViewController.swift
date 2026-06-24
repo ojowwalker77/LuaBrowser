@@ -8,7 +8,7 @@ import SwiftUI
 
 @MainActor
 class FeedbackViewController: NSViewController {
-    let hostWindowController: MainBrowserWindowController
+    private(set) var hostWindowController: MainBrowserWindowController
     
     private let viewModel = FeedbackViewModel()
     
@@ -57,10 +57,7 @@ class FeedbackViewController: NSViewController {
             make.size.equalTo(NSSize(width: 520, height: 580))
         }
         
-        if let tab = hostWindowController.browserState.focusingTab {
-            updateActiveTabURL(URLProcessor.phiBrandEnsuredUrlString(tab.url ?? ""))
-            viewModel.pageTitle = tab.title
-        }
+        refreshFeedbackContext()
     }
     
     override func viewDidAppear() {
@@ -75,8 +72,41 @@ class FeedbackViewController: NSViewController {
         }
     }
 
+    /// When set (renderer crash page → feedback), this immutable snapshot of the
+    /// CRASHED tab's url/title is used instead of the focused tab's — a split
+    /// partner pane's crash isn't the focused tab, and focus must not be relied
+    /// on. Snapshotted (not a weak Tab) so closing or recovering the crashed tab
+    /// before the user hits Send can't swap in the focused tab's context.
+    private var crashContext: (url: String?, title: String)?
+
+    /// Rebind to the window now reusing this app-global feedback window, so the
+    /// report's window-scoped context — the windowId for Chromium system logs and
+    /// the focusingTab fallback — follows the window feedback was invoked from,
+    /// not whichever window first created the (shared) feedback window.
+    func rebindHost(_ host: MainBrowserWindowController) {
+        // Don't repoint an in-flight submit: submitFeedback already captured its
+        // windowId and is awaiting Chromium logs; rebinding now would let the
+        // enqueue mix this window's context with that submit's logs.
+        guard !viewModel.isSubmitting else { return }
+        hostWindowController = host
+    }
+
+    /// Inject (or clear, with nil) the crashed-tab context and re-apply it.
+    /// Called when feedback is opened from a crash page, incl. the already-open
+    /// window case.
+    func setCrashContextTab(_ tab: Tab?) {
+        // Leave an in-flight submit's draft untouched (see rebindHost): mutating
+        // url/title mid-submit would be read by the pending enqueue after its await.
+        guard !viewModel.isSubmitting else { return }
+        crashContext = tab.map { (url: $0.url, title: $0.title) }
+        refreshFeedbackContext()
+    }
+
     private func refreshFeedbackContext() {
-        if let tab = hostWindowController.browserState.focusingTab {
+        if let crashContext {
+            viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(crashContext.url ?? "")
+            viewModel.pageTitle = crashContext.title
+        } else if let tab = hostWindowController.browserState.focusingTab {
             viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "")
             viewModel.pageTitle = tab.title
         }

@@ -483,15 +483,24 @@ extension MainBrowserWindowController: NSMenuItemValidation {
     }
     
     
-    func showFeedbackWindow() {
+    func showFeedbackWindow(crashContextTab: Tab? = nil) {
         let identifier = NSUserInterfaceItemIdentifier("Phi Feedback Window")
         // Check if about window already exists
         if let existingWindow = NSApp.windows.first(where: { $0.identifier == identifier }) {
+            // The feedback window is app-global; rebind it to the window now
+            // reopening it so the report's window-scoped context (Chromium system
+            // logs, focusingTab fallback) follows the current window, then refresh
+            // the crash context (else it keeps the previously-shown tab's url/title).
+            if let fvc = existingWindow.contentViewController as? FeedbackViewController {
+                fvc.rebindHost(self)
+                fvc.setCrashContextTab(crashContextTab)
+            }
             existingWindow.makeKeyAndOrderFront(nil)
             return
         }
-        
+
         let vc = FeedbackViewController(host: self)
+        vc.setCrashContextTab(crashContextTab)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
             styleMask: [.titled, .closable],

@@ -292,6 +292,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 // Per-window dynamic extension action icon. Keys: windowId, extensionId, tabId,
 // iconData (PNG NSData, empty => no dynamic icon), dipSize, scale.
 - (void)actionIconChanged:(NSDictionary *)info;
+// Renderer crash page (Chromium → Mac). tabId/windowId are pre-resolved (the
+// WebContents may be mid-teardown). `data` keys: title, message, buttonLabel,
+// helpLinkLabel, errorCodeText, tips (NSArray<NSString*>), helpLinkUrl,
+// showFeedbackButton, errorCode, isRepeatedlyCrashing, kind, terminationStatus.
+// The crash-page staleness token is owned by the Mac side (not sent here).
+- (void)showCrashPage:(int64_t)tabId
+             windowId:(int64_t)windowId
+                 data:(NSDictionary *)data;
+// Hide/dismiss the crash page (renderer recovered).
+- (void)hideCrashPage:(int64_t)tabId windowId:(int64_t)windowId;
 // Optional metadata-rich variants for richer native tab orchestration.
 - (void)tabWillBeRemove:(int64_t)tabId
                windowId:(int64_t)windowId

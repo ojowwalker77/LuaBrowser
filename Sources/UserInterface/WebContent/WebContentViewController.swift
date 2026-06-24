@@ -63,6 +63,12 @@ class WebContentViewController: NSViewController {
     private var contentObserverCancellables = Set<AnyCancellable>()
     /// Cancellable for content-fullscreen subscription on the associated tab.
     private var contentFullscreenCancellable: AnyCancellable?
+    /// Dedicated subscription to the split PARTNER tab's crashState, held only
+    /// while THIS controller is the focused split host. The focused VC owns the
+    /// split host, so it must react to the OTHER pane's crash/recover (the
+    /// partner's own VC won't mount the overlay). Kept off the shared
+    /// cancellables so it can be cancelled independently on focus/split change.
+    private var partnerCrashCancellable: AnyCancellable?
     /// Saved superview reference while hostView is re-parented to window.contentView
     /// for HTML5 content fullscreen. Nil when not in fullscreen.
     private weak var savedHostViewSuperview: NSView?
@@ -132,6 +138,22 @@ class WebContentViewController: NSViewController {
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
     private var groupOverviewController: GroupOverviewViewController?
+    /// Native renderer crash page, rebuilt per crash (it renders a fixed
+    /// `CrashPageData` snapshot). Non-split only; split panes host their own
+    /// crash view via `SplitPaneHostView` (Task 11).
+    private var crashedPageController: RendererCrashViewController?
+    /// The crash data + tab currently mounted, so a redundant re-render doesn't
+    /// rebuild the controller (and flicker). Keyed on tab too: this controller
+    /// can be rebound to another tab (updateAssociatedTab) and two tabs often
+    /// carry equal CrashPageData, so a data-only guard could keep the wrong
+    /// tab's crash view (its Reload would target the previous tab).
+    private var shownCrashData: CrashPageData?
+    private var shownCrashTabId: Int?
+    /// Per-pane crash view controllers for the split host, keyed by tab.guid.
+    /// The focused VC owns the split host, so it manages both panes' crash
+    /// views. `splitCrashData` mirrors each one's mounted data for dedup.
+    private var splitCrashControllers: [Int: RendererCrashViewController] = [:]
+    private var splitCrashData: [Int: CrashPageData] = [:]
 
     // MARK: - Agent Animation Overlay
     private lazy var agentAnimationOverlay: EdgeFogOverlayView = {
@@ -425,6 +447,10 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, let tab = self.associatedTab else { return }
+                // Split membership changed — re-evaluate the partner-crash
+                // subscription (subscribe if we're now the focused split host,
+                // cancel otherwise) so a non-focused pane's crash still shows.
+                self.updatePartnerCrashSubscription()
                 // AI Chat autohide depends on split membership: a pane leaving
                 // a split must collapse its now-orphaned sidebar immediately,
                 // not wait for the next focus switch to re-sync. Runs for every
@@ -960,6 +986,16 @@ class WebContentViewController: NSViewController {
                 }
             }
             .store(in: &contentObserverCancellables)
+        // Renderer crash state flips the content host between the crash view
+        // and live web content. removeDuplicates keeps an unchanged crashState
+        // from rebuilding the crash view.
+        tab.$crashState
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak tab] _ in
+                self?.updateContentForTab(tab)
+            }
+            .store(in: &contentObserverCancellables)
     }
 
     private func bindProgressObservers(for tab: Tab) {
@@ -1045,10 +1081,21 @@ class WebContentViewController: NSViewController {
             return
         }
         deferredContentUpdateTabId = nil
-        if shouldShowNativeNtp(for: tab) {
-            showNativeNtp(for: tab)
-        } else if let webView = tab.webContentView {
-            showWebContent(webView, tabId: tab.guid)
+        // Crashed renderer takes priority over NTP / web content. When the split
+        // host can actually be mounted, the per-pane crash overlay (Task 11)
+        // handles it; otherwise (not in a split, partner pane not yet ready, or
+        // content-fullscreen) the split falls back to a single-view mount that
+        // never runs the per-pane overlay — so cover the whole pane with the
+        // crash page here. When not crashed, tear down any crash view first.
+        if tab.crashState != nil, !canMountSplitHost(for: tab) {
+            showCrashedPage(for: tab)
+        } else {
+            teardownCrashedPage()
+            if shouldShowNativeNtp(for: tab) {
+                showNativeNtp(for: tab)
+            } else if let webView = tab.webContentView {
+                showWebContent(webView, tabId: tab.guid)
+            }
         }
     }
 
@@ -1111,6 +1158,21 @@ class WebContentViewController: NSViewController {
         return browserState?.tabs.first { $0.guid == partnerId }
     }
 
+    /// True only when this tab's split can actually be mounted right now: it's in
+    /// an active split (not content-fullscreen) AND the partner pane's native
+    /// view exists. `installSplitContent` otherwise falls back to a single-view
+    /// mount that skips `reconcileSplitCrashViews`, so a crashed tab would show
+    /// its dead view bare — gate crash display on this, not mere split membership.
+    private func canMountSplitHost(for tab: Tab) -> Bool {
+        guard !tab.isInContentFullscreen,
+              let group = browserState?.splitGroup(forTabId: tab.guid),
+              let partner = partnerTab(for: group, ownTabId: tab.guid),
+              partner.webContentView != nil else {
+            return false
+        }
+        return true
+    }
+
     private func shouldShowNativeNtp(for tab: Tab) -> Bool {
         guard tab.usesNativeNTP else { return false }
         if tab.isNTP {
@@ -1161,6 +1223,7 @@ class WebContentViewController: NSViewController {
         if let existing = currentSplitHost {
             existing.removeFromSuperview()
             currentSplitHost = nil
+            teardownAllSplitCrashViews()
         }
         // Check if content view is already the primary view in hostView
         if hostView.subviews.contains(contentView),
@@ -1171,6 +1234,156 @@ class WebContentViewController: NSViewController {
         addWebContentView(contentView, tabId: tabId)
         contentMode = .webContent
         updateLeftContainerStyleForCurrentAIChatState()
+    }
+
+    /// Mount the native crash page for a crashed (non-split) tab, replacing the
+    /// dead web content in `hostView`. Rebuilt per crash because the controller
+    /// renders a fixed `CrashPageData` snapshot.
+    private func showCrashedPage(for tab: Tab) {
+        guard let crashData = tab.crashState else { return }
+        guard let host = view.window?.windowController as? MainBrowserWindowController else {
+            return
+        }
+        // Already showing this exact crash for this tab — don't rebuild (avoids
+        // a flicker when an unrelated re-render, e.g. tab.$url, re-enters here).
+        // Skip the rebuild only if our overlay is STILL mounted on hostView for
+        // this same crash. Another path (e.g. leaving group overview) may have
+        // cleared hostView without dropping the controller — then we must re-add.
+        if let controller = crashedPageController,
+           controller.view.superview === hostView,
+           shownCrashTabId == tab.guid, shownCrashData == crashData {
+            return
+        }
+        teardownCrashedPage()
+        // Tear down any leftover split host before mounting single content.
+        if let existing = currentSplitHost {
+            existing.removeFromSuperview()
+            currentSplitHost = nil
+            teardownAllSplitCrashViews()
+        }
+        let controller = RendererCrashViewController(tabId: tab.guid, data: crashData, host: host)
+        crashedPageController = controller
+        shownCrashTabId = tab.guid
+        shownCrashData = crashData
+        addChild(controller)
+        // Overlay on TOP of the existing (dead) content — do NOT clear hostView
+        // or reparent the Chromium view. Avoids reparent-churn flicker; the
+        // reloaded page paints back into the same view once the overlay lifts.
+        hostView.addSubview(controller.view)
+        controller.view.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    /// Remove the crash page controller when leaving the crashed state. The
+    /// next `showNativeNtp` / `showWebContent` clears `hostView` itself; this
+    /// drops the child controller so it doesn't linger across tabs.
+    private func teardownCrashedPage() {
+        guard crashedPageController != nil else { return }
+        crashedPageController?.view.removeFromSuperview()
+        crashedPageController?.removeFromParent()
+        crashedPageController = nil
+        shownCrashData = nil
+        shownCrashTabId = nil
+    }
+
+    /// Reconcile per-pane crash views for the split host: a crashed pane-tab
+    /// gets a crash view overlaid on its pane; a recovered one is detached.
+    /// Mirrors `restorePerPaneDevToolsState`. Runs on the focused VC's split
+    /// mount (focus / splits change); partner reactivity is Task 12. Stale
+    /// controllers from a membership change are dropped first.
+    private func reconcileSplitCrashViews(host: SplitPaneHostView, group: SplitGroup) {
+        let liveTabIds: Set<Int> = [group.primaryTabId, group.secondaryTabId]
+        for tabId in Array(splitCrashControllers.keys) where !liveTabIds.contains(tabId) {
+            dropSplitCrashController(tabId: tabId)
+        }
+        for (tabId, pane) in [(group.primaryTabId, SplitPaneHostView.Pane.primary),
+                              (group.secondaryTabId, SplitPaneHostView.Pane.secondary)] {
+            reconcileCrashView(host: host, pane: pane, tabId: tabId)
+        }
+    }
+
+    private func reconcileCrashView(host: SplitPaneHostView,
+                                    pane: SplitPaneHostView.Pane,
+                                    tabId: Int) {
+        guard let tab = browserState?.tabs.first(where: { $0.guid == tabId }),
+              let crashData = tab.crashState,
+              let hostWC = view.window?.windowController as? MainBrowserWindowController else {
+            host.detachCrashView(pane: pane)
+            dropSplitCrashController(tabId: tabId)
+            return
+        }
+        // Already showing THIS tab's crash view on THIS pane with unchanged
+        // data — keep it (the keep set preserves it across attach(); rebuilding
+        // would flicker). Identity-check the pane's current crash view against
+        // this tab's controller so a Reverse-Panes swap (both panes crashed,
+        // equal data) can't leave crossed crash pages / wrong-tab Reload.
+        if let controller = splitCrashControllers[tabId],
+           host.crashView(for: pane) === controller.view,
+           splitCrashData[tabId] == crashData {
+            return
+        }
+        dropSplitCrashController(tabId: tabId)
+        let controller = RendererCrashViewController(tabId: tabId, data: crashData, host: hostWC)
+        splitCrashControllers[tabId] = controller
+        splitCrashData[tabId] = crashData
+        addChild(controller)
+        host.attachCrashView(pane: pane, crashView: controller.view)
+    }
+
+    private func dropSplitCrashController(tabId: Int) {
+        guard let controller = splitCrashControllers[tabId] else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        splitCrashControllers[tabId] = nil
+        splitCrashData[tabId] = nil
+    }
+
+    /// Drop all split crash controllers — used when leaving split mode (the
+    /// split host is being torn down, so its panes' crash views go with it).
+    private func teardownAllSplitCrashViews() {
+        for tabId in Array(splitCrashControllers.keys) {
+            dropSplitCrashController(tabId: tabId)
+        }
+    }
+
+    /// (Re)bind the partner-crash subscription. Active only while this VC is the
+    /// focused member of a split — then it owns the split host and must react to
+    /// the OTHER pane's crash/recover, since the partner's own VC can't mount
+    /// the overlay. Cancels in every other case. Called on split + focus changes.
+    func updatePartnerCrashSubscription() {
+        partnerCrashCancellable = nil
+        guard let tab = associatedTab,
+              let state = browserState,
+              state.focusingTab?.guid == tab.guid,
+              let group = state.splitGroup(forTabId: tab.guid),
+              let partnerId = group.partnerTabId(of: tab.guid),
+              let partner = state.tabs.first(where: { $0.guid == partnerId }) else {
+            return
+        }
+        partnerCrashCancellable = partner.$crashState
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshSplitCrashOverlays()
+            }
+    }
+
+    /// Drop the partner-crash subscription unconditionally (the container calls
+    /// this on the OUTGOING focused VC during a focus flip — its own observers
+    /// don't re-run, so it can't self-cancel).
+    func cancelPartnerCrashSubscription() {
+        partnerCrashCancellable = nil
+    }
+
+    /// Reconcile both panes' crash overlays against the currently-mounted split
+    /// host. Driven by the partner-crash subscription so a non-focused pane's
+    /// crash/recover updates without waiting for a focus switch.
+    private func refreshSplitCrashOverlays() {
+        guard let host = currentSplitHost,
+              let tab = associatedTab,
+              let group = browserState?.splitGroup(forTabId: tab.guid) else { return }
+        reconcileSplitCrashViews(host: host, group: group)
     }
 
     /// Mount or update the SplitPaneHostView so that this tab and its partner
@@ -1257,6 +1470,8 @@ class WebContentViewController: NSViewController {
         // open on either side. Covers split rebuild on controller switch and
         // DevTools-already-open-before-split cases.
         restorePerPaneDevToolsState(host: host, group: group)
+        // Overlay a crash view on any pane whose tab's renderer has crashed.
+        reconcileSplitCrashViews(host: host, group: group)
 
         let splitId = group.id
         host.onRatioCommit = { [weak self] newRatio in

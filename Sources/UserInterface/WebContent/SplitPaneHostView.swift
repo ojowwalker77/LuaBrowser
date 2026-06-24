@@ -58,6 +58,12 @@ final class SplitPaneHostView: NSView {
     /// the view hierarchy; this is just a quick-lookup mirror.
     private weak var primaryDevToolsView: NSView?
     private weak var secondaryDevToolsView: NSView?
+    /// Renderer crash view overlaying a pane whose tab's renderer crashed. It
+    /// sits above (and hides) the dead Chromium native view. Container owns the
+    /// strong ref via the view hierarchy; this is a quick-lookup mirror, exactly
+    /// like the DevTools views above. Must be kept across `attach()` (see keep).
+    private weak var primaryCrashView: NSView?
+    private weak var secondaryCrashView: NSView?
 
     /// Which pane currently owns the active tab. Drives the accent-colored
     /// focus ring drawn on top of the pane. Nil hides the ring.
@@ -244,7 +250,8 @@ final class SplitPaneHostView: NSView {
         // state and the regular mount path revives it on focus. Reverse
         // panes is unaffected: the moved view is already re-homed by the
         // addSubview moves above, so it never matches.
-        let keep: [NSView?] = [primary, secondary, primaryDevToolsView, secondaryDevToolsView]
+        let keep: [NSView?] = [primary, secondary, primaryDevToolsView, secondaryDevToolsView,
+                               primaryCrashView, secondaryCrashView]
         for container in [primaryPaneContainer, secondaryPaneContainer] {
             for stale in container.subviews where !keep.contains(where: { $0 === stale }) {
                 stale.removeFromSuperview()
@@ -263,6 +270,16 @@ final class SplitPaneHostView: NSView {
             secondary.frame = secondaryPaneContainer.bounds
         } else {
             secondary.autoresizingMask = []
+        }
+        // Re-raise any crash overlay back above its just-re-added native.
+        // attach() re-adds the native via addSubview (on top), which would
+        // otherwise bury a kept crash overlay — the dead native then intercepts
+        // the overlay's button clicks while drawing nothing (so it still shows).
+        if let cv = primaryCrashView {
+            primaryPaneContainer.addSubview(cv, positioned: .above, relativeTo: primary)
+        }
+        if let cv = secondaryCrashView {
+            secondaryPaneContainer.addSubview(cv, positioned: .above, relativeTo: secondary)
         }
         primaryPane = primary
         secondaryPane = secondary
@@ -407,6 +424,57 @@ final class SplitPaneHostView: NSView {
         switch pane {
         case .primary: primaryDevToolsView = view
         case .secondary: secondaryDevToolsView = view
+        }
+    }
+
+    /// Overlay an opaque crash view on the given pane, covering its dead
+    /// Chromium native view. The native view is left untouched (not hidden, not
+    /// reframed, not reparented) — the overlay just sits above and fills the
+    /// pane. Must be in the `attach()` keep set or a re-layout evicts it.
+    func attachCrashView(pane: Pane, crashView: NSView) {
+        let container = paneContainer(for: pane)
+        let existing = existingCrashView(for: pane)
+        if existing === crashView, crashView.superview === container {
+            return
+        }
+        if let stale = existing, stale !== crashView {
+            stale.removeFromSuperview()
+        }
+        crashView.wantsLayer = true
+        container.addSubview(crashView, positioned: .above, relativeTo: nativePane(for: pane))
+        crashView.frame = container.bounds
+        crashView.autoresizingMask = [.width, .height]
+        setCrashView(crashView, for: pane)
+    }
+
+    /// Remove the crash overlay from the given pane. The native view was never
+    /// hidden or reframed, so there is nothing to restore — just drop the
+    /// overlay. Safe to call when no crash view is attached.
+    func detachCrashView(pane: Pane) {
+        existingCrashView(for: pane)?.removeFromSuperview()
+        setCrashView(nil, for: pane)
+    }
+
+    /// True if a crash view is currently overlaying the given pane.
+    func hasCrashView(pane: Pane) -> Bool {
+        existingCrashView(for: pane) != nil
+    }
+
+    /// The crash view currently overlaying the given pane, if any. Lets the
+    /// controller identity-check that a pane shows the expected tab's crash
+    /// view before skipping a rebuild (guards against crossed panes).
+    func crashView(for pane: Pane) -> NSView? {
+        existingCrashView(for: pane)
+    }
+
+    private func existingCrashView(for pane: Pane) -> NSView? {
+        pane == .primary ? primaryCrashView : secondaryCrashView
+    }
+
+    private func setCrashView(_ view: NSView?, for pane: Pane) {
+        switch pane {
+        case .primary: primaryCrashView = view
+        case .secondary: secondaryCrashView = view
         }
     }
 
