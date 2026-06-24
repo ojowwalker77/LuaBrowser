@@ -401,7 +401,9 @@ extension AppController {
             let title = tab.title.isEmpty ? (tab.url ?? "") : tab.title
             let url = tab.url ?? ""
             guard !url.isEmpty else { continue }
-            state.bookmarkManager.addBookmark(title: title, url: url)
+            state.bookmarkManager.addBookmark(title: title,
+                                              url: url,
+                                              faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
         }
     }
 

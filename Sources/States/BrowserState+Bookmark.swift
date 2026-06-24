@@ -142,7 +142,8 @@ extension BrowserState {
                 index: targetIndex,
                 guid: newBookmarkGuid,
                 secondaryUrl: URLProcessor.processUserInput(secondaryURL),
-                secondaryTitle: secondaryDisplayTitle
+                secondaryTitle: secondaryDisplayTitle,
+                favicon: primaryTab.liveFaviconData ?? primaryTab.cachedFaviconData
             )
             // Drag binds the live split so it becomes the bookmark's opened
             // representation (a move); menu/Cmd+D leaves the split open as an
@@ -183,7 +184,8 @@ extension BrowserState {
                 index: targetIndex,
                 guid: UUID().uuidString,
                 secondaryUrl: URLProcessor.processUserInput(secondaryURL),
-                secondaryTitle: secondaryDisplayTitle
+                secondaryTitle: secondaryDisplayTitle,
+                favicon: leftPinned.liveFaviconData ?? leftPinned.cachedFaviconData
             )
             return true
         }
