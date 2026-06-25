@@ -33,7 +33,7 @@ struct SpacesSettingsView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             spaceListPanel
-                .frame(width: 210)
+                .frame(width: 300)
                 .frame(maxHeight: .infinity)
             detailPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -114,25 +114,41 @@ struct SpacesSettingsView: View {
 
     private func spaceListRow(_ space: SpaceModel) -> some View {
         let isSelected = space.spaceId == selectedSpaceId
-        return Button {
-            select(space.spaceId)
-        } label: {
-            HStack(spacing: 8) {
-                spaceSwatch(space, size: 20)
-                Text(space.name)
-                    .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
+        let isDefault = space.spaceId == LocalStore.defaultSpaceId
+        return HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 12, weight: .medium))
+                .themedForeground(.textSecondary)
+            Button {
+                select(space.spaceId)
+            } label: {
+                HStack(spacing: 8) {
+                    spaceSwatch(space, size: 20)
+                    Text(space.name)
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            Picker("", selection: profileBinding(space.spaceId)) {
+                ForEach(profileManager.profiles, id: \.profileId) { profile in
+                    Text(profile.displayName).tag(profile.profileId)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .disabled(isDefault)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
         .opacity(draggingSpaceId == space.spaceId ? 0.5 : 1)
         .onDrag {
             draggingSpaceId = space.spaceId
@@ -146,19 +162,23 @@ struct SpacesSettingsView: View {
         ))
     }
 
+    /// Gray, small-caps-style section label sitting above a settings card, as in
+    /// the Spaces settings layout (Icon / Theme sections).
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .regular))
+            .themedForeground(.textSecondary)
+            .padding(.leading, 2)
+    }
+
     private func spaceSwatch(_ space: SpaceModel, size: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 5)
-            .fill(Color(hexString: space.colorHex))
-            .frame(width: size, height: size)
-            .overlay(
-                Image(systemName: space.iconName.isEmpty ? "rectangle.stack" : space.iconName)
-                    .font(.system(size: size * 0.46, weight: .semibold))
-                    .foregroundStyle(Color.white)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
-            )
+        SpaceIconView(
+            storedValue: space.iconName,
+            size: size * 0.8,
+            symbolWeight: .semibold,
+            tint: Color.primary
+        )
+        .frame(width: size, height: size)
     }
 
     private func toolbarButton(systemName: String,
@@ -201,34 +221,27 @@ struct SpacesSettingsView: View {
                     }
                     .padding(.leading, 2)
 
-                    SettingsDetailCard {
-                        SettingsDetailRow(NSLocalizedString("Icon", comment: "Spaces settings - icon row label")) {
-                            Picker("", selection: iconBinding(space.spaceId)) {
-                                ForEach(SpacesStripView.iconOptions, id: \.self) { icon in
-                                    Label(prettyIconLabel(icon), systemImage: icon).tag(icon)
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionHeader(NSLocalizedString("Icon", comment: "Spaces settings - icon section header"))
+                        SettingsDetailCard {
+                            IconPicker(
+                                selected: IconPickerSelection.fromStorageValue(space.iconName),
+                                showsGroups: true,
+                                onSelect: { selection in
+                                    spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
                                 }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                        }
-                        SettingsRowDivider()
-                        SettingsDetailRow(NSLocalizedString("Theme", comment: "Spaces settings - theme row label")) {
-                            themeControl(space.spaceId)
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                         }
                     }
 
-                    SettingsDetailCard {
-                        SettingsDetailRow(NSLocalizedString("Profile", comment: "Spaces settings - profile row label")) {
-                            Picker("", selection: profileBinding(space.spaceId)) {
-                                ForEach(profileManager.profiles, id: \.profileId) { profile in
-                                    Text(profile.displayName).tag(profile.profileId)
-                                }
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionHeader(NSLocalizedString("Theme", comment: "Spaces settings - theme section header"))
+                        SettingsDetailCard {
+                            SettingsDetailRow(NSLocalizedString("Color", comment: "Spaces settings - theme color row label")) {
+                                themeControl(space.spaceId)
                             }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                            .disabled(isDefault)
                         }
                     }
 
@@ -280,17 +293,6 @@ struct SpacesSettingsView: View {
 
     // MARK: - Detail bindings
 
-    private func iconBinding(_ spaceId: String) -> Binding<String> {
-        Binding(
-            get: {
-                let icon = spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.iconName ?? ""
-                return icon.isEmpty ? "rectangle.stack" : icon
-            },
-            set: { newIcon in
-                spaceManager.changeIcon(spaceId: spaceId, iconName: newIcon)
-            }
-        )
-    }
 
     /// Theme dropdown matching the sidebar's right-click "Edit Theme" submenu:
     /// a "Follow Global" entry, a divider, then every theme with its color
@@ -377,15 +379,6 @@ struct SpacesSettingsView: View {
                 changeSpaceProfile(spaceId: spaceId, to: profile)
             }
         )
-    }
-
-    // MARK: - Helpers
-
-    /// "music.note" -> "Music Note". Mirrors the strip's icon labelling.
-    private func prettyIconLabel(_ id: String) -> String {
-        id.split(separator: ".")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
     }
 
     // MARK: - Actions

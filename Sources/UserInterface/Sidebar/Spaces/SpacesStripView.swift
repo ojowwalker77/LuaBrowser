@@ -105,6 +105,10 @@ struct SpacesStripView: View {
     /// bound profile, and keyboard shortcut). Only one pip is hovered at a time.
     @State private var hoveredSpaceId: String?
 
+    /// The pip whose icon/emoji picker is open, presented from its right-click
+    /// "Change Icon…" entry. Only one picker is open at a time.
+    @State private var iconEditSpaceId: String?
+
     /// The Space whose icon + name are currently shown. Lags `slot.activeSpaceId`
     /// by one animated step so the label can scroll the outgoing Space out and
     /// the incoming one in. `scrollEdge` is set just before the animated change
@@ -132,23 +136,6 @@ struct SpacesStripView: View {
         ("#0091FF", "Cyan")
     ]
 
-    /// SF Symbol options exposed in the per-Space "Change Icon" submenu.
-    /// Curated so every entry reads at the row's small icon rendering.
-    static let iconOptions: [String] = [
-        "rectangle.stack",
-        "house",
-        "briefcase",
-        "book",
-        "folder",
-        "graduationcap",
-        "person",
-        "star",
-        "heart",
-        "gamecontroller",
-        "music.note",
-        "leaf"
-    ]
-
     var body: some View {
         // Height is set by the caller (SnapKit constraint in the sidebar,
         // SwiftUI frame in the horizontal toolbar) so the picker can adapt
@@ -162,6 +149,22 @@ struct SpacesStripView: View {
         }
         .padding(.horizontal, Self.horizontalPadding)
         .contentShape(Rectangle())
+        .onChange(of: slot.iconPickerRequestToken) { _ in
+            openActiveIconPicker()
+        }
+    }
+
+    /// Opens the icon/emoji picker for the active Space anchored below its icon —
+    /// the active pip in the sidebar, or the chip's icon in the tab strip — in
+    /// response to the tab-area menu's "Change Icon…" request.
+    private func openActiveIconPicker() {
+        guard let activeId = slot.activeSpaceId else { return }
+        if showsEllipsisAffordance {
+            iconEditSpaceId = activeId
+        } else {
+            isPickerOpen = false
+            isIconPickerOpen = true
+        }
     }
 
     /// Compact tap target for the horizontal tab strip: the active Space's
@@ -169,6 +172,16 @@ struct SpacesStripView: View {
     private var compactChip: some View {
         activeLabel
         .help(NSLocalizedString("Spaces", comment: "Tooltip for the Spaces picker affordance"))
+        .contextMenu {
+            if activeSpace != nil {
+                Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+                    // Drop the picker below the active Space's icon — the same
+                    // popover the icon button opens on click.
+                    isPickerOpen = false
+                    isIconPickerOpen = true
+                }
+            }
+        }
         .popover(isPresented: $isPickerOpen, arrowEdge: .top) {
             pickerPopup
         }
@@ -182,12 +195,6 @@ struct SpacesStripView: View {
     private var activeLabel: some View {
         scrollingLabel
         .contentShape(Rectangle())
-    }
-
-    private func prettyIconLabel(_ id: String) -> String {
-        id.split(separator: ".")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
     }
 
     /// Icon + name that scrolls vertically when the active Space changes: the
@@ -337,25 +344,28 @@ struct SpacesStripView: View {
         return result
     }
 
-    /// A single Space's icon. Tapping switches this window to that Space. Every
-    /// pip renders in the same monochrome style; the active Space stays at full
-    /// strength while the rest dim, so the difference is only brightness — never
-    /// a different icon color or weight.
+    /// A single Space's icon, rendered through `SpaceIconView` so phi-icons,
+    /// emoji, and legacy SF Symbols all display correctly. Tapping switches this
+    /// window to that Space; the active pip stays at full strength while the rest
+    /// dim, so the difference is only brightness — never a different icon style.
     private func spacePip(for space: SpaceModel) -> some View {
         let isActive = space.spaceId == slot.activeSpaceId
         return Button {
             slot.activate(spaceId: space.spaceId)
         } label: {
-            Image(systemName: systemSymbolName(for: space.iconName) ?? "rectangle.stack")
-                .font(.system(size: Self.iconSize, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(Color.primary.opacity(isActive ? 1 : 0.4))
-                .frame(width: 24, height: rowHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isActive ? Color.primary.opacity(0.1) : Color.clear)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+            SpaceIconView(
+                storedValue: space.iconName,
+                size: Self.iconSize,
+                symbolWeight: .semibold,
+                tint: Color.primary
+            )
+            .opacity(isActive ? 1 : 0.4)
+            .frame(width: 24, height: rowHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isActive ? Color.primary.opacity(0.1) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
@@ -369,19 +379,45 @@ struct SpacesStripView: View {
         .popover(isPresented: hoverBinding(for: space), arrowEdge: .top) {
             spaceTooltip(for: space)
         }
+        .popover(isPresented: iconEditBinding(for: space), arrowEdge: .bottom) {
+            IconPicker(
+                selected: IconPickerSelection.fromStorageValue(space.iconName),
+                showsGroups: true,
+                onSelect: { selection in
+                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
+                    iconEditSpaceId = nil
+                }
+            )
+        }
         .contextMenu { pipContextMenu(for: space) }
     }
 
     /// Presents a pip's hover tooltip while it (and only it) is hovered, and
-    /// never during a reorder drag so the card doesn't trail the cursor.
+    /// never during a reorder drag or while its icon picker is open so the card
+    /// doesn't trail the cursor or fight the picker.
     private func hoverBinding(for space: SpaceModel) -> Binding<Bool> {
         Binding(
-            get: { hoveredSpaceId == space.spaceId && stripDraggingId == nil },
+            get: { hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil },
             set: { presented in
                 if presented {
                     hoveredSpaceId = space.spaceId
                 } else if hoveredSpaceId == space.spaceId {
                     hoveredSpaceId = nil
+                }
+            }
+        )
+    }
+
+    /// Presents the icon/emoji picker anchored to a pip when its right-click
+    /// "Change Icon…" entry has targeted that Space.
+    private func iconEditBinding(for space: SpaceModel) -> Binding<Bool> {
+        Binding(
+            get: { iconEditSpaceId == space.spaceId },
+            set: { presented in
+                if presented {
+                    iconEditSpaceId = space.spaceId
+                } else if iconEditSpaceId == space.spaceId {
+                    iconEditSpaceId = nil
                 }
             }
         )
@@ -399,8 +435,12 @@ struct SpacesStripView: View {
                 .lineLimit(1)
 
             HStack(spacing: 5) {
-                Image(systemName: systemSymbolName(for: space.iconName) ?? "rectangle.stack")
-                    .font(.system(size: 11, weight: .semibold))
+                SpaceIconView(
+                    storedValue: space.iconName,
+                    size: 11,
+                    symbolWeight: .semibold,
+                    tint: iconColor(for: space)
+                )
                 Text(space.name)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
@@ -482,14 +522,8 @@ struct SpacesStripView: View {
     @ViewBuilder
     private func pipContextMenu(for space: SpaceModel) -> some View {
         Button(NSLocalizedString("Rename\u{2026}", comment: "")) { promptRename(for: space) }
-        Menu(NSLocalizedString("Change Icon", comment: "")) {
-            ForEach(Self.iconOptions, id: \.self) { icon in
-                Button {
-                    manager.changeIcon(spaceId: space.spaceId, iconName: icon)
-                } label: {
-                    Label(prettyIconLabel(icon), systemImage: icon)
-                }
-            }
+        Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+            iconEditSpaceId = space.spaceId
         }
         Menu(NSLocalizedString("Change Theme", comment: "")) {
             Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeBinding(for: space)) {
@@ -774,6 +808,7 @@ private struct SpacePickerRow: View {
     let onDelete: () -> Void
 
     @State private var isHovering: Bool = false
+    @State private var showsIconPicker: Bool = false
 
     /// Drives the Change-Theme picker: nil = Follow Global, else a pinned id.
     private var themeSelection: Binding<String?> {
@@ -814,16 +849,20 @@ private struct SpacePickerRow: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .popover(isPresented: $showsIconPicker, arrowEdge: .trailing) {
+            IconPicker(
+                selected: IconPickerSelection.fromStorageValue(space.iconName),
+                showsGroups: true,
+                onSelect: { selection in
+                    showsIconPicker = false
+                    onChangeIcon(selection.storageValue)
+                }
+            )
+        }
         .contextMenu {
             Button(NSLocalizedString("Rename\u{2026}", comment: "")) { onRename() }
-            Menu(NSLocalizedString("Change Icon", comment: "")) {
-                ForEach(SpacesStripView.iconOptions, id: \.self) { icon in
-                    Button {
-                        onChangeIcon(icon)
-                    } label: {
-                        Label(prettyIconLabel(icon), systemImage: icon)
-                    }
-                }
+            Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+                showsIconPicker = true
             }
             Menu(NSLocalizedString("Change Theme", comment: "")) {
                 Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
@@ -875,15 +914,9 @@ private struct SpacePickerRow: View {
             Color.clear
         }
     }
-
-    private func prettyIconLabel(_ id: String) -> String {
-        id.split(separator: ".")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
 }
 
-private struct SpaceIconView: View {
+struct SpaceIconView: View {
     let storedValue: String?
     let size: CGFloat
     let symbolWeight: Font.Weight

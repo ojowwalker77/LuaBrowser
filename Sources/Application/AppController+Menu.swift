@@ -33,7 +33,6 @@ extension AppController {
     static let spacesMenuItemTag = 500018
     static let spacesNewSpaceItemTag = 500030
     static let spacesRenameItemTag = 500031
-    static let spacesChangeIconParentTag = 500032
     static let spacesChangeThemeParentTag = 500033
     static let spacesNextItemTag = 500034
     static let spacesPreviousItemTag = 500035
@@ -896,13 +895,13 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconParent = NSMenuItem(
-            title: NSLocalizedString("Change Icon", comment: "Spaces menu - Submenu to change the active Space's icon"),
-            action: nil,
+        let changeIconItem = NSMenuItem(
+            title: NSLocalizedString("Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
+            action: #selector(requestActiveSpaceIconPicker(_:)),
             keyEquivalent: ""
         )
-        changeIconParent.submenu = makeSpacesIconSubmenu(for: activeSpace)
-        menu.addItem(changeIconParent)
+        changeIconItem.target = self
+        menu.addItem(changeIconItem)
 
         let editThemeParent = NSMenuItem(
             title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
@@ -963,14 +962,13 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconParent = NSMenuItem(
-            title: NSLocalizedString("Change Icon", comment: "Spaces menu - Submenu to change the active Space's icon"),
-            action: nil,
+        let changeIconItem = NSMenuItem(
+            title: NSLocalizedString("Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
+            action: #selector(requestActiveSpaceIconPicker(_:)),
             keyEquivalent: ""
         )
-        changeIconParent.tag = AppController.spacesChangeIconParentTag
-        changeIconParent.submenu = makeSpacesIconSubmenu(for: activeSpace)
-        menu.addItem(changeIconParent)
+        changeIconItem.target = self
+        menu.addItem(changeIconItem)
 
         let editThemeParent = NSMenuItem(
             title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
@@ -1081,23 +1079,6 @@ extension AppController {
         rebuildDeleteProfileSubmenu(deleteSubmenu)
     }
 
-    private func makeSpacesIconSubmenu(for space: SpaceModel?) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("Change Icon", comment: "Spaces menu - Submenu to change the active Space's icon"))
-        let activeIconName = space?.iconName
-        for icon in SpacesStripView.iconOptions {
-            let item = NSMenuItem(
-                title: prettySpaceIconLabel(icon),
-                action: #selector(selectSpaceIcon(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = icon
-            item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
-            item.state = (icon == activeIconName) ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
 
     private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"))
@@ -1148,12 +1129,6 @@ extension AppController {
             menu.addItem(item)
         }
         return menu
-    }
-
-    private func prettySpaceIconLabel(_ id: String) -> String {
-        id.split(separator: ".")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
     }
 
     /// Slot the menu actions should target. Prefers the controller that's
@@ -1210,11 +1185,12 @@ extension AppController {
         SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed)
     }
 
-    @objc func selectSpaceIcon(_ sender: Any?) {
-        guard let menuItem = sender as? NSMenuItem,
-              let iconName = menuItem.representedObject as? String,
-              let space = currentActiveSpace() else { return }
-        SpaceManager.shared.changeIcon(spaceId: space.spaceId, iconName: iconName)
+    /// Opens the icon/emoji picker for the active Space, anchored below its icon
+    /// in whichever Spaces strip is on screen (the sidebar's active pip or the
+    /// tab strip's chip). Routed through the window's slot because an NSMenu item
+    /// has no view of its own to anchor a SwiftUI popover to.
+    @objc func requestActiveSpaceIconPicker(_ sender: Any?) {
+        currentSpacesSlot()?.requestIconPicker()
     }
 
     @objc func selectSpaceTheme(_ sender: Any?) {
@@ -1486,7 +1462,7 @@ extension AppController {
         let spacesActions: [Selector] = [
             #selector(newSpaceFromMenu(_:)),
             #selector(renameActiveSpace(_:)),
-            #selector(selectSpaceIcon(_:)),
+            #selector(requestActiveSpaceIconPicker(_:)),
             #selector(selectSpaceTheme(_:)),
             #selector(selectSpaceProfile(_:)),
             #selector(deleteActiveSpace(_:)),
@@ -1497,7 +1473,7 @@ extension AppController {
         ]
         if let action = item.action, spacesActions.contains(action) {
             guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
-            if action == #selector(renameActiveSpace(_:)) || action == #selector(selectSpaceIcon(_:)) {
+            if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
                 return currentActiveSpace() != nil
             }
             if action == #selector(deleteActiveSpace(_:)) {

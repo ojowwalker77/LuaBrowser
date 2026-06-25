@@ -1298,6 +1298,15 @@ final class SpaceWindowSlot: ObservableObject {
 
     @Published private(set) var activeSpaceId: String?
 
+    /// Bumped to ask this window's Spaces strip to open the icon/emoji picker for
+    /// the active Space, anchored below its icon. Driven by the tab-area menu's
+    /// "Change Icon…" item, which has no view of its own to anchor a popover.
+    @Published var iconPickerRequestToken: Int = 0
+
+    func requestIconPicker() {
+        iconPickerRequestToken &+= 1
+    }
+
     /// spaceId → controller dedicated to this slot for that Space.
     /// Populated lazily by `activate`'s spawn path and `registerWindow`.
     private(set) var windowsBySpaceId: [String: MainBrowserWindowController] = [:]
