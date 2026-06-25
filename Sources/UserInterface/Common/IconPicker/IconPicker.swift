@@ -26,14 +26,16 @@ struct IconPicker: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: IconPickerMetrics.segmentToGridSpacing) {
             Picker("", selection: $selectedTab) {
                 Text("Icon").tag(IconPickerTab.icon)
                 Text("Emoji").tag(IconPickerTab.emoji)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 220)
+            .themedTint(.themeColor)
+            .controlSize(.small)
+            .frame(width: IconPickerMetrics.segmentWidth, height: IconPickerMetrics.segmentHeight)
 
             switch selectedTab {
             case .icon:
@@ -42,8 +44,8 @@ struct IconPicker: View {
                 emojiGrid
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.top, IconPickerMetrics.topPadding)
+        .padding(.bottom, IconPickerMetrics.bottomPadding)
         .frame(width: IconPickerMetrics.width, height: IconPickerMetrics.height)
     }
 
@@ -60,12 +62,14 @@ struct IconPicker: View {
                             .resizable()
                             .renderingMode(.original)
                             .scaledToFit()
-                            .frame(width: 20, height: 20)
+                            .frame(width: IconPickerMetrics.iconSize, height: IconPickerMetrics.iconSize)
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
+            .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
         }
+        .frame(height: IconPickerMetrics.gridHeight)
     }
 
     private var emojiGrid: some View {
@@ -79,8 +83,10 @@ struct IconPicker: View {
                     emojiItemsGrid(emojiCatalog.allItems)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
+            .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
         }
+        .frame(height: IconPickerMetrics.gridHeight)
     }
 
     private func emojiGroup(_ group: EmojiCatalog.Group) -> some View {
@@ -137,12 +143,25 @@ private enum IconPickerTab: Hashable {
 }
 
 private enum IconPickerMetrics {
-    static let width: CGFloat = 380
-    static let height: CGFloat = 420
-    static let itemSize: CGFloat = 34
-    static let rowSpacing: CGFloat = 10
+    static let width: CGFloat = 262
+    static let height: CGFloat = 256
+    static let topPadding: CGFloat = 12
+    static let bottomPadding: CGFloat = 12
+    static let segmentWidth: CGFloat = 128
+    static let segmentHeight: CGFloat = 26
+    static let segmentToGridSpacing: CGFloat = 4
+    static let gridHeight: CGFloat = 202
+    static let gridHorizontalPadding: CGFloat = 13
+    static let gridVerticalPadding: CGFloat = 13
+    static let itemSize: CGFloat = 26
+    static let iconSize: CGFloat = 16
+    static let emojiFontSize: CGFloat = 16
+    static let skinVariantEmojiFontSize: CGFloat = 16
+    static let emojiVerticalOffset: CGFloat = -1
+    static let itemCornerRadius: CGFloat = 8
+    static let rowSpacing: CGFloat = 4
     static let columns = Array(
-        repeating: GridItem(.fixed(itemSize), spacing: 8),
+        repeating: GridItem(.fixed(itemSize), spacing: 4),
         count: 8
     )
 }
@@ -153,6 +172,8 @@ private struct IconPickerGridButton<Content: View>: View {
     let action: () -> Void
     let content: () -> Content
 
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
     @State private var isHovering = false
 
     init(isSelected: Bool,
@@ -170,8 +191,7 @@ private struct IconPickerGridButton<Content: View>: View {
             content()
                 .frame(width: IconPickerMetrics.itemSize, height: IconPickerMetrics.itemSize)
                 .background(background)
-                .overlay(selectionRing)
-                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: IconPickerMetrics.itemCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(help)
@@ -182,20 +202,13 @@ private struct IconPickerGridButton<Content: View>: View {
 
     @ViewBuilder
     private var background: some View {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
+        let hoverColor = ThemedColor.themeColorOnHover.swiftUIColor(theme: theme, appearance: appearance)
+
+        RoundedRectangle(cornerRadius: IconPickerMetrics.itemCornerRadius, style: .continuous)
             .fill(
                 isSelected
-                    ? Color.accentColor.opacity(0.18)
-                    : (isHovering ? Color.primary.opacity(0.08) : Color.clear)
-            )
-    }
-
-    @ViewBuilder
-    private var selectionRing: some View {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .strokeBorder(
-                isSelected ? Color.accentColor.opacity(0.85) : Color.clear,
-                lineWidth: 1.5
+                    ? hoverColor.opacity(0.4)
+                    : (isHovering ? hoverColor.opacity(0.24) : Color.clear)
             )
     }
 }
@@ -219,8 +232,8 @@ private struct EmojiPickerGridButton: View {
             action: selectOrShowSkinPicker
         ) {
             Text(item.text)
-                .font(.system(size: 23))
-                .frame(width: IconPickerMetrics.itemSize, height: IconPickerMetrics.itemSize)
+                .font(.system(size: IconPickerMetrics.emojiFontSize))
+                .offset(y: IconPickerMetrics.emojiVerticalOffset)
         }
         .popover(isPresented: $showsSkinPicker, arrowEdge: .top) {
             EmojiSkinVariantPicker(
@@ -261,8 +274,8 @@ private struct EmojiSkinVariantPicker: View {
                     action: { onSelect(.emoji(id: option.id, text: option.text)) }
                 ) {
                     Text(option.text)
-                        .font(.system(size: 24))
-                        .frame(width: IconPickerMetrics.itemSize, height: IconPickerMetrics.itemSize)
+                        .font(.system(size: IconPickerMetrics.skinVariantEmojiFontSize))
+                        .offset(y: IconPickerMetrics.emojiVerticalOffset)
                 }
             }
         }

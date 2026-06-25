@@ -148,6 +148,9 @@
     "%d min ago" : {
       "comment" : "Download item row - Relative time showing minutes since download completed"
     },
+    "%d Spaces" : {
+      "comment" : "Profiles settings - Count of Spaces bound to a profile"
+    },
     "%lld/%lld" : {
       "localizations" : {
         "en" : {
@@ -378,11 +381,23 @@
     "Checking for updates..." : {
       "comment" : "Phi menu - Menu item text while checking for updates"
     },
+    "Choose" : {
+      "comment" : "Profiles settings - download folder picker confirm button"
+    },
+    "Choose a download location for this profile." : {
+      "comment" : "Profiles settings - download folder picker message"
+    },
     "Choose Files" : {
       "comment" : "Feedback form - Button to open file picker for attachments"
     },
+    "Choose…" : {
+      "comment" : "Profiles settings - download location not set"
+    },
     "Chromium Engine Version %@" : {
       "comment" : "About window - Chromium engine version label"
+    },
+    "Clear Browsing Data" : {
+      "comment" : "Profiles settings - data link to clear browsing data"
     },
     "Clear Cache" : {
       "comment" : "Address bar menu - Settings submenu item to clear cache\nExtension list - Website settings item to clear cache"
@@ -498,6 +513,9 @@
     "Couldn't delete profile" : {
       "comment" : "Title of the profile-delete error"
     },
+    "Couldn't rename profile" : {
+      "comment" : "Title of the profile-rename error"
+    },
     "Crash Samples" : {
 
     },
@@ -512,6 +530,9 @@
     },
     "Create Space" : {
       "comment" : "Confirm button in the create-Space panel"
+    },
+    "Credit Cards" : {
+      "comment" : "Profiles settings - data link to payment methods"
     },
     "Current" : {
       "comment" : "Marks the Space the user is currently in, in the ask-Space list"
@@ -539,6 +560,12 @@
     },
     "Delete profile “%@”?" : {
       "comment" : "Title of the delete-profile confirmation"
+    },
+    "Delete selected profile" : {
+      "comment" : "Profiles settings - delete profile tooltip"
+    },
+    "Delete selected Space" : {
+      "comment" : "Spaces settings - delete Space tooltip"
     },
     "Delete Space…" : {
       "comment" : "Spaces menu - Delete the active Space"
@@ -569,6 +596,9 @@
     },
     "Download image" : {
       "comment" : "Account settings - Button to download profile card as image"
+    },
+    "Download location" : {
+      "comment" : "Profiles settings - download location row label"
     },
     "Download Test Controls" : {
 
@@ -660,6 +690,9 @@
     "Enter a name for the new profile. Each profile has its own cookies, history, and extensions." : {
       "comment" : "Body of the create-profile dialog"
     },
+    "Enter a new name for this profile." : {
+      "comment" : "Body of the rename-profile dialog"
+    },
     "Enter a new name for this Space." : {
       "comment" : "Body of the rename-Space dialog"
     },
@@ -733,7 +766,7 @@
       "comment" : "Folder editor - Placeholder for folder name input\nNew folder dialog input placeholder"
     },
     "Follow Global" : {
-      "comment" : "Spaces menu - Theme submenu entry that clears the per-Space override\nTheme menu: clear per-Space override"
+      "comment" : "Spaces menu - Theme submenu entry that clears the per-Space override\nSpaces settings - theme entry that clears the per-Space override\nSpaces settings - theme follows global label\nTheme menu: clear per-Space override"
     },
     "Forward" : {
       "comment" : "Web content header - Accessibility description for forward navigation button"
@@ -793,7 +826,7 @@
       "comment" : "Onboarding password manager - iCloud Passwords option"
     },
     "Icon" : {
-
+      "comment" : "Spaces settings - icon row label"
     },
     "Image file not found" : {
       "comment" : "Image preview error"
@@ -972,11 +1005,17 @@
     "New Nested Folder..." : {
       "comment" : "Bookmark New Folder menu item"
     },
+    "New profile" : {
+      "comment" : "Profiles settings - new profile tooltip"
+    },
     "New Profile" : {
       "comment" : "Title of the create-profile dialog"
     },
     "New Profile…" : {
       "comment" : "Profile picker item to create a new profile\nSpaces menu - Create a new browser profile"
+    },
+    "New Space" : {
+      "comment" : "Spaces settings - new Space tooltip"
     },
     "New Space…" : {
       "comment" : "Spaces menu - Create a new Space"
@@ -1062,6 +1101,12 @@
     "Not linked" : {
       "comment" : "Phi Link - Official bot not linked status"
     },
+    "Not used" : {
+      "comment" : "Profiles settings - tag for a profile with no Spaces"
+    },
+    "Notifications" : {
+      "comment" : "Profiles settings - data link to notification settings"
+    },
     "Official Phi Link Telegram bot" : {
       "comment" : "Phi Link - Official Bot title"
     },
@@ -1100,6 +1145,9 @@
     },
     "Orange" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
+    },
+    "Passwords" : {
+      "comment" : "Profiles settings - data link to password manager"
     },
     "Passwords Manager" : {
       "comment" : "Onboarding password manager - Page title"
@@ -1197,11 +1245,17 @@
     "Previous Space" : {
       "comment" : "Spaces menu - Activate the previous Space in the strip"
     },
+    "Privacy and Security" : {
+      "comment" : "Profiles settings - data link to privacy settings"
+    },
     "Profile" : {
-      "comment" : "Label for the profile picker in the create-Space panel"
+      "comment" : "Label for the profile picker in the create-Space panel\nSpaces settings - profile row label"
     },
     "Profile name" : {
       "comment" : "Placeholder for the profile-name field"
+    },
+    "Profiles" : {
+      "comment" : "Settings - Tab title for profiles management"
     },
     "Pure" : {
       "comment" : "Pure theme name"
@@ -1265,6 +1319,15 @@
     },
     "Rename Group" : {
       "comment" : "Tab group context menu - Rename the group\nTab group rename alert - Title"
+    },
+    "Rename Profile" : {
+      "comment" : "Title of the rename-profile dialog"
+    },
+    "Rename selected profile" : {
+      "comment" : "Profiles settings - rename profile tooltip"
+    },
+    "Rename selected Space" : {
+      "comment" : "Spaces settings - rename Space tooltip"
     },
     "Rename Space" : {
       "comment" : "Title of the rename-Space dialog"
@@ -1341,11 +1404,20 @@
     "Search" : {
       "comment" : "Omnibox - Accessibility description for search icon"
     },
+    "Search engine" : {
+      "comment" : "Profiles settings - search engine row label"
+    },
     "Search or Enter URL" : {
       "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"
     },
     "Search Tabs" : {
       "comment" : "Search Tabs - Button tooltip and accessibility label\nSearch Tabs - Placeholder text for the native tab search field"
+    },
+    "Select a profile to view its settings." : {
+      "comment" : "Profiles settings - empty detail placeholder"
+    },
+    "Select a Space to view its settings." : {
+      "comment" : "Spaces settings - empty detail placeholder"
     },
     "Select Phi User Data Backup" : {
       "comment" : "Debug import user data - NSOpenPanel title for choosing a Phi user data zip"
@@ -1420,7 +1492,7 @@
       "comment" : "Placeholder for the Space-name field"
     },
     "Spaces" : {
-      "comment" : "Main menu - Top-level Spaces menu title in the application menu bar\nTooltip for the Spaces picker affordance"
+      "comment" : "Main menu - Top-level Spaces menu title in the application menu bar\nSettings - Tab title for profiles and spaces management\nTooltip for the Spaces picker affordance"
     },
     "Split with" : {
       "comment" : "Search Tabs - Prefix for the split partner shown in a result row"
@@ -1449,6 +1521,9 @@
     "Tab Name" : {
       "comment" : "Pinned tab editor - Placeholder for pinned tab name input"
     },
+    "Target Space unavailable" : {
+      "comment" : "URL rule target whose Space no longer exists"
+    },
     "Telegram" : {
       "comment" : "Phi Link - Section title"
     },
@@ -1461,6 +1536,9 @@
     "The connector authorization URL is invalid." : {
       "comment" : "AI settings - OAuth authorization URL error"
     },
+    "The default Space can't be moved to another profile or deleted." : {
+      "comment" : "Spaces settings - default Space limits note"
+    },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
     },
@@ -1471,7 +1549,7 @@
       "comment" : "Help menu - Time Machine restore error when a selected backup disappears"
     },
     "Theme" : {
-      "comment" : "General settings - Theme section title"
+      "comment" : "General settings - Theme section title\nSpaces settings - theme row label"
     },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
@@ -1515,6 +1593,9 @@
     "Unable to open connector authorization." : {
       "comment" : "AI settings - OAuth authorization open error"
     },
+    "Unavailable" : {
+      "comment" : "Profiles settings - search engine list unavailable"
+    },
     "Ungroup" : {
       "comment" : "Tab group context menu - Dissolve the group, keeping the tabs"
     },
@@ -1522,7 +1603,7 @@
       "comment" : "Address bar menu - Website security unknown\nWebsite security unknown"
     },
     "Unknown error" : {
-      "comment" : "Fallback profile-delete error reason"
+      "comment" : "Fallback profile-delete error reason\nFallback profile-rename error reason"
     },
     "Unlink" : {
       "comment" : "Phi Link - Official bot unlink button"
@@ -1634,8 +1715,17 @@
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
     },
+    "Your Data and Settings" : {
+      "comment" : "Profiles settings - data & settings section header"
+    },
     "Your Phi session has expired. Please sign in again, then retry Phi Link." : {
       "comment" : "Phi Link - Message shown when phi-agent returns 401 unauthorized"
+    },
+    "Your Profiles" : {
+      "comment" : "Profiles settings - list header"
+    },
+    "Your Spaces" : {
+      "comment" : "Spaces settings - list header"
     },
     "Zoom in" : {
       "comment" : "Image preview: accessibility label for zoom in control"

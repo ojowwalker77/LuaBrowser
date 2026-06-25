@@ -91,6 +91,7 @@ struct SpacesStripView: View {
     @Environment(\.phiAppearance) private var windowAppearance: Appearance
 
     @State private var isPickerOpen: Bool = false
+    @State private var isIconPickerOpen: Bool = false
 
     /// The Space whose icon + name are currently shown. Lags `slot.activeSpaceId`
     /// by one animated step so the label can scroll the outgoing Space out and
@@ -105,6 +106,7 @@ struct SpacesStripView: View {
     static let sidebarHeight: CGFloat = 24
     private static let horizontalPadding: CGFloat = 10
     private static let iconSize: CGFloat = 14
+    private static let iconHitSize: CGFloat = 22
 
     /// Preset palette used for new-Space creation. Ordered so successive new
     /// Spaces are visually distinct without forcing the user into a color
@@ -155,14 +157,9 @@ struct SpacesStripView: View {
     }
 
     /// Compact tap target for the horizontal tab strip: the active Space's
-    /// icon + name with no trailing ellipsis, opening the picker on click.
+    /// icon opens the icon picker; the name opens the Space picker.
     private var compactChip: some View {
-        Button {
-            isPickerOpen.toggle()
-        } label: {
-            activeLabel
-        }
-        .buttonStyle(.plain)
+        activeLabel
         .help(NSLocalizedString("Spaces", comment: "Tooltip for the Spaces picker affordance"))
         .popover(isPresented: $isPickerOpen, arrowEdge: .top) {
             pickerPopup
@@ -225,33 +222,71 @@ struct SpacesStripView: View {
 
     private func label(for space: SpaceModel?) -> some View {
         HStack(spacing: 6) {
-            icon(for: space)
+            iconButton(for: space)
             name(for: space)
         }
     }
 
-    @ViewBuilder
-    private func icon(for space: SpaceModel?) -> some View {
-        if let space, let symbol = systemSymbolName(for: space.iconName) {
-            Image(systemName: symbol)
-                .font(.system(size: Self.iconSize, weight: .semibold))
-                .foregroundStyle(iconColor(for: space))
-        } else {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: Self.iconSize, weight: .semibold))
-                .foregroundStyle(Color.secondary)
+    private func iconButton(for space: SpaceModel?) -> some View {
+        Button {
+            guard space != nil else { return }
+            isPickerOpen = false
+            isIconPickerOpen.toggle()
+        } label: {
+            SpaceIconView(
+                storedValue: space?.iconName,
+                size: Self.iconSize,
+                symbolWeight: .semibold,
+                tint: space.map(iconColor(for:)) ?? Color.secondary
+            )
+            .frame(width: Self.iconHitSize, height: Self.iconHitSize)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(space == nil)
+        .help(NSLocalizedString("Change Icon", comment: "Spaces menu - Submenu to change the active Space's icon"))
+        .popover(isPresented: $isIconPickerOpen, arrowEdge: .bottom) {
+            iconPicker(for: space)
         }
     }
 
+    @ViewBuilder
+    private func iconPicker(for space: SpaceModel?) -> some View {
+        if let space {
+            IconPicker(
+                selected: IconPickerSelection.fromStorageValue(space.iconName),
+                showsGroups: false,
+                onSelect: { selection in
+                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
+                    isIconPickerOpen = false
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
     private func name(for space: SpaceModel?) -> some View {
-        Text(space?.name ?? NSLocalizedString("No Space", comment: "Active-Space header fallback when no Space is selected"))
+        let name = Text(space?.name ?? NSLocalizedString("No Space", comment: "Active-Space header fallback when no Space is selected"))
             .font(.system(size: 13, weight: .medium))
             .lineLimit(1)
             .truncationMode(.tail)
+
+        if showsEllipsisAffordance {
+            name
+        } else {
+            Button {
+                isIconPickerOpen = false
+                isPickerOpen.toggle()
+            } label: {
+                name
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private var ellipsisButton: some View {
         Button {
+            isIconPickerOpen = false
             isPickerOpen.toggle()
         } label: {
             Image(systemName: "ellipsis")
@@ -520,17 +555,13 @@ private struct SpacePickerRow: View {
     var body: some View {
         Button(action: onActivate) {
             HStack(spacing: 8) {
-                if let symbol = systemSymbolName(for: space.iconName) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isActive ? Color.white : tint)
-                        .frame(width: 16)
-                } else {
-                    Image(systemName: "rectangle.stack")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isActive ? Color.white : tint)
-                        .frame(width: 16)
-                }
+                SpaceIconView(
+                    storedValue: space.iconName,
+                    size: 13,
+                    symbolWeight: .semibold,
+                    tint: isActive ? Color.white : tint
+                )
+                .frame(width: 16)
                 Text(space.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .regular))
                     .lineLimit(1)
@@ -621,9 +652,52 @@ private struct SpacePickerRow: View {
     }
 }
 
-/// SpaceModel.iconName is stored as an SF Symbol id (e.g. "rectangle.stack").
-/// Resolved at view time so future themes / icon packs can intercept here
-/// rather than at the persistence layer.
+private struct SpaceIconView: View {
+    let storedValue: String?
+    let size: CGFloat
+    let symbolWeight: Font.Weight
+    let tint: Color
+
+    private var storedIconValue: String {
+        guard let storedValue, !storedValue.isEmpty else { return "rectangle.stack" }
+        return storedValue
+    }
+
+    var body: some View {
+        if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
+            switch selection {
+            case .phiIcon:
+                IconPickerSelectionView(selection: selection, size: size)
+            case .emoji(_, let text):
+                Text(text)
+                    .font(.system(size: emojiFontSize))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(width: emojiFrameSize.width, height: emojiFrameSize.height)
+            }
+        } else if let symbol = systemSymbolName(for: storedIconValue) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: symbolWeight))
+                .foregroundStyle(tint)
+        } else {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: size, weight: symbolWeight))
+                .foregroundStyle(tint)
+        }
+    }
+
+    private var emojiFontSize: CGFloat {
+        size + 1
+    }
+
+    private var emojiFrameSize: CGSize {
+        CGSize(width: size + 4, height: size + 8)
+    }
+}
+
+/// SpaceModel.iconName may be either an IconPicker storage value or the legacy
+/// SF Symbol id (e.g. "rectangle.stack"). Legacy symbols are resolved at view
+/// time so old rows keep rendering without a data migration.
 private func systemSymbolName(for stored: String) -> String? {
     stored.isEmpty ? nil : stored
 }
