@@ -112,6 +112,17 @@ enum CommandWrapper: Int, Equatable {
     case PHI_TAB_SWITCHER_FORWARD    = 90002
     case PHI_TAB_SWITCHER_BACKWARD   = 90003
     case PHI_NEW_CONVERSATION        = 90004
+    case PHI_SELECT_NEXT_SPACE       = 90005
+    case PHI_SELECT_PREVIOUS_SPACE   = 90006
+    case PHI_SELECT_SPACE_0          = 90010
+    case PHI_SELECT_SPACE_1          = 90011
+    case PHI_SELECT_SPACE_2          = 90012
+    case PHI_SELECT_SPACE_3          = 90013
+    case PHI_SELECT_SPACE_4          = 90014
+    case PHI_SELECT_SPACE_5          = 90015
+    case PHI_SELECT_SPACE_6          = 90016
+    case PHI_SELECT_SPACE_7          = 90017
+    case PHI_SELECT_SPACE_8          = 90018
     
     // System Preserved
     case IDS_HIDE_OTHERS_MAC         = 110
@@ -219,6 +230,17 @@ extension Shortcuts {
         .PHI_TAB_SWITCHER_FORWARD: .init(characters: "\t", modifiers: .control),
         .PHI_TAB_SWITCHER_BACKWARD: .init(characters: "\t", modifiers: [.control, .shift]),
         .PHI_NEW_CONVERSATION: .init(characters: "o", modifiers: [.command, .shift]),
+        .PHI_SELECT_NEXT_SPACE: .init(characters: "\u{F703}", modifiers: [.command, .option]),
+        .PHI_SELECT_PREVIOUS_SPACE: .init(characters: "\u{F702}", modifiers: [.command, .option]),
+        .PHI_SELECT_SPACE_0: .init(characters: "1", modifiers: .control),
+        .PHI_SELECT_SPACE_1: .init(characters: "2", modifiers: .control),
+        .PHI_SELECT_SPACE_2: .init(characters: "3", modifiers: .control),
+        .PHI_SELECT_SPACE_3: .init(characters: "4", modifiers: .control),
+        .PHI_SELECT_SPACE_4: .init(characters: "5", modifiers: .control),
+        .PHI_SELECT_SPACE_5: .init(characters: "6", modifiers: .control),
+        .PHI_SELECT_SPACE_6: .init(characters: "7", modifiers: .control),
+        .PHI_SELECT_SPACE_7: .init(characters: "8", modifiers: .control),
+        .PHI_SELECT_SPACE_8: .init(characters: "9", modifiers: .control),
         
         // System Preserved Shortcuts
         .IDS_HIDE_OTHERS_MAC: .init(characters: "h", modifiers: [.command, .option]),

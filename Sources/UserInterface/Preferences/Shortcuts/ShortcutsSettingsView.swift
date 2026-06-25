@@ -21,7 +21,7 @@ struct ShortcutsSettingsView: View {
             let filteredItems = section.items.filter { item in
                 item.name.lowercased().contains(query) ||
                 item.shortcutDisplay.lowercased().contains(query) ||
-                item.command.searchKeywords.contains(where: { $0.contains(query) })
+                item.searchKeywords.contains(where: { $0.contains(query) })
             }
             
             return filteredItems.isEmpty ? nil : (category: section.category, items: filteredItems)
@@ -227,7 +227,7 @@ struct ShortcutRowView: View {
                     .frame(height: 16)
                 
                 if item.hasConflict {
-                    Text(String(format: NSLocalizedString("Conflicts with: %@", comment: "Shortcuts settings - Warning text showing conflicting shortcuts"), item.conflictingCommands.map { $0.displayName }.joined(separator: ", ")))
+                    Text(String(format: NSLocalizedString("Conflicts with: %@", comment: "Shortcuts settings - Warning text showing conflicting shortcuts"), item.conflictingCommandNames.joined(separator: ", ")))
                         .font(.system(size: 11))
                         .foregroundColor(.yellow)
                 }

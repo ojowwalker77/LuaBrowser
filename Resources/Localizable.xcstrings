@@ -158,6 +158,9 @@
         }
       }
     },
+    "•" : {
+
+    },
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
@@ -752,6 +755,9 @@
     },
     "Go back and try again" : {
       "comment" : "Retry link text shown when login fails in onboarding"
+    },
+    "Go to Space \"%@\"" : {
+      "comment" : "Shortcuts settings - Command title to activate the Space at this position"
     },
     "Go to the browser to complete log in" : {
       "comment" : "Waiting view title shown during login process in onboarding"

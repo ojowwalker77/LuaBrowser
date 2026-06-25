@@ -38,6 +38,7 @@ extension Shortcuts {
         case bookmarks = "Bookmarks"
         case window = "Window"
         case tab = "Tab"
+        case spaces = "Spaces"
         case help = "Help"
         
         var title: String { rawValue }
@@ -108,6 +109,9 @@ extension Shortcuts {
 //                        .IDC_WINDOW_CLOSE_TABS_TO_RIGHT,
 //                        .IDC_MOVE_TAB_TO_NEW_WINDOW,
                         .IDC_TAB_SEARCH]
+            case .spaces:
+                return [.PHI_SELECT_NEXT_SPACE,
+                        .PHI_SELECT_PREVIOUS_SPACE] + CommandWrapper.spaceSelectionCommands
 //            case .help:
 //                return [.IDC_FEEDBACK,
 //                        .IDC_HELP_PAGE_VIA_MENU]
@@ -265,6 +269,14 @@ extension ShortcutsKey {
             characterSymbol = "↩︎"
         case "\u{1B}":
             characterSymbol = "⎋"
+        case "\u{F700}":
+            characterSymbol = "↑"
+        case "\u{F701}":
+            characterSymbol = "↓"
+        case "\u{F702}":
+            characterSymbol = "←"
+        case "\u{F703}":
+            characterSymbol = "→"
         default:
             if characters.count == 1 {
                 characterSymbol = characters.uppercased()
@@ -326,6 +338,17 @@ extension CommandWrapper {
         .PHI_TAB_SWITCHER_FORWARD: .init(title: "Show Tab Switcher", keywords: ["tab switcher", "forward"]),
         .PHI_TAB_SWITCHER_BACKWARD: .init(title: "Show Tab Switcher(Reverse)", keywords: ["tab switcher", "backward"]),
         .PHI_NEW_CONVERSATION: .init(title: "New Conversation", keywords: ["new conversation", "new chat", "ai", "chat"]),
+        .PHI_SELECT_NEXT_SPACE: .init(title: "Next Space", keywords: ["space", "next space", "forward"]),
+        .PHI_SELECT_PREVIOUS_SPACE: .init(title: "Previous Space", keywords: ["space", "previous space", "backward"]),
+        .PHI_SELECT_SPACE_0: .init(title: "Go to Space 1", keywords: ["space", "space1"]),
+        .PHI_SELECT_SPACE_1: .init(title: "Go to Space 2", keywords: ["space", "space2"]),
+        .PHI_SELECT_SPACE_2: .init(title: "Go to Space 3", keywords: ["space", "space3"]),
+        .PHI_SELECT_SPACE_3: .init(title: "Go to Space 4", keywords: ["space", "space4"]),
+        .PHI_SELECT_SPACE_4: .init(title: "Go to Space 5", keywords: ["space", "space5"]),
+        .PHI_SELECT_SPACE_5: .init(title: "Go to Space 6", keywords: ["space", "space6"]),
+        .PHI_SELECT_SPACE_6: .init(title: "Go to Space 7", keywords: ["space", "space7"]),
+        .PHI_SELECT_SPACE_7: .init(title: "Go to Space 8", keywords: ["space", "space8"]),
+        .PHI_SELECT_SPACE_8: .init(title: "Go to Space 9", keywords: ["space", "space9"]),
         
         .IDS_HIDE_OTHERS_MAC: .init(title: "Hide Others", keywords: []),
         .IDS_CLOSE_ALL_WINDOWS_MAC: .init(title: "Close All", keywords: []),
@@ -390,6 +413,27 @@ extension CommandWrapper {
             }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    static let spaceSelectionCommands: [CommandWrapper] = [
+        .PHI_SELECT_SPACE_0,
+        .PHI_SELECT_SPACE_1,
+        .PHI_SELECT_SPACE_2,
+        .PHI_SELECT_SPACE_3,
+        .PHI_SELECT_SPACE_4,
+        .PHI_SELECT_SPACE_5,
+        .PHI_SELECT_SPACE_6,
+        .PHI_SELECT_SPACE_7,
+        .PHI_SELECT_SPACE_8,
+    ]
+
+    static func spaceSelectionCommand(at index: Int) -> CommandWrapper? {
+        guard spaceSelectionCommands.indices.contains(index) else { return nil }
+        return spaceSelectionCommands[index]
+    }
+
+    var spaceSelectionIndex: Int? {
+        CommandWrapper.spaceSelectionCommands.firstIndex(of: self)
     }
 }
 

@@ -82,13 +82,6 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     func keyEquivalentOverride(forCommand commandId: Int32) -> [String : Any]? {
         let id = Int(commandId)
 
-        // Suppress Chromium's Ctrl+Tab binding for IDC_SELECT_NEXT/PREVIOUS_TAB
-        // because PHI_TAB_SWITCHER_FORWARD/BACKWARD owns those keys now.
-        if id == CommandWrapper.IDC_SELECT_NEXT_TAB.rawValue ||
-           id == CommandWrapper.IDC_SELECT_PREVIOUS_TAB.rawValue {
-            return ["keyEquivalent": "", "modifierFlags": 0]
-        }
-
         guard let state = Shortcuts.overrideState(for: id) else {
             return nil
         }

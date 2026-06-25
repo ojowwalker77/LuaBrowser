@@ -929,6 +929,17 @@ extension AppController {
         menu.addItem(deleteSpaceItem)
     }
 
+    private func applyEffectiveShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
+        item.tag = command.rawValue
+        guard let key = Shortcuts.key(for: command) else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = .init(rawValue: 0)
+            return
+        }
+        item.keyEquivalent = key.characters
+        item.keyEquivalentModifierMask = key.modifiers
+    }
+
     fileprivate func rebuildSpacesMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let activeSpace = currentActiveSpace()
@@ -993,20 +1004,18 @@ extension AppController {
         let nextItem = NSMenuItem(
             title: NSLocalizedString("Next Space", comment: "Spaces menu - Activate the next Space in the strip"),
             action: #selector(activateNextSpace(_:)),
-            keyEquivalent: "\u{F703}"
+            keyEquivalent: ""
         )
-        nextItem.keyEquivalentModifierMask = [.command, .option]
-        nextItem.tag = AppController.spacesNextItemTag
+        applyEffectiveShortcut(.PHI_SELECT_NEXT_SPACE, to: nextItem)
         nextItem.target = self
         menu.addItem(nextItem)
 
         let prevItem = NSMenuItem(
             title: NSLocalizedString("Previous Space", comment: "Spaces menu - Activate the previous Space in the strip"),
             action: #selector(activatePreviousSpace(_:)),
-            keyEquivalent: "\u{F702}"
+            keyEquivalent: ""
         )
-        prevItem.keyEquivalentModifierMask = [.command, .option]
-        prevItem.tag = AppController.spacesPreviousItemTag
+        applyEffectiveShortcut(.PHI_SELECT_PREVIOUS_SPACE, to: prevItem)
         prevItem.target = self
         menu.addItem(prevItem)
 
@@ -1017,12 +1026,11 @@ extension AppController {
                 let item = NSMenuItem(
                     title: space.name,
                     action: #selector(activateSpaceFromMenu(_:)),
-                    keyEquivalent: index < 9 ? "\(index + 1)" : ""
+                    keyEquivalent: ""
                 )
-                if index < 9 {
-                    item.keyEquivalentModifierMask = [.control]
+                if let command = CommandWrapper.spaceSelectionCommand(at: index) {
+                    applyEffectiveShortcut(command, to: item)
                 }
-                item.tag = AppController.spacesListItemTagBase + index
                 item.target = self
                 item.representedObject = space.spaceId
                 item.state = (space.spaceId == activeSpaceId) ? .on : .off

@@ -4,7 +4,15 @@
 // found in the LICENSE file.
 
 import Foundation
+import AppKit
 struct CommandDispatcher {
+    private static let shortcutModifierFlags: NSEvent.ModifierFlags = [
+        .command,
+        .option,
+        .shift,
+        .control,
+    ]
+
     // Shortcut -> Chromium command mapping for events handled on the native side.
     private static let shortcutCommandMap: [ShortcutsKey: CommandWrapper] = [
         ShortcutsKey(characters: "t", modifiers: [.command]): .IDC_NEW_TAB,
@@ -22,7 +30,9 @@ struct CommandDispatcher {
     private static let phiInterceptedCommands: [CommandWrapper] = [
         .PHI_TAB_SWITCHER_FORWARD,
         .PHI_TAB_SWITCHER_BACKWARD,
-    ]
+        .PHI_SELECT_NEXT_SPACE,
+        .PHI_SELECT_PREVIOUS_SPACE,
+    ] + CommandWrapper.spaceSelectionCommands
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
     /// WebContents to inspect or view source of.
@@ -133,6 +143,13 @@ struct CommandDispatcher {
         case .PHI_TAB_SWITCHER_BACKWARD:
             windowController.browserState.tabSwitchManager.handleStep(.backward)
             return true
+        case .PHI_SELECT_NEXT_SPACE:
+            return activateSpace(by: 1, from: windowController)
+        case .PHI_SELECT_PREVIOUS_SPACE:
+            return activateSpace(by: -1, from: windowController)
+        case let c where c.spaceSelectionIndex != nil:
+            guard let index = c.spaceSelectionIndex else { return false }
+            return activateSpace(at: index, from: windowController)
         case .IDC_SELECT_LAST_TAB:
             windowController.browserState.swicthTab(.last)
             return true
@@ -155,10 +172,44 @@ struct CommandDispatcher {
         }
         return false
     }
+
+    @MainActor
+    private static func activateSpace(by step: Int, from windowController: MainBrowserWindowController) -> Bool {
+        guard spacesShortcutsEnabled else { return false }
+        let spaces = SpaceManager.shared.spaces
+        guard spaces.count > 1, let slot = windowController.slot else {
+            return true
+        }
+        guard let currentId = slot.activeSpaceId,
+              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else {
+            slot.activate(spaceId: spaces[0].spaceId)
+            return true
+        }
+        let nextIdx = (currentIdx + step + spaces.count) % spaces.count
+        slot.activate(spaceId: spaces[nextIdx].spaceId)
+        return true
+    }
+
+    @MainActor
+    private static func activateSpace(at index: Int, from windowController: MainBrowserWindowController) -> Bool {
+        guard spacesShortcutsEnabled else { return false }
+        let spaces = SpaceManager.shared.spaces
+        guard spaces.indices.contains(index),
+              let slot = windowController.slot else {
+            return false
+        }
+        slot.activate(spaceId: spaces[index].spaceId)
+        return true
+    }
+
+    private static var spacesShortcutsEnabled: Bool {
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+        && LoginController.shared.isLoggedin()
+    }
     
     @MainActor
     static func handleKeyEquivalent(_ event: NSEvent, window: NSWindow) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let modifiers = event.modifierFlags.intersection(shortcutModifierFlags)
 
         // Tab key may report different characters depending on Shift state.
         let isTabKey = event.keyCode == 48
@@ -166,8 +217,8 @@ struct CommandDispatcher {
         if isTabKey {
             characters = "\t"
         } else {
-            guard let chars = event.characters else { return false }
-            characters = chars
+            guard let chars = event.charactersIgnoringModifiers else { return false }
+            characters = normalizedShortcutCharacters(chars)
         }
 
         let key = ShortcutsKey(characters: characters, modifiers: modifiers)
@@ -178,6 +229,16 @@ struct CommandDispatcher {
         }
         
         return false
+    }
+
+    private static func normalizedShortcutCharacters(_ characters: String) -> String {
+        if characters == String(format: "%c", NSDeleteCharacter) {
+            return String(format: "%c", NSBackspaceCharacter)
+        }
+        if characters.count > 1 {
+            return String(characters.prefix(1)).lowercased()
+        }
+        return characters.lowercased()
     }
     
     @MainActor
