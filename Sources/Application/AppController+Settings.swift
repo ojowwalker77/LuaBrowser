@@ -24,6 +24,8 @@ extension AppController {
     private func panes() -> [SettingsPane] {
         [AccountSettingViewController(),
          GeneralSettingViewController(),
+         ProfilesSettingViewController(),
+         SpacesSettingViewController(),
          AISettingsViewController(),
          IMChannelsSettingViewController(),
          ShortcutsSettingViewController(),

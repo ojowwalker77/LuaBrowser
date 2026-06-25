@@ -90,6 +90,13 @@
 		37C1B0DE2ED8081400DD4496 /* ShortcutsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B0DD2ED8081400DD4496 /* ShortcutsSettingsView.swift */; };
 		37C1B0E02ED809EA00DD4496 /* ShortcutsSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B0DF2ED809EA00DD4496 /* ShortcutsSettingHostingViewController.swift */; };
 		37C1B0E22ED80CFB00DD4496 /* ShortcutsSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B0E12ED80CFB00DD4496 /* ShortcutsSettingViewController.swift */; };
+		5ACE00000000000000000005 /* SpacesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000002 /* SpacesSettingViewController.swift */; };
+		5ACE00000000000000000006 /* SpacesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */; };
+		5ACE00000000000000000007 /* SpacesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000004 /* SpacesSettingsView.swift */; };
+		5ACE00000000000000000009 /* SettingsSectionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000008 /* SettingsSectionCard.swift */; };
+		5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000B /* ProfilesSettingViewController.swift */; };
+		5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */; };
+		5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000D /* ProfilesSettingsView.swift */; };
 		37C1B0E72ED851CE00DD4496 /* ShortcutsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B0E62ED851CE00DD4496 /* ShortcutsViewModel.swift */; };
 		37C1B0E92ED8531700DD4496 /* Shortcuts+Custom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B0E82ED8531700DD4496 /* Shortcuts+Custom.swift */; };
 		37C1B1E42EDEA03400DD4496 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C1B1E32EDEA03400DD4496 /* FeedbackView.swift */; };
@@ -551,6 +558,13 @@
 		37C1B0DD2ED8081400DD4496 /* ShortcutsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsView.swift; sourceTree = "<group>"; };
 		37C1B0DF2ED809EA00DD4496 /* ShortcutsSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingHostingViewController.swift; sourceTree = "<group>"; };
 		37C1B0E12ED80CFB00DD4496 /* ShortcutsSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingViewController.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000002 /* SpacesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingViewController.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingHostingViewController.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000004 /* SpacesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingsView.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000008 /* SettingsSectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSectionCard.swift; sourceTree = "<group>"; };
+		5ACE0000000000000000000B /* ProfilesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingViewController.swift; sourceTree = "<group>"; };
+		5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingHostingViewController.swift; sourceTree = "<group>"; };
+		5ACE0000000000000000000D /* ProfilesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingsView.swift; sourceTree = "<group>"; };
 		37C1B0E62ED851CE00DD4496 /* ShortcutsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsViewModel.swift; sourceTree = "<group>"; };
 		37C1B0E82ED8531700DD4496 /* Shortcuts+Custom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shortcuts+Custom.swift"; sourceTree = "<group>"; };
 		37C1B1142ED98B6000DD4496 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
@@ -1068,6 +1082,26 @@
 				37C1B1142ED98B6000DD4496 /* README.md */,
 			);
 			path = Shortcuts;
+			sourceTree = "<group>";
+		};
+		5ACE00000000000000000001 /* Spaces */ = {
+			isa = PBXGroup;
+			children = (
+				5ACE00000000000000000002 /* SpacesSettingViewController.swift */,
+				5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */,
+				5ACE00000000000000000004 /* SpacesSettingsView.swift */,
+			);
+			path = Spaces;
+			sourceTree = "<group>";
+		};
+		5ACE0000000000000000000A /* Profiles */ = {
+			isa = PBXGroup;
+			children = (
+				5ACE0000000000000000000B /* ProfilesSettingViewController.swift */,
+				5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */,
+				5ACE0000000000000000000D /* ProfilesSettingsView.swift */,
+			);
+			path = Profiles;
 			sourceTree = "<group>";
 		};
 		37C1B0E42ED8515400DD4496 /* Account */ = {
@@ -1780,6 +1814,9 @@
 				37C1B4F62EE6CE8A00DD4496 /* General */,
 				897C09F32F6BEDA000E5CA9B /* IMChannels */,
 				37C1B0E32ED8514E00DD4496 /* Shortcuts */,
+				5ACE00000000000000000008 /* SettingsSectionCard.swift */,
+				5ACE0000000000000000000A /* Profiles */,
+				5ACE00000000000000000001 /* Spaces */,
 			);
 			path = Preferences;
 			sourceTree = "<group>";
@@ -2303,6 +2340,13 @@
 				373D84052F9D500100000001 /* AuthManager+Reauthentication.swift in Sources */,
 				37C1B0E02ED809EA00DD4496 /* ShortcutsSettingHostingViewController.swift in Sources */,
 				37C1B0E22ED80CFB00DD4496 /* ShortcutsSettingViewController.swift in Sources */,
+				5ACE00000000000000000005 /* SpacesSettingViewController.swift in Sources */,
+				5ACE00000000000000000006 /* SpacesSettingHostingViewController.swift in Sources */,
+				5ACE00000000000000000007 /* SpacesSettingsView.swift in Sources */,
+				5ACE00000000000000000009 /* SettingsSectionCard.swift in Sources */,
+				5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */,
+				5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */,
+				5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */,
 				8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */,
 				CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */,
 				37C9E68C2F3F322D00353A03 /* Shimmer.swift in Sources */,

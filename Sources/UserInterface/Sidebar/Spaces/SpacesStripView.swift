@@ -459,11 +459,12 @@ private struct SpacePickerPopup: View {
     }
 }
 
-/// Reorders the picker rows live while a row drag hovers over siblings and
-/// commits the arrangement on drop. Movement happens in the popup's local
-/// `orderedIds` (not the persisted list), so SwiftData is written once —
-/// when the drop lands — rather than on every row crossing.
-private struct SpaceRowDropDelegate: DropDelegate {
+/// Reorders Space rows live while a row drag hovers over siblings and commits
+/// the arrangement on drop. Movement happens in the view's local `orderedIds`
+/// (not the persisted list), so SwiftData is written once — when the drop lands
+/// — rather than on every row crossing. Shared by the sidebar Space picker and
+/// the Spaces settings pane.
+struct SpaceRowDropDelegate: DropDelegate {
     let targetSpaceId: String
     @Binding var draggingSpaceId: String?
     @Binding var orderedIds: [String]

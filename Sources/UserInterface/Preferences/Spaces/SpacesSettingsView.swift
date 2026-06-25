@@ -1,0 +1,470 @@
+// Copyright 2026 Phinomenon Inc.
+//
+// Use of this source code is governed by an Apache license that can be
+// found in the LICENSE file.
+
+import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+/// Settings pane content for managing Spaces, laid out master-detail (mirroring
+/// the Profiles pane): the Space list on the left — drag-to-reorder, with a
+/// +/−/✎ toolbar — and the selected Space's settings on the right (icon, theme,
+/// profile). Mutations route through `SpaceManager`; `ProfileManager` is
+/// observed for the profile picker. The NSAlert/confirmation idioms mirror the
+/// Spaces menu in AppController+Menu so both entry points stay identical.
+struct SpacesSettingsView: View {
+    @ObservedObject private var spaceManager = SpaceManager.shared
+    @ObservedObject private var profileManager = ProfileManager.shared
+
+    @State private var selectedSpaceId: String?
+    /// Pinned theme id for the selected Space (nil = Follow Global), loaded on
+    /// selection and updated optimistically (setTheme writes to a separate store
+    /// that doesn't republish `spaces`, so unlike icon/profile this needs local
+    /// state).
+    @State private var spacePinnedThemeId: String?
+
+    /// Drag-reorder state, mirroring SpacesStripView's picker: `orderedIds` is
+    /// the live snapshot rearranged as a drag hovers across rows; the persisted
+    /// renumbering is written once, on drop, via `SpaceManager.reorder`.
+    @State private var draggingSpaceId: String?
+    @State private var orderedIds: [String] = []
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            spaceListPanel
+                .frame(width: 210)
+                .frame(maxHeight: .infinity)
+            detailPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(20)
+        .onAppear {
+            profileManager.refresh()
+            orderedIds = spaceManager.spaces.map(\.spaceId)
+            if selectedSpaceId == nil { selectInitialSpace() }
+        }
+        // Re-sync the local order when Spaces change elsewhere (never mid-drag),
+        // and keep the selection valid as Spaces are created/deleted.
+        .onChange(of: spaceManager.spaces.map(\.spaceId)) { ids in
+            if draggingSpaceId == nil { orderedIds = ids }
+            if let sel = selectedSpaceId, ids.contains(sel) { return }
+            selectInitialSpace()
+        }
+    }
+
+    // MARK: - Left: Space list
+
+    private var spaceListPanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(NSLocalizedString("Your Spaces", comment: "Spaces settings - list header"))
+                    .font(.system(size: 12))
+                    .themedForeground(.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            SettingsRowDivider()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(orderedSpaces, id: \.spaceId) { space in
+                        spaceListRow(space)
+                    }
+                }
+                .padding(6)
+            }
+
+            SettingsRowDivider()
+
+            HStack(spacing: 0) {
+                toolbarButton(systemName: "plus",
+                              help: NSLocalizedString("New Space", comment: "Spaces settings - new Space tooltip"),
+                              action: newSpace)
+                toolbarDivider
+                toolbarButton(systemName: "minus",
+                              help: NSLocalizedString("Delete selected Space", comment: "Spaces settings - delete Space tooltip"),
+                              disabled: !canDeleteSelected,
+                              action: deleteSelected)
+                toolbarDivider
+                toolbarButton(systemName: "pencil",
+                              help: NSLocalizedString("Rename selected Space", comment: "Spaces settings - rename Space tooltip"),
+                              disabled: selectedSpace == nil,
+                              action: renameSelected)
+                Spacer()
+            }
+            .frame(height: 34)
+        }
+        .settingsCardChrome()
+    }
+
+    /// Rows in drag order: the local `orderedIds` snapshot (rearranged live as a
+    /// drag hovers across rows), with any Space the snapshot doesn't know yet
+    /// appended in the manager's order. Mirrors SpacesStripView.orderedSpaces.
+    private var orderedSpaces: [SpaceModel] {
+        guard !orderedIds.isEmpty else { return spaceManager.spaces }
+        let byId = Dictionary(uniqueKeysWithValues: spaceManager.spaces.map { ($0.spaceId, $0) })
+        var result = orderedIds.compactMap { byId[$0] }
+        let known = Set(orderedIds)
+        result.append(contentsOf: spaceManager.spaces.filter { !known.contains($0.spaceId) })
+        return result
+    }
+
+    private func spaceListRow(_ space: SpaceModel) -> some View {
+        let isSelected = space.spaceId == selectedSpaceId
+        return Button {
+            select(space.spaceId)
+        } label: {
+            HStack(spacing: 8) {
+                spaceSwatch(space, size: 20)
+                Text(space.name)
+                    .font(.system(size: 13))
+                    .themedForeground(.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(draggingSpaceId == space.spaceId ? 0.5 : 1)
+        .onDrag {
+            draggingSpaceId = space.spaceId
+            return NSItemProvider(object: space.spaceId as NSString)
+        }
+        .onDrop(of: [.text], delegate: SpaceRowDropDelegate(
+            targetSpaceId: space.spaceId,
+            draggingSpaceId: $draggingSpaceId,
+            orderedIds: $orderedIds,
+            commit: { spaceManager.reorder(spaceIds: $0) }
+        ))
+    }
+
+    private func spaceSwatch(_ space: SpaceModel, size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 5)
+            .fill(Color(hexString: space.colorHex))
+            .frame(width: size, height: size)
+            .overlay(
+                Image(systemName: space.iconName.isEmpty ? "rectangle.stack" : space.iconName)
+                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .foregroundStyle(Color.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+    }
+
+    private func toolbarButton(systemName: String,
+                               help: String,
+                               disabled: Bool = false,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(disabled ? Color.secondary.opacity(0.4) : Color.primary.opacity(0.7))
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
+    }
+
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(Color(.separatorColor))
+            .frame(width: 1, height: 20)
+    }
+
+    // MARK: - Right: per-Space settings
+
+    @ViewBuilder
+    private var detailPanel: some View {
+        if let space = selectedSpace {
+            let isDefault = space.spaceId == LocalStore.defaultSpaceId
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        spaceSwatch(space, size: 30)
+                        Text(space.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .themedForeground(.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.leading, 2)
+
+                    SettingsDetailCard {
+                        SettingsDetailRow(NSLocalizedString("Icon", comment: "Spaces settings - icon row label")) {
+                            Picker("", selection: iconBinding(space.spaceId)) {
+                                ForEach(SpacesStripView.iconOptions, id: \.self) { icon in
+                                    Label(prettyIconLabel(icon), systemImage: icon).tag(icon)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                        }
+                        SettingsRowDivider()
+                        SettingsDetailRow(NSLocalizedString("Theme", comment: "Spaces settings - theme row label")) {
+                            themeControl(space.spaceId)
+                        }
+                    }
+
+                    SettingsDetailCard {
+                        SettingsDetailRow(NSLocalizedString("Profile", comment: "Spaces settings - profile row label")) {
+                            Picker("", selection: profileBinding(space.spaceId)) {
+                                ForEach(profileManager.profiles, id: \.profileId) { profile in
+                                    Text(profile.displayName).tag(profile.profileId)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                            .disabled(isDefault)
+                        }
+                    }
+
+                    if isDefault {
+                        Text(NSLocalizedString("The default Space can't be moved to another profile or deleted.",
+                                               comment: "Spaces settings - default Space limits note"))
+                            .font(.system(size: 11))
+                            .themedForeground(.textSecondary)
+                            .padding(.leading, 2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            Text(NSLocalizedString("Select a Space to view its settings.",
+                                   comment: "Spaces settings - empty detail placeholder"))
+                .font(.system(size: 13))
+                .themedForeground(.textSecondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // MARK: - Selection
+
+    private var selectedSpace: SpaceModel? {
+        guard let id = selectedSpaceId else { return nil }
+        return spaceManager.spaces.first(where: { $0.spaceId == id })
+    }
+
+    private var canDeleteSelected: Bool {
+        guard let space = selectedSpace else { return false }
+        return space.spaceId != LocalStore.defaultSpaceId
+    }
+
+    private func selectInitialSpace() {
+        let preferred = spaceManager.spaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })
+            ?? spaceManager.spaces.first
+        if let space = preferred {
+            select(space.spaceId)
+        } else {
+            selectedSpaceId = nil
+        }
+    }
+
+    private func select(_ spaceId: String) {
+        selectedSpaceId = spaceId
+        spacePinnedThemeId = spaceManager.themeId(forSpaceId: spaceId)
+    }
+
+    // MARK: - Detail bindings
+
+    private func iconBinding(_ spaceId: String) -> Binding<String> {
+        Binding(
+            get: {
+                let icon = spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.iconName ?? ""
+                return icon.isEmpty ? "rectangle.stack" : icon
+            },
+            set: { newIcon in
+                spaceManager.changeIcon(spaceId: spaceId, iconName: newIcon)
+            }
+        )
+    }
+
+    /// Theme dropdown matching the sidebar's right-click "Edit Theme" submenu:
+    /// a "Follow Global" entry, a divider, then every theme with its color
+    /// swatch; the current one is checkmarked. A `nil` selection = Follow Global.
+    private func themeControl(_ spaceId: String) -> some View {
+        Menu {
+            Picker("", selection: themeBinding(spaceId)) {
+                Label {
+                    Text(NSLocalizedString("Follow Global", comment: "Spaces settings - theme entry that clears the per-Space override"))
+                } icon: {
+                    Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
+                        .renderingMode(.original)
+                }
+                .tag(String?.none)
+
+                Divider()
+
+                ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
+                    Label {
+                        Text(theme.name)
+                    } icon: {
+                        Image(nsImage: .themeColorSwatch(for: theme))
+                            .renderingMode(.original)
+                    }
+                    .tag(String?(theme.id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            HStack(spacing: 6) {
+                Image(nsImage: .themeColorSwatch(for: displayedTheme))
+                    .renderingMode(.original)
+                Text(displayedThemeName)
+                    .font(.system(size: 13))
+                    .themedForeground(.textPrimary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .medium))
+                    .themedForeground(.textSecondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private func themeBinding(_ spaceId: String) -> Binding<String?> {
+        Binding(
+            get: { spacePinnedThemeId },
+            set: { newThemeId in
+                spacePinnedThemeId = newThemeId
+                spaceManager.setTheme(forSpaceId: spaceId, themeId: newThemeId)
+            }
+        )
+    }
+
+    /// The theme whose swatch/name the closed dropdown shows: the pinned theme,
+    /// or the current global theme when following global.
+    private var displayedTheme: Theme {
+        if let id = spacePinnedThemeId {
+            return ThemeManager.shared.registeredThemes[id]
+                ?? Theme.builtInThemes.first(where: { $0.id == id })
+                ?? ThemeManager.shared.currentTheme
+        }
+        return ThemeManager.shared.currentTheme
+    }
+
+    private var displayedThemeName: String {
+        spacePinnedThemeId == nil
+            ? NSLocalizedString("Follow Global", comment: "Spaces settings - theme follows global label")
+            : displayedTheme.name
+    }
+
+    private func profileBinding(_ spaceId: String) -> Binding<String> {
+        Binding(
+            get: { spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.profileId ?? "" },
+            set: { newProfileId in
+                guard let profile = profileManager.profile(for: newProfileId) else { return }
+                changeSpaceProfile(spaceId: spaceId, to: profile)
+            }
+        )
+    }
+
+    // MARK: - Helpers
+
+    /// "music.note" -> "Music Note". Mirrors the strip's icon labelling.
+    private func prettyIconLabel(_ id: String) -> String {
+        id.split(separator: ".")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    // MARK: - Actions
+    //
+    // The NSAlert flows mirror the Spaces menu handlers in AppController+Menu so
+    // both entry points stay identical (and share the same localized strings).
+
+    private func newSpace() {
+        let activeProfileId = selectedSpace?.profileId
+            ?? spaceManager.spaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })?.profileId
+            ?? LocalStore.defaultProfileId
+        CreateSpacePanel.requestCreation(initialProfileId: activeProfileId)
+    }
+
+    private func deleteSelected() {
+        guard let space = selectedSpace else { return }
+        deleteSpace(space)
+    }
+
+    private func renameSelected() {
+        guard let space = selectedSpace else { return }
+        renameSpace(space)
+    }
+
+    private func renameSpace(_ space: SpaceModel) {
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Rename Space", comment: "Title of the rename-Space dialog")
+        alert.informativeText = NSLocalizedString("Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
+        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        textField.stringValue = space.name
+        textField.placeholderString = space.name
+        alert.accessoryView = textField
+        DispatchQueue.main.async {
+            textField.window?.makeFirstResponder(textField)
+            textField.selectText(nil)
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != space.name else { return }
+        spaceManager.renameSpace(spaceId: space.spaceId, to: trimmed)
+    }
+
+    private func changeSpaceProfile(spaceId: String, to profile: PhiBrowserProfile) {
+        guard let space = spaceManager.spaces.first(where: { $0.spaceId == spaceId }),
+              spaceId != LocalStore.defaultSpaceId,
+              space.profileId != profile.profileId else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(
+            format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
+            profile.displayName
+        )
+        alert.informativeText = NSLocalizedString(
+            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+            comment: "Body of the change-Space-profile confirmation"
+        )
+        alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        spaceManager.changeProfile(spaceId: spaceId, toProfileId: profile.profileId)
+    }
+
+    private func deleteSpace(_ space: SpaceModel) {
+        guard space.spaceId != LocalStore.defaultSpaceId else { return }
+        let alert = NSAlert()
+        alert.messageText = String(
+            format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
+            space.name
+        )
+        alert.informativeText = NSLocalizedString(
+            "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            comment: "Body of the delete-Space confirmation"
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        spaceManager.deleteSpace(spaceId: space.spaceId)
+    }
+}

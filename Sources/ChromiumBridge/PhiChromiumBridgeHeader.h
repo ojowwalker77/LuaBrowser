@@ -875,11 +875,56 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)deleteProfile:(NSString *)profileId
            completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
 
+/// Renames `profileId` to `displayName`. `completion` fires on the UI thread
+/// with success/error. Pure metadata update on ProfileAttributesStorage — does
+/// not touch the Space↔Profile binding or any live Browser.
+- (void)renameProfile:(NSString *)profileId
+        toDisplayName:(NSString *)displayName
+           completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
 /// Ensures `profileId` is loaded into memory. Short-circuits if already
 /// loaded. SpaceManager calls this before spawning a window for a Space on a
 /// not-yet-loaded profile (first cross-profile activation per session).
 - (void)ensureProfileLoaded:(NSString *)profileId
                  completion:(void (^)(BOOL success))completion;
+
+// ==========================================================================
+// Per-profile search, download & data settings (Mac → Chromium)
+// ==========================================================================
+
+/// Lists `profileId`'s default-search-provider candidates. `completion` fires
+/// on the UI thread with one dict per engine — keys @"id" (sync GUID),
+/// @"name", @"keyword", @"isDefault" — or nil on failure. Loads the profile
+/// and its TemplateURLService first if needed, so it may be async for a
+/// profile that isn't currently in memory.
+- (void)listSearchEngines:(NSString *)profileId
+               completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> * _Nullable engines))completion;
+
+/// Sets `profileId`'s default search engine to the engine whose sync GUID is
+/// `engineId` (from -listSearchEngines:). `completion` fires on the UI thread
+/// with success/error.
+- (void)setDefaultSearchEngine:(NSString *)profileId
+                      engineId:(NSString *)engineId
+                    completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Reads `profileId`'s default download directory as a filesystem path.
+/// `completion` fires on the UI thread with the path, or nil on failure.
+- (void)getDownloadLocation:(NSString *)profileId
+                 completion:(void (^)(NSString * _Nullable path))completion;
+
+/// Sets `profileId`'s default download directory to `path`. `completion` fires
+/// on the UI thread with success/error.
+- (void)setDownloadLocation:(NSString *)profileId
+                       path:(NSString *)path
+                 completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Opens one of `profileId`'s data/settings pages in a browser window for that
+/// profile (creating one if needed). `page` is one of @"privacy",
+/// @"passwords", @"payments", @"notifications", @"clearBrowserData".
+/// `completion` fires on the UI thread with success/error.
+- (void)openProfileDataPage:(NSString *)profileId
+                       page:(NSString *)page
+                 completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
 
 @end
 
