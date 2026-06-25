@@ -351,3 +351,39 @@ public extension Phi where Base: CALayer {
         nonmutating set { self[\.shadowColor] = newValue }
     }
 }
+
+// MARK: - Theme Color Swatch
+
+extension NSImage {
+    /// Small rounded-square swatch filled with a built-in theme's accent color,
+    /// for the leading image of the Space "Change Theme" menu items. Mirrors
+    /// `NSImage.tabGroupColorSwatch`; the lazy `drawingHandler` lets the theme
+    /// color resolve against the menu's current appearance on each redraw.
+    ///
+    /// Selection is shown by the menu itself (the Picker's check mark), so the
+    /// swatch is just the solid theme color.
+    static func themeColorSwatch(for theme: Theme,
+                                 size: NSSize = NSSize(width: 12, height: 12),
+                                 cornerRadius: CGFloat = 3) -> NSImage {
+        NSImage(size: size, flipped: false) { rect in
+            let isDark = NSAppearance.currentDrawing()
+                .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let appearance: Appearance = isDark ? .dark : .light
+            let isPure = theme == .pure
+            let color = isPure ? NSColor.white : theme.color(for: .themeColor, appearance: appearance)
+            // Match `tabGroupColorSwatch`: fill the full rect (no inset) so the
+            // theme swatch is exactly the same size/shape as the tab-group one.
+            let path = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+            color.setFill()
+            path.fill()
+            if isPure {  // the white swatch needs a faint edge to read
+                let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+                                          xRadius: cornerRadius, yRadius: cornerRadius)
+                NSColor.black.withAlphaComponent(0.12).setStroke()
+                border.lineWidth = 1
+                border.stroke()
+            }
+            return true
+        }
+    }
+}

@@ -508,6 +508,14 @@ private struct SpacePickerRow: View {
 
     @State private var isHovering: Bool = false
 
+    /// Drives the Change-Theme picker: nil = Follow Global, else a pinned id.
+    private var themeSelection: Binding<String?> {
+        Binding(
+            get: { currentThemeId() },
+            set: { onSetTheme($0) }
+        )
+    }
+
     var body: some View {
         Button(action: onActivate) {
             HStack(spacing: 8) {
@@ -555,28 +563,29 @@ private struct SpacePickerRow: View {
                 }
             }
             Menu(NSLocalizedString("Change Theme", comment: "")) {
-                let pinnedId = currentThemeId()
-                Button {
-                    onSetTheme(nil)
-                } label: {
-                    if pinnedId == nil {
-                        Label(NSLocalizedString("Follow Global", comment: "Theme menu: clear per-Space override"), systemImage: "checkmark")
-                    } else {
+                Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
+                    Label {
                         Text(NSLocalizedString("Follow Global", comment: "Theme menu: clear per-Space override"))
+                    } icon: {
+                        Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
+                            .renderingMode(.original)
                     }
-                }
-                Divider()
-                ForEach(Self.sortedRegisteredThemes(), id: \.id) { theme in
-                    Button {
-                        onSetTheme(theme.id)
-                    } label: {
-                        if pinnedId == theme.id {
-                            Label(theme.name, systemImage: "checkmark")
-                        } else {
+                    .tag(String?.none)
+
+                    Divider()
+
+                    ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
+                        Label {
                             Text(theme.name)
+                        } icon: {
+                            Image(nsImage: .themeColorSwatch(for: theme))
+                                .renderingMode(.original)
                         }
+                        .tag(String?(theme.id))
                     }
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
             }
             if isDeletable {
                 Divider()
@@ -608,11 +617,6 @@ private struct SpacePickerRow: View {
         id.split(separator: ".")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
-    }
-
-    static func sortedRegisteredThemes() -> [Theme] {
-        ThemeManager.shared.registeredThemes.values
-            .sorted { lhs, rhs in lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending }
     }
 }
 

@@ -1094,10 +1094,10 @@ extension AppController {
         followGlobal.target = self
         followGlobal.representedObject = nil
         followGlobal.state = (pinnedId == nil) ? .on : .off
+        followGlobal.image = .themeColorSwatch(for: ThemeManager.shared.currentTheme)
         menu.addItem(followGlobal)
 
-        let themes = ThemeManager.shared.registeredThemes.values
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let themes = ThemeManager.shared.orderedThemes
 
         if !themes.isEmpty {
             menu.addItem(.separator())
@@ -1111,6 +1111,7 @@ extension AppController {
             item.target = self
             item.representedObject = theme.id
             item.state = (pinnedId == theme.id) ? .on : .off
+            item.image = .themeColorSwatch(for: theme)
             menu.addItem(item)
         }
         return menu

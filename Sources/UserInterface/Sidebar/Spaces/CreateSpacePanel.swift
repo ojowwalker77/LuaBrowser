@@ -8,8 +8,8 @@ import SwiftUI
 
 /// Rich "Create a Space" panel. Replaces the bare name-only NSAlert that used
 /// to back both the File menu and the Spaces picker's "New Space" row. Lets the
-/// user name the Space, bind it to a profile, and pick an accent swatch before
-/// committing.
+/// user name the Space, bind it to a profile, and pick its theme (or Follow
+/// Global) before committing.
 ///
 /// Self-contained: the only side effect is `manager.createSpace(...)` on
 /// confirm. Presented in a chrome-light floating window via `present(...)`,
@@ -33,22 +33,25 @@ struct CreateSpacePanel: View {
 
     @State private var name: String = ""
     @State private var selectedProfileId: String = ""
-    @State private var selectedSwatch: Int = 0
+    /// Built-in theme id pinned to the new Space. Pre-selected in `onAppear`;
+    /// the form always pins a concrete theme — no "follow global" option here.
+    @State private var selectedThemeId: String = Theme.default.id
     @FocusState private var nameFocused: Bool
 
-    /// Accent presets, lifted straight from the Figma swatch row. The first is
-    /// a neutral white; the rest are the design's pastel hues.
-    static let swatches: [String] = [
-        "#FFFFFF", "#8DDA86", "#73DAE0", "#66CCFF",
-        "#8682F6", "#DA7BE7", "#F5867B", "#F5D67B",
-    ]
-    private static let ringColor = Color(hexString: "#3AA4D5")
+    @Environment(\.phiAppearance) private var appearance
+
     private static let accentColor = Color(hexString: "#3AA4D5")
 
     var body: some View {
         styledContent
             .onAppear {
                 selectedProfileId = resolvedInitialProfileId
+                // Pre-select the active Space's pinned theme, falling back to
+                // the current global theme when it follows global. The form has
+                // no "follow global" option, so a concrete theme is always
+                // pre-selected (and pinned on create).
+                let inherited = manager.activeSpaceId.flatMap { manager.themeId(forSpaceId: $0) }
+                selectedThemeId = inherited ?? ThemeManager.shared.currentTheme.id
                 DispatchQueue.main.async { nameFocused = true }
             }
     }
@@ -175,37 +178,45 @@ struct CreateSpacePanel: View {
     }
 
     private var colorBlock: some View {
-        swatchRow
-            .padding(.horizontal, 8)
-            .padding(.vertical, 10)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var swatchRow: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(Self.swatches.enumerated()), id: \.offset) { index, hex in
-                swatch(index: index, hex: hex)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
-    private func swatch(index: Int, hex: String) -> some View {
-        let isSelected = index == selectedSwatch
-        return Circle()
-            .fill(Color(hexString: hex))
-            .frame(width: 16, height: 16)
-            .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-            .overlay {
-                if isSelected {
-                    Circle().strokeBorder(Self.ringColor, lineWidth: 1.5).padding(-3)
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                ForEach(Theme.builtInThemes, id: \.id) { theme in
+                    themeDot(theme)
+                        .frame(maxWidth: .infinity)
                 }
             }
-            .contentShape(Circle())
-            .onTapGesture {
-                selectedSwatch = index
-            }
+            Text(selectedThemeName)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.primary.opacity(0.5))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// One picker dot for a built-in theme.
+    @ViewBuilder
+    private func themeDot(_ theme: Theme) -> some View {
+        let isPure = theme == .pure
+        let accent = Color(theme.color(for: .themeColor, appearance: appearance))
+        ThemeSwatchView(
+            fillColor: isPure ? .white : accent,
+            ringColor: accent,
+            selected: selectedThemeId == theme.id,
+            title: nil,
+            showsContrastBorder: isPure,
+            dotDiameter: 18,
+            ringDiameter: 22,
+            action: { selectedThemeId = theme.id }
+        )
+    }
+
+    /// Name of the currently-selected theme.
+    private var selectedThemeName: String {
+        effectiveTheme().name
     }
 
     private var actions: some View {
@@ -234,9 +245,18 @@ struct CreateSpacePanel: View {
 
     // MARK: - Color math
 
-    /// The Space's color is the selected accent swatch as shown — no shading.
+    /// The Space's stored `colorHex` (which drives the sidebar tint) is derived
+    /// from the chosen theme's overlay color, so the tint always matches the
+    /// Space's pinned theme.
     private func resolvedColorHex() -> String {
-        Self.swatches[selectedSwatch]
+        effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance).hexRGBString
+    }
+
+    /// The theme backing the new Space, resolved from the pinned selection.
+    private func effectiveTheme() -> Theme {
+        ThemeManager.shared.registeredThemes[selectedThemeId]
+            ?? Theme.builtInThemes.first(where: { $0.id == selectedThemeId })
+            ?? ThemeManager.shared.currentTheme
     }
 
     // MARK: - Profiles
@@ -296,6 +316,11 @@ struct CreateSpacePanel: View {
             iconName: "rectangle.stack",
             profileId: profileId
         )
+        // Pin the new Space's chosen theme. Persisted now; applied when its
+        // window spawns in activateInFocusedWindow.
+        if let newSpaceId {
+            manager.setTheme(forSpaceId: newSpaceId, themeId: selectedThemeId)
+        }
         onClose()
         // Bring the freshly created Space to the front of the active window.
         // `createSpace` only records it as the persisted default, so without

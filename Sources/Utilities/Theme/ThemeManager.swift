@@ -81,7 +81,14 @@ public final class ThemeManager: NSObject, ThemeSource {
     
     /// Registered themes keyed by theme identifier.
     private(set) public var registeredThemes: [String: Theme] = [:]
-    
+
+    /// Built-in themes in their canonical display order — the single ordering
+    /// used by the settings Theme → Color picker and every Space theme menu —
+    /// resolved to the registered (possibly user-edited) instances.
+    public var orderedThemes: [Theme] {
+        Theme.builtInThemes.map { registeredThemes[$0.id] ?? $0 }
+    }
+
     /// Theme ID to restore once that theme is registered.
     private var pendingThemeId: String?
 

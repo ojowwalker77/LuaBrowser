@@ -162,7 +162,9 @@ final class WindowThemeMessageRouter {
     }
 }
 
-private extension NSColor {
+// Internal (not file-private): the Create-Space theme picker also derives a
+// Space's stored colorHex from a theme color through this helper.
+extension NSColor {
     var hexRGBString: String {
         let color = usingColorSpace(.sRGB) ?? self
         var red: CGFloat = 0

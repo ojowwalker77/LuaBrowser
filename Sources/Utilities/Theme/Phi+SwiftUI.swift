@@ -401,3 +401,59 @@ public struct ThemedText: View {
             .foregroundColor(themedColor.swiftUIColor(theme: theme, appearance: appearance))
     }
 }
+
+// MARK: - Theme Swatch
+
+/// A circular theme swatch with an optional selection ring and caption.
+///
+/// Shared by the General-settings theme picker (`ThemeColorItemView`) and the
+/// Create-Space theme picker so both render pixel-identical dots. The caller
+/// owns layout width — settings pins each item to 30pt, the create form lets
+/// the dots share the row evenly.
+struct ThemeSwatchView: View {
+    /// Dot fill color.
+    let fillColor: Color
+    /// Selection ring color, drawn only while `selected`.
+    let ringColor: Color
+    let selected: Bool
+    /// Caption under the dot; `nil` hides the caption row. When present it only
+    /// fades in once selected, so the row keeps a stable height.
+    let title: String?
+    /// Faint dark border for light dots (e.g. the white "Pure" swatch) so they
+    /// read against a light background.
+    var showsContrastBorder: Bool = false
+    var dotDiameter: CGFloat = 22
+    var ringDiameter: CGFloat = 26
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Circle()
+                    .fill(fillColor)
+                    .frame(width: dotDiameter, height: dotDiameter)
+                    .frame(width: ringDiameter, height: ringDiameter)
+                    .overlay {
+                        Circle()
+                            .stroke(selected ? ringColor : Color.clear, lineWidth: 2)
+                    }
+                    .overlay {
+                        Circle()
+                            .stroke(Color.black.opacity(showsContrastBorder ? 0.12 : 0), lineWidth: 0.5)
+                            .frame(width: dotDiameter, height: dotDiameter)
+                    }
+                    .shadow(color: Color.black.opacity(0.12), radius: 4, y: 1)
+
+                if let title {
+                    Text(title)
+                        .font(.system(size: 11))
+                        .themedForeground(.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .opacity(selected ? 1 : 0)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}

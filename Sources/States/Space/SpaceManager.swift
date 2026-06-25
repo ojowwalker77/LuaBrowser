@@ -453,10 +453,9 @@ final class SpaceManager: ObservableObject {
             if lhs.profileId != rhs.profileId { return lhs.profileId < rhs.profileId }
             return lhs.createdDate < rhs.createdDate
         }
-        if let currentSpaceId = activeSpaceId,
-           let inheritedThemeId = themeId(forSpaceId: currentSpaceId) {
-            setTheme(forSpaceId: newSpaceId, themeId: inheritedThemeId)
-        }
+        // Theme is the caller's responsibility: the create form sets the new
+        // Space's theme explicitly via `setTheme` right after this returns, so
+        // createSpace stays theme-agnostic (no implicit inherit-from-active).
         // Record the new Space as the persisted default so the first window
         // that opens with no spawn/restore claim lands on it. This is cheap and
         // does NOT spawn the Space's Chromium window. Bringing the new Space to
