@@ -255,7 +255,7 @@ struct SpacesStripView: View {
         if let space {
             IconPicker(
                 selected: IconPickerSelection.fromStorageValue(space.iconName),
-                showsGroups: false,
+                showsGroups: true,
                 onSelect: { selection in
                     manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
                     isIconPickerOpen = false
