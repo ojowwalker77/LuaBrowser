@@ -267,6 +267,17 @@ final class SpaceManager: ObservableObject {
     /// entry during this launch. Lets multiple windows from the same saved
     /// slot reattach to the same `SpaceWindowSlot`.
     private var restoredSlotsByIndex: [Int: SpaceWindowSlot] = [:]
+    /// Restored windows do not always arrive with their previous-session
+    /// windowId: Chromium's multi-profile startup opens one *fresh* window per
+    /// last-open profile (`restoredFromWindowId == 0`), which the windowId key
+    /// below cannot match. For a short grace period after a snapshot loads,
+    /// `claimRestoredWindow` may reattach such a window to its remembered macOS
+    /// window (slot) by matching the window's profile instead — keeping Spaces
+    /// that shared one macOS window grouped as native tabs. The deadline stops
+    /// a genuinely new window opened later in the session (Cmd+N) from being
+    /// absorbed into a stale, never-claimed snapshot slot.
+    private var restoreReattachDeadline: Date?
+    private static let restoreReattachGracePeriod: TimeInterval = 60
 
     /// One queued "reopen these tabs after the profile change lands" intent
     /// per Space, recorded by `changeProfile` before it closes the Space's
@@ -396,10 +407,18 @@ final class SpaceManager: ObservableObject {
     /// `phi::ScopedRestoredFromWindowId` on the Chromium side). The
     /// current-run windowId is useless as a key here: it's allocated fresh
     /// every launch from a counter shared with tab ids, so it only matches
-    /// the persisted snapshot by accident. Zero means "not a session-restore
-    /// re-creation" and never claims — Cmd+N windows and other
-    /// Chromium-initiated windows can no longer be misclaimed by stale
-    /// snapshot entries.
+    /// the persisted snapshot by accident.
+    ///
+    /// When the previous-session windowId is present it is the exact key.
+    /// When it is absent (`0`) — Chromium's multi-profile startup opens one
+    /// *fresh* window per last-open profile, so those restored windows carry
+    /// no previous id — the window is still reattached to its remembered macOS
+    /// window (slot) by matching `profileId` against the saved snapshot, for a
+    /// short grace period after launch (`restoreReattachDeadline`). This is
+    /// what keeps Spaces that lived in one macOS window grouped as native tabs
+    /// instead of each spawning a separate window. Outside the grace period a
+    /// zero id never claims, so Cmd+N and other later Chromium-initiated
+    /// windows can't be misclaimed by stale snapshot entries.
     ///
     /// On a hit, returns the slot the previous session paired this window
     /// with — reusing the in-memory slot we already minted for a sibling
@@ -416,23 +435,63 @@ final class SpaceManager: ObservableObject {
     /// pending spawn intent. Without this hook every restored window
     /// would fall through to `keySlot.activeSpaceId` and collapse all
     /// tabs into that one Space.
-    func claimRestoredWindow(forRestoredFromWindowId restoredFromWindowId: Int) -> (slot: SpaceWindowSlot, spaceId: String)? {
-        guard restoredFromWindowId != 0,
-              let index = restoreIndexByWindowId.removeValue(forKey: restoredFromWindowId),
-              index < restoreEntries.count else { return nil }
-        let entry = restoreEntries[index]
-        guard let spaceId = entry.windowMap[restoredFromWindowId] else { return nil }
-        if let existing = restoredSlotsByIndex[index] {
-            return (existing, spaceId)
+    func claimRestoredWindow(forRestoredFromWindowId restoredFromWindowId: Int,
+                             profileId: String) -> (slot: SpaceWindowSlot, spaceId: String)? {
+        // Primary: exact previous-session windowId match.
+        if restoredFromWindowId != 0,
+           let index = restoreIndexByWindowId[restoredFromWindowId],
+           index < restoreEntries.count,
+           let spaceId = restoreEntries[index].windowMap[restoredFromWindowId] {
+            restoreIndexByWindowId.removeValue(forKey: restoredFromWindowId)
+            return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
         }
-        // First arrival from this saved slot — create the live slot now,
-        // initialized to the originally-visible Space so the slot's
-        // `registerWindow` later picks the right controller as visible
-        // when that Space's window arrives.
-        let initial = entry.activeSpaceId ?? spaceId
+        // Fallback: no usable previous-session windowId. Within the launch
+        // grace period, reattach by profile — claim the first not-yet-restored
+        // snapshot window, in saved-slot order, whose Space is bound to
+        // `profileId`. Keeps a profile's restored window in the macOS window it
+        // shared last session instead of letting the coordinator mint a new
+        // slot (a separate window) for it.
+        guard !profileId.isEmpty,
+              let deadline = restoreReattachDeadline,
+              Date() < deadline else { return nil }
+        for index in restoreEntries.indices {
+            for windowId in restoreEntries[index].windowMap.keys.sorted()
+                where restoreIndexByWindowId[windowId] == index {
+                guard let spaceId = restoreEntries[index].windowMap[windowId],
+                      boundProfileId(forSpaceId: spaceId) == profileId else { continue }
+                restoreIndexByWindowId.removeValue(forKey: windowId)
+                return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
+            }
+        }
+        return nil
+    }
+
+    /// Resolves (and reuses for later siblings) the live slot for a saved
+    /// snapshot entry, initialized to the originally-visible Space so the
+    /// slot's `registerWindow` picks the right controller as visible when that
+    /// Space's window arrives.
+    private func slotForRestoreIndex(_ index: Int, fallbackSpaceId: String) -> SpaceWindowSlot {
+        if let existing = restoredSlotsByIndex[index] {
+            return existing
+        }
+        let initial = restoreEntries[index].activeSpaceId ?? fallbackSpaceId
         let slot = createSlot(initialSpaceId: initial)
         restoredSlotsByIndex[index] = slot
-        return (slot, spaceId)
+        return slot
+    }
+
+    /// The profileId a Space is bound to, or nil if unknown. Reads the live
+    /// `spaces` cache, falling back to a direct main-context fetch on the
+    /// cold-launch path where the async publisher hasn't delivered yet (same
+    /// assumption as `spaceId(boundTo:preferring:)`).
+    private func boundProfileId(forSpaceId spaceId: String) -> String? {
+        if let cached = spaces.first(where: { $0.spaceId == spaceId })?.profileId {
+            return cached
+        }
+        guard let account = boundAccount else { return nil }
+        return MainActor.assumeIsolated {
+            account.localStorage.getAllSpaces().first(where: { $0.spaceId == spaceId })?.profileId
+        }
     }
 
     /// Resolves the Space a normal window whose Chromium profile is
@@ -522,6 +581,7 @@ final class SpaceManager: ObservableObject {
         restoreEntries.removeAll()
         restoreIndexByWindowId.removeAll()
         restoredSlotsByIndex.removeAll()
+        restoreReattachDeadline = nil
         guard let raw = boundAccount?.userDefaults.object(
             forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
         ) as? [[String: Any]] else { return }
@@ -540,6 +600,13 @@ final class SpaceManager: ObservableObject {
             for windowId in windowMap.keys {
                 restoreIndexByWindowId[windowId] = index
             }
+        }
+        // Arm the profile-match fallback only when there is something to
+        // reattach, and only briefly — long enough for the cold-launch restore
+        // burst to land, short enough that later user-opened windows aren't
+        // absorbed (see `claimRestoredWindow`).
+        if !restoreEntries.isEmpty {
+            restoreReattachDeadline = Date().addingTimeInterval(Self.restoreReattachGracePeriod)
         }
     }
 
@@ -1367,6 +1434,7 @@ final class SpaceManager: ObservableObject {
         restoreEntries.removeAll()
         restoreIndexByWindowId.removeAll()
         restoredSlotsByIndex.removeAll()
+        restoreReattachDeadline = nil
         pendingProfileChangeReopens.removeAll()
         // spaces is now empty, so this also clears the "Open link as" submenu.
         pushSpaceStateToChromium()

@@ -340,7 +340,8 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 spaceId = SpaceManager.shared.spaceId(boundTo: profileId,
                                                       preferring: claim.spaceId)
             } else if let restored = SpaceManager.shared.claimRestoredWindow(
-                forRestoredFromWindowId: Int(restoredFromWindowId)) {
+                forRestoredFromWindowId: Int(restoredFromWindowId),
+                profileId: profileId) {
                 // Session-restore path: Chromium replays each saved window
                 // as a separate `mainBrowserWindowCreated` callback with no
                 // pending spawn, reporting the PREVIOUS session's windowId
