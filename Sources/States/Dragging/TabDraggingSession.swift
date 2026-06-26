@@ -68,6 +68,7 @@ final class TabDraggingSession {
     private enum TabDragImageMode {
         case original
         case pageSnapshot
+        case temporary
     }
     private var tabDragImageMode: TabDragImageMode = .original
 
@@ -646,6 +647,37 @@ final class TabDraggingSession {
 
 // MARK: - Drag image switching (Tab)
 extension TabDraggingSession {
+    func showTemporaryDragImage(_ image: NSImage) {
+        guard nativeSession != nil,
+              image.size.width > 0,
+              image.size.height > 0 else {
+            return
+        }
+        captureOriginalDraggingItemsIfNeeded()
+
+        let targetSize = image.size
+        let count = enumerateDraggingItems { draggingItem in
+            let currentFrame = draggingItem.draggingFrame
+            let targetFrame = NSRect(
+                x: currentFrame.midX - targetSize.width * 0.5,
+                y: currentFrame.midY - targetSize.height * 0.5,
+                width: targetSize.width,
+                height: targetSize.height
+            )
+            draggingItem.imageComponentsProvider = nil
+            draggingItem.setDraggingFrame(targetFrame, contents: image)
+        }
+
+        guard count > 0 else { return }
+        tabDragImageMode = .temporary
+        cachedTabSnapshotImage = nil
+        debugLogTabImageModeChange("showTemporary items=\(count)")
+    }
+
+    func restoreOriginalDragImageForCurrentSession() {
+        restoreOriginalDragImageIfNeeded()
+    }
+
     private func enumerateDraggingItems(_ body: (NSDraggingItem) -> Void) -> Int {
         var count = 0
         withNativeSession { session in

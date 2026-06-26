@@ -38,6 +38,9 @@ final class TabDragContext {
     /// `draggingTab.guid`; multi-selection drags carry the selected block in
     /// normal-tab order.
     let draggingTabIds: [Int]
+    /// Number of visible tab slots represented by this drag. Split pairs count
+    /// as one slot even though `draggingTabIds` contains both panes.
+    let draggingVisualSlotCount: Int
 
     // MARK: - Target State
 
@@ -170,7 +173,8 @@ final class TabDragContext {
         initialTabFrame: CGRect,
         siblingSourceIndex: Int? = nil,
         sourceExcludedIndices: Set<Int>? = nil,
-        draggingTabIds: [Int]? = nil
+        draggingTabIds: [Int]? = nil,
+        draggingVisualSlotCount: Int? = nil
     ) {
         self.draggingTab = draggingTab
         self.sourceContainerType = sourceContainerType
@@ -188,7 +192,12 @@ final class TabDragContext {
             }
             self.sourceExcludedIndices = excluded
         }
-        self.draggingTabIds = draggingTabIds ?? [draggingTab.guid]
+        let resolvedDraggingTabIds = draggingTabIds ?? [draggingTab.guid]
+        self.draggingTabIds = resolvedDraggingTabIds
+        self.draggingVisualSlotCount = max(
+            1,
+            draggingVisualSlotCount ?? resolvedDraggingTabIds.count
+        )
 
         // Start with the source position as the initial target.
         self.targetContainerType = sourceContainerType

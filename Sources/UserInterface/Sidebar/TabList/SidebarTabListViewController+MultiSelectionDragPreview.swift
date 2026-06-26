@@ -61,12 +61,20 @@ extension SidebarTabListViewController {
                                                sourceGroupCell: TabGroupCellView?,
                                                browserState: BrowserState,
                                                outlineView: SideBarOutlineView) -> SidebarMultiSelectionDragPreview? {
-        let previewIds = multiSelectionDragPreviewTabIds(
+        let orderedPreviewIds = multiSelectionDragPreviewTabIds(
             startingTabId: startingTabId,
             tabIds: tabIds,
             browserState: browserState
         )
+        let previewIds = TabDragCountBadge.visibleRepresentativeTabIds(
+            tabIds: orderedPreviewIds,
+            browserState: browserState
+        )
             .prefix(3)
+        let visibleCount = TabDragCountBadge.visibleUnitCount(
+            tabIds: tabIds,
+            browserState: browserState
+        )
         var layers: [SidebarMultiSelectionDragPreviewLayer] = []
         for tabId in previewIds {
             if let image = draggingImageForSidebarTabId(
@@ -83,7 +91,7 @@ extension SidebarTabListViewController {
             layers.append(SidebarMultiSelectionDragPreviewLayer(tabId: startingTabId, image: sourceImage))
         }
         let fallbackImage = sourceImage ?? layers.first?.image
-        for tabId in previewIds where layers.count < min(tabIds.count, 3) {
+        for tabId in previewIds where layers.count < min(visibleCount, 3) {
             guard layers.contains(where: { $0.tabId == tabId }) == false,
                   let fallbackImage else {
                 continue
@@ -93,7 +101,7 @@ extension SidebarTabListViewController {
         return makeStackedMultiSelectionDragPreview(
             layers: layers,
             sourceTabId: startingTabId,
-            count: tabIds.count
+            count: visibleCount
         )
     }
 
@@ -167,9 +175,9 @@ extension SidebarTabListViewController {
         guard maxWidth > 0, maxHeight > 0 else { return nil }
 
         let layerSpacing = NSSize(width: 3, height: 3)
-        let badgeDiameter: CGFloat = 28
-        let badgeOverlap: CGFloat = 12
-        let padding: CGFloat = 10
+        let badgeSize = TabDragCountBadge.size(for: count)
+        let badgeOverlap = badgeSize.height * (12.0 / 28.0)
+        let padding: CGFloat = 7.5
         let stackDepth = CGFloat(visibleLayers.count - 1)
         let canvasSize = NSSize(
             width: maxWidth + stackDepth * layerSpacing.width + badgeOverlap + padding,
@@ -215,30 +223,11 @@ extension SidebarTabListViewController {
 
         let badgeRect = NSRect(
             x: 0,
-            y: canvasSize.height - badgeDiameter,
-            width: badgeDiameter,
-            height: badgeDiameter
+            y: canvasSize.height - badgeSize.height,
+            width: badgeSize.width,
+            height: badgeSize.height
         )
-        let badgePath = NSBezierPath(ovalIn: badgeRect)
-        NSColor.systemRed.setFill()
-        badgePath.fill()
-        NSColor.white.withAlphaComponent(0.35).setStroke()
-        badgePath.lineWidth = 1
-        badgePath.stroke()
-
-        let countString = "\(count)" as NSString
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15, weight: .bold),
-            .foregroundColor: NSColor.white
-        ]
-        let textSize = countString.size(withAttributes: attributes)
-        countString.draw(
-            at: NSPoint(
-                x: badgeRect.midX - textSize.width * 0.5,
-                y: badgeRect.midY - textSize.height * 0.5 - 0.5
-            ),
-            withAttributes: attributes
-        )
+        TabDragCountBadge.draw(count: count, in: badgeRect)
 
         return SidebarMultiSelectionDragPreview(
             image: image,

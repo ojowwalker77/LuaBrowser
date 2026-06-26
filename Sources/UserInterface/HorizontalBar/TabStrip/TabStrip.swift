@@ -191,6 +191,13 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// sees the post-close list, so a trailing close is detected by this
     /// id having vanished from it.
     private var previousTrailingNormalTabId: Int?
+    /// While a drag commit is applying the same order the preview already
+    /// showed, data-driven relayouts should snap to the committed state
+    /// instead of replaying a second reorder animation.
+    private var suppressDragCommitDataChangedAnimation = false
+    /// Allows the final commit layout to assign frames to the source tab
+    /// while its drag proxy is still covering it.
+    private var applyingFinalDragCommitLayout = false
 
     private struct ExternalDragPreview {
         let zone: TabContainerType
@@ -200,6 +207,22 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         /// Drives the gap-side gating (Task B7) and the underline
         /// rightX extension for trailingJoin (Task B8).
         let joinRunToken: String?
+    }
+
+    private struct NormalDragVisualUnit {
+        let primary: Tab
+        let partner: Tab?
+
+        func contains(tabId: Int) -> Bool {
+            primary.guid == tabId || partner?.guid == tabId
+        }
+    }
+
+    private struct DraggingCompanionProxy {
+        let view: TabItemView
+        let tab: Tab
+        let partner: Tab?
+        let slotOffset: Int
     }
 
     // Overlay used to display the dragged tab outside container clipping.
@@ -213,6 +236,11 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     // Proxy tab view shown during drag without binding to the data source.
     private var draggingProxyView: TabItemView?
+    // Companion proxies for the other visible units in a multi-selection drag.
+    private var draggingCompanionProxyViews: [DraggingCompanionProxy] = []
+    // Single stacked preview used when a multi-selection drag enters pinned tabs.
+    private var pinnedMultiSelectionDragPreviewView: NSImageView?
+    private var isShowingPinnedMultiSelectionDragPreview = false
     // Companion proxy for the dragged tab's split partner so the pair lifts
     // and travels together. nil for non-split drags.
     private var draggingSiblingProxyView: TabItemView?
@@ -235,6 +263,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     private weak var draggingMergedPartner: Tab?
     private var dragImageWindow: NSPanel?
     private var dragImageView: NSImageView?
+    private var dragCountBadgeWindow: NSPanel?
+    private var dragCountBadgeView: TabDragCountBadgeView?
     private var cachedTabDragImage: NSImage?
     private var cachedPageDragImage: NSImage?
     private var externalDragPreview: ExternalDragPreview?
@@ -426,11 +456,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             } else {
                 dragSlotPerTab = context?.draggedTabWidth
             }
-            // One slot even for a split pair — it re-merges into a single
-            // cell on drop, matching the cross-window preview's sizing.
+            // Use visible drag units for the reserved gap: split pairs count
+            // as one slot, while ordinary multi-selection blocks reserve one
+            // slot per visible tab proxy.
             normalGapW = (context?.targetContainerType == .normal)
                 ? dragSlotPerTab.map {
-                    $0 * CGFloat(max(1, context?.draggingTabIds.count ?? 1))
+                    TabStripDragController.dragGapWidth(
+                        perSlotWidth: $0,
+                        visualSlotCount: context?.draggingVisualSlotCount ?? 1
+                    )
                 }
                 : (externalPreview?.zone == .normal ? externalPreview?.gapWidth : nil)
         }
@@ -644,6 +678,12 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             guard dragCtx != nil, let screenPoint = lastDragScreenPoint else { return false }
             return !isInsideDragBoundary(screenPoint)
         }()
+        let multiDragLiftedTabIds: Set<Int> = {
+            guard let ctx = dragCtx,
+                  ctx.isMultiTabDrag,
+                  ctx.sourceContainerType == .normal else { return [] }
+            return Set(ctx.draggingTabIds)
+        }()
         let leaveTokenForActive: String? = {
             guard let ctx = dragCtx, let activeIdx else { return nil }
             guard tabId(for: ctx.draggingTab) == tabId(for: normalTabs[activeIdx]) else { return nil }
@@ -707,21 +747,22 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 return ctx.targetGroupForLeadingLeave == run.token
                     || ctx.targetGroupForTrailingLeave == run.token
             }()
+            let memberIsLiftedFromRun: (Int) -> Bool = { index in
+                let tab = normalTabs[index]
+                if multiDragLiftedTabIds.contains(tab.guid) {
+                    return true
+                }
+                guard leavePending,
+                      let ctx = dragCtx else { return false }
+                return self.tabId(for: tab) == self.tabId(for: ctx.draggingTab)
+            }
+            let visibleMemberIndices = run.range.filter { !memberIsLiftedFromRun($0) }
 
-            // Single-member group whose lone member is leaving:
-            // skip emitting a GroupGeometry entirely. The
-            // underline can't anchor on a real `z` (the only
-            // member is the dragged tab itself, whose frame stays
-            // pinned at the source slot because applyLayout skips
-            // the dragged tab) — falling through to the normal
-            // path would leave the line spanning the empty source
-            // slot. With no geometry the layer gets cleaned up
-            // and the chip stands alone, matching the post-leave
-            // group state.
-            if leavePending,
-               run.range.lowerBound == run.range.upperBound,
-               let ctx = dragCtx,
-               tabId(for: normalTabs[run.range.upperBound]) == tabId(for: ctx.draggingTab) {
+            // If every member in this run is lifted out of the layout
+            // (single-tab leave or multi-selection drag), skip the
+            // underline entirely. The chip can stand alone while
+            // following tabs fill the vacated space.
+            if visibleMemberIndices.isEmpty {
                 continue
             }
 
@@ -741,12 +782,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // the split. Step back to the wide partner so the path
             // anchors on the merged frame.
             let lastIdx: Int = {
-                var idx = run.range.upperBound
-                if leavePending,
-                   let ctx = dragCtx,
-                   tabId(for: normalTabs[idx]) == tabId(for: ctx.draggingTab) {
-                    idx = max(run.range.lowerBound, idx - 1)
-                }
+                var idx = visibleMemberIndices[visibleMemberIndices.count - 1]
                 if idx > run.range.lowerBound,
                    let view = normalTabViews[tabId(for: normalTabs[idx])],
                    view.frame.width == 0,
@@ -795,7 +831,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             let containsActive: Bool = {
                 if let activeIdx,
                    run.range.contains(activeIdx),
-                   !activeIsLeavingThisRun {
+                   !activeIsLeavingThisRun,
+                   !memberIsLiftedFromRun(activeIdx) {
                     return true
                 }
                 return activeIsJoiningThisRun
@@ -867,6 +904,9 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             let dWillBeInThisRun: Bool = {
                 guard let ctx = dragCtx else { return false }
                 if ctx.draggingTab.groupToken == run.token {
+                    if ctx.isMultiTabDrag {
+                        return false
+                    }
                     // Cross-window/tear-off counts as leaving for
                     // proxy-extension purposes — the proxy is
                     // outside the strip and dragging the underline
@@ -959,6 +999,19 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 return nil
             }
             return proxy.convert(proxy.bounds, to: coordView)
+        }
+        if let context = dragController.context,
+           context.targetContainerType == .normal,
+           let companion = draggingCompanionProxyViews.first(where: { companion in
+               tabId(for: companion.tab) == id
+                   || (companion.partner.map { tabId(for: $0) == id } ?? false)
+           }),
+           companion.view.superview != nil {
+            if let screenPoint = lastDragScreenPoint,
+               !isInsideDragBoundary(screenPoint) {
+                return nil
+            }
+            return companion.view.convert(companion.view.bounds, to: coordView)
         }
         // During a split-pair drag the partner's source view sits at .zero
         // because the layout engine excludes it. Use the lifted partner proxy
@@ -1230,6 +1283,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         lockedTabWidth = nil
         pendingDropAction = nil
         externalDragPreview = nil
+        suppressDragCommitDataChangedAnimation = false
+        applyingFinalDragCommitLayout = false
 
         pinnedContainer.layer?.backgroundColor = NSColor.clear.cgColor
         pinnedContainer.snp.updateConstraints { make in
@@ -1288,7 +1343,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 }
                 self.rebuildCollapsedGroupFaviconSubscriptions()
 
-                self.performLayout(context: .dataChanged) {
+                self.performLayout(context: self.dataChangedLayoutContext()) {
                     if let activeTab = activeTab {
                         self.scrollToMakeTabVisible(activeTab)
                     }
@@ -1302,7 +1357,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, self.isActive else { return }
-                self.performLayout(context: .dataChanged)
+                self.performLayout(context: self.dataChangedLayoutContext())
                 self.needsLayout = true
             }
             .store(in: &cancellables)
@@ -1312,7 +1367,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             .sink { [weak self] state in
                 guard let self, self.isActive else { return }
                 self.selectedGroupTokenForOverviewPlaceholder = state?.groupToken
-                self.performLayout(context: .dataChanged)
+                self.performLayout(context: self.dataChangedLayoutContext())
                 self.needsLayout = true
             }
             .store(in: &cancellables)
@@ -1325,7 +1380,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, self.isActive else { return }
-                self.performLayout(context: .dataChanged)
+                self.performLayout(context: self.dataChangedLayoutContext())
                 self.needsLayout = true
             }
             .store(in: &cancellables)
@@ -1345,7 +1400,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 }
                 self.rebuildCollapsedGroupFaviconSubscriptions()
                 self.rebuildGroupChangeSubscriptions(groups: groups)
-                self.performLayout(context: .dataChanged)
+                self.performLayout(context: self.dataChangedLayoutContext())
             }
             .store(in: &cancellables)
     }
@@ -1365,7 +1420,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             guard let self = self, self.isActive else { return }
             self.refreshChipWidth(for: token)
             self.rebuildCollapsedGroupFaviconSubscriptions()
-            self.performLayout(context: .dataChanged)
+            self.performLayout(context: self.dataChangedLayoutContext())
         }
     }
 
@@ -1800,13 +1855,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // the merged cell still represents both panes.
             let cellIsActive = isTabActive(tab, activeTab: activeTab)
                 || (render.pinnedMergedPartner.map { isTabActive($0, activeTab: activeTab) } ?? false)
+            let cellIsMultiSelected = browserState.multiSelection.contains(tab.guid)
+                || (render.pinnedMergedPartner.map { browserState.multiSelection.contains($0.guid) } ?? false)
             let renderData = TabRenderData(
                 id: id,
                 title: tab.title,
                 url: tab.url ?? "",
                 isActive: cellIsActive,
                 isPinned: isPinned,
-                isMultiSelected: browserState.multiSelection.contains(tab.guid),
+                isMultiSelected: cellIsMultiSelected,
                 splitPairPosition: render.position,
                 isSplitGroupActive: render.isGroupActive,
                 pinnedSplitPartner: render.pinnedMergedPartner,
@@ -1864,9 +1921,17 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             view.onSelect = { [weak self, weak tab] flags in
                 guard let self, let tab else { return }
                 // Cmd+click toggles multi-selection; owner handles pinned/active.
-                if flags.contains(.command),
-                   self.browserState.toggleMultiSelection(for: tab) {
-                    return
+                if flags.contains(.command) {
+                    if let partner = pinnedSplitPartners[id],
+                       self.browserState.toggleMultiSelectionForSplitPair(
+                           leftTab: tab,
+                           rightTab: partner
+                       ) {
+                        return
+                    }
+                    if self.browserState.toggleMultiSelection(for: tab) {
+                        return
+                    }
                 } else {
                     if self.browserState.multiSelection.isActive {
                         self.browserState.clearMultiSelection()
@@ -1878,8 +1943,20 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             // pane; clicking that half should focus the partner instead of
             // the primary tab. Wire the secondary callback to the partner
             // tab captured at configure time.
-            view.onSecondarySelect = { [weak self, weak partner = pinnedSplitPartners[id]] in
-                self?.handleTabSelection(tab: partner)
+            view.onSecondarySelect = { [weak self, weak tab, weak partner = pinnedSplitPartners[id]] flags in
+                guard let self else { return }
+                if flags.contains(.command),
+                   let tab,
+                   let partner,
+                   self.browserState.toggleMultiSelectionForSplitPair(
+                       leftTab: tab,
+                       rightTab: partner
+                   ) {
+                    return
+                } else if self.browserState.multiSelection.isActive {
+                    self.browserState.clearMultiSelection()
+                }
+                self.handleTabSelection(tab: partner)
             }
             if !isPinned {
                 let capturedIndex = index
@@ -1979,7 +2056,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             let id = tabId(for: tab)
             guard let view = viewPool[id] else { continue }
 
-            if draggingTab != nil && tab === draggingTab {
+            if draggingTab != nil && tab === draggingTab && !applyingFinalDragCommitLayout {
                 continue
             }
             if draggedGroupMemberIds.contains(tab.guid) {
@@ -2425,6 +2502,16 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         TabStripAnimationHelper.performLayout(context, animations: { [weak self] in
             self?.rebindData()
         }, completion: completion)
+    }
+
+    private func dataChangedLayoutContext() -> TabStripAnimationContext {
+        suppressDragCommitDataChangedAnimation ? .none : .dataChanged
+    }
+
+    private func performFinalDragCommitLayout() {
+        applyingFinalDragCommitLayout = true
+        performLayout(context: .none)
+        applyingFinalDragCommitLayout = false
     }
 
     private func updateSeparators(in container: NSView, xPositions: [CGFloat], tabs: [Tab], activeTab: Tab?) {
@@ -2956,6 +3043,272 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         dragImageView?.image = nil
     }
 
+    private func ensureDragCountBadgeWindow() -> (NSPanel, TabDragCountBadgeView) {
+        if let window = dragCountBadgeWindow,
+           let badgeView = dragCountBadgeView {
+            return (window, badgeView)
+        }
+
+        let initialSize = TabDragCountBadge.size(for: 1)
+        let panel = NSPanel(
+            contentRect: CGRect(origin: .zero, size: initialSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.isMovable = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+
+        let badgeView = TabDragCountBadgeView(frame: CGRect(origin: .zero, size: initialSize))
+        panel.contentView = badgeView
+
+        dragCountBadgeWindow = panel
+        dragCountBadgeView = badgeView
+        return (panel, badgeView)
+    }
+
+    private func updateDragCountBadge(for context: TabDragContext, screenPoint: CGPoint?) {
+        guard context.isMultiTabDrag,
+              let screenPoint else {
+            hideDragCountBadge()
+            return
+        }
+
+        let count = context.draggingVisualSlotCount
+        let size = TabDragCountBadge.size(for: count)
+        let (panel, badgeView) = ensureDragCountBadgeWindow()
+        badgeView.count = count
+        badgeView.frame = CGRect(origin: .zero, size: size)
+        panel.setFrame(dragCountBadgeFrame(near: screenPoint, size: size), display: true)
+        if !panel.isVisible {
+            panel.orderFront(nil)
+        }
+    }
+
+    private func hideDragCountBadge() {
+        dragCountBadgeWindow?.orderOut(nil)
+    }
+
+    private func dragCountBadgeFrame(near screenPoint: CGPoint, size: CGSize) -> CGRect {
+        let gap: CGFloat = 6
+        var origin = CGPoint(
+            x: screenPoint.x + gap,
+            y: screenPoint.y - size.height - gap
+        )
+
+        guard let visibleFrame = NSScreen.screens
+            .first(where: { $0.frame.contains(screenPoint) })?
+            .visibleFrame ?? NSScreen.main?.visibleFrame else {
+            return CGRect(origin: origin, size: size)
+        }
+
+        if origin.x + size.width > visibleFrame.maxX {
+            origin.x = screenPoint.x - size.width - gap
+        }
+        if origin.y < visibleFrame.minY {
+            origin.y = screenPoint.y + gap
+        }
+
+        let minX = visibleFrame.minX + 2
+        let minY = visibleFrame.minY + 2
+        let maxX = max(minX, visibleFrame.maxX - size.width - 2)
+        let maxY = max(minY, visibleFrame.maxY - size.height - 2)
+        origin.x = min(max(origin.x, minX), maxX)
+        origin.y = min(max(origin.y, minY), maxY)
+
+        return CGRect(origin: origin, size: size)
+    }
+
+    private func shouldShowPinnedMultiSelectionDragPreview(for context: TabDragContext) -> Bool {
+        context.isMultiTabDrag && context.targetContainerType == .pinned
+    }
+
+    private func ensurePinnedMultiSelectionDragPreviewView() -> NSImageView {
+        if let view = pinnedMultiSelectionDragPreviewView {
+            return view
+        }
+
+        let view = NSImageView(frame: .zero)
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.wantsLayer = true
+        view.layer?.masksToBounds = false
+        dragOverlay.addSubview(view)
+        pinnedMultiSelectionDragPreviewView = view
+        return view
+    }
+
+    private func updatePinnedMultiSelectionDragPreview(for context: TabDragContext,
+                                                       frame: CGRect) {
+        guard shouldShowPinnedMultiSelectionDragPreview(for: context) else {
+            hidePinnedMultiSelectionDragPreview(restoreProxyAlpha: true, resetCachedImage: true)
+            return
+        }
+
+        let image = pinnedMultiSelectionDragImage(tabIds: context.draggingTabIds,
+                                                  size: frame.size)
+        let previewView = ensurePinnedMultiSelectionDragPreviewView()
+        previewView.image = image
+        previewView.frame = frame
+        previewView.alphaValue = 1
+        previewView.isHidden = false
+        previewView.layer?.zPosition = 1000
+
+        draggingProxyView?.alphaValue = 0
+        draggingCompanionProxyViews.forEach { $0.view.alphaValue = 0 }
+        draggingSiblingProxyView?.alphaValue = 0
+        cachedTabDragImage = image
+        isShowingPinnedMultiSelectionDragPreview = true
+    }
+
+    private func hidePinnedMultiSelectionDragPreview(restoreProxyAlpha: Bool,
+                                                     resetCachedImage: Bool) {
+        pinnedMultiSelectionDragPreviewView?.isHidden = true
+        pinnedMultiSelectionDragPreviewView?.image = nil
+        guard isShowingPinnedMultiSelectionDragPreview else { return }
+
+        isShowingPinnedMultiSelectionDragPreview = false
+        if resetCachedImage {
+            cachedTabDragImage = nil
+        }
+        guard restoreProxyAlpha else { return }
+        if let screenPoint = lastDragScreenPoint,
+           !isInsideDragBoundary(screenPoint) {
+            return
+        }
+        draggingProxyView?.alphaValue = 1
+        draggingCompanionProxyViews.forEach { $0.view.alphaValue = 1 }
+        draggingSiblingProxyView?.alphaValue = 1
+    }
+
+    private func pinnedMultiSelectionDragImage(tabIds: [Int], size: CGSize) -> NSImage {
+        let side = max(TabStripMetrics.PinnedTab.width, TabStripMetrics.PinnedTab.height)
+        let imageSize = NSSize(width: max(size.width, side), height: max(size.height, side))
+        let orderedIds = orderedPinnedMultiSelectionPreviewTabIds(tabIds)
+        let representativeIds = Array(TabDragCountBadge.visibleRepresentativeTabIds(
+            tabIds: orderedIds,
+            browserState: browserState
+        ).prefix(3))
+
+        let image = NSImage(size: imageSize)
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: imageSize).fill()
+
+        guard !representativeIds.isEmpty else {
+            return image
+        }
+
+        let iconBoxSize = min(24, max(18, floor(min(imageSize.width, imageSize.height) * 0.72)))
+        let faviconSize = max(12, iconBoxSize - 6)
+        let stackOffset = min(4, max(3, iconBoxSize * 0.16))
+        let visibleDepth = CGFloat(representativeIds.count - 1)
+        let stackSize = iconBoxSize + visibleDepth * stackOffset
+        let stackOrigin = NSPoint(
+            x: (imageSize.width - stackSize) * 0.5,
+            y: (imageSize.height - stackSize) * 0.5 + visibleDepth * stackOffset
+        )
+
+        for index in stride(from: representativeIds.count - 1, through: 0, by: -1) {
+            let depth = CGFloat(index)
+            let boxRect = NSRect(
+                x: stackOrigin.x + depth * stackOffset,
+                y: stackOrigin.y - depth * stackOffset,
+                width: iconBoxSize,
+                height: iconBoxSize
+            )
+            drawPinnedMultiSelectionFaviconBox(
+                tabId: representativeIds[index],
+                in: boxRect,
+                faviconSize: faviconSize,
+                isFront: index == 0
+            )
+        }
+
+        return image
+    }
+
+    private func orderedPinnedMultiSelectionPreviewTabIds(_ tabIds: [Int]) -> [Int] {
+        var orderedIds: [Int] = []
+        func appendIfPresent(_ tabId: Int?) {
+            guard let tabId,
+                  tabIds.contains(tabId),
+                  !orderedIds.contains(tabId) else {
+                return
+            }
+            orderedIds.append(tabId)
+        }
+
+        appendIfPresent(browserState.focusingTab?.guid)
+        for tabId in tabIds {
+            appendIfPresent(tabId)
+        }
+        return orderedIds
+    }
+
+    private func drawPinnedMultiSelectionFaviconBox(tabId: Int,
+                                                    in boxRect: NSRect,
+                                                    faviconSize: CGFloat,
+                                                    isFront: Bool) {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
+        shadow.shadowBlurRadius = 5
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+
+        NSGraphicsContext.saveGraphicsState()
+        shadow.set()
+        let path = NSBezierPath(
+            roundedRect: boxRect,
+            xRadius: min(7, boxRect.width * 0.28),
+            yRadius: min(7, boxRect.height * 0.28)
+        )
+        NSColor.controlBackgroundColor.withAlphaComponent(isFront ? 0.96 : 0.88).setFill()
+        path.fill()
+        NSColor.separatorColor.withAlphaComponent(0.28).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let favicon = pinnedMultiSelectionFavicon(tabId: tabId) else {
+            return
+        }
+
+        let faviconRect = NSRect(
+            x: boxRect.midX - faviconSize * 0.5,
+            y: boxRect.midY - faviconSize * 0.5,
+            width: faviconSize,
+            height: faviconSize
+        )
+        favicon.draw(
+            in: faviconRect,
+            from: NSRect(origin: .zero, size: favicon.size),
+            operation: .sourceOver,
+            fraction: isFront ? 1.0 : 0.92
+        )
+    }
+
+    private func pinnedMultiSelectionFavicon(tabId: Int) -> NSImage? {
+        guard let tab = browserState.tabs.first(where: { $0.guid == tabId }) else {
+            return FaviconConfiguration.default.placeholder
+        }
+        if let data = tab.liveFaviconData ?? tab.cachedFaviconData,
+           let image = NSImage(data: data) {
+            return image
+        }
+        if let urlString = tab.url,
+           let url = URL(string: urlString),
+           FaviconConfiguration.shouldUseDefaultFavicon(for: url) {
+            return .phiDefaultFavicon
+        }
+        return FaviconConfiguration.default.placeholder
+    }
+
     private func dragImageFrame(around screenPoint: CGPoint, size: CGSize) -> CGRect {
         let origin = CGPoint(
             x: screenPoint.x - size.width * 0.5,
@@ -2982,11 +3335,20 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     private func updateSingleTabFloatingDragPreview(context: TabDragContext, screenPoint: CGPoint) {
         let shouldUsePageSnapshot = browserState.tabDraggingSession.shouldUsePageSnapshotPreview(at: screenPoint)
         if !shouldUsePageSnapshot, isInsideDragBoundary(screenPoint) {
-            draggingProxyView?.alphaValue = 1
-            draggingSiblingProxyView?.alphaValue = 1
+            if shouldShowPinnedMultiSelectionDragPreview(for: context) {
+                draggingProxyView?.alphaValue = 0
+                draggingCompanionProxyViews.forEach { $0.view.alphaValue = 0 }
+                draggingSiblingProxyView?.alphaValue = 0
+            } else {
+                draggingProxyView?.alphaValue = 1
+                draggingCompanionProxyViews.forEach { $0.view.alphaValue = 1 }
+                draggingSiblingProxyView?.alphaValue = 1
+            }
             hideFloatingDragPreview()
             return
         }
+
+        hidePinnedMultiSelectionDragPreview(restoreProxyAlpha: false, resetCachedImage: false)
 
         let image: NSImage?
         if shouldUsePageSnapshot {
@@ -3006,6 +3368,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         }
         guard let image else { return }
         draggingProxyView?.alphaValue = 0
+        draggingCompanionProxyViews.forEach { $0.view.alphaValue = 0 }
         // Keep the sibling proxy in sync so the pair always reads as one
         // unit, whether shown in the strip or in the floating preview panel.
         draggingSiblingProxyView?.alphaValue = 0
@@ -3398,6 +3761,15 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 idSet.contains(tab.guid) ? index : nil
             })
         }()
+        let normalCollapse = !isPinned ? normalSplitCollapseInfo() : nil
+        let multiDragVisualUnits: [NormalDragVisualUnit] = {
+            guard let multiDragIds else { return [] }
+            return normalDragVisualUnits(for: multiDragIds,
+                                         splitCollapseInfo: normalCollapse)
+        }()
+        let multiDragVisualSlotCount = multiDragIds == nil
+            ? nil
+            : max(1, multiDragVisualUnits.count)
         // Resolve the dragged tab's split partner — when present, both members
         // lift, follow the cursor, and drop together. Pinned tabs cannot
         // currently belong to splits, so this only fires in the normal zone.
@@ -3408,9 +3780,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         // merged-bar style that `splitInfo.position` would produce, and
         // the sibling proxy must be suppressed since the partner's source
         // view is already collapsed under the merged cell.
-        let normalCollapse = !isPinned ? normalSplitCollapseInfo() : nil
         let pinnedCollapse = isPinned ? pinnedSplitCollapseInfo() : nil
+        let primaryVisualUnit = multiDragVisualUnits.first { $0.contains(tabId: tab.guid) }
         let mergedSplitPartner: Tab? = {
+            if let partner = primaryVisualUnit?.partner { return partner }
             if let collapse = normalCollapse { return collapse.partners[id] }
             if let collapse = pinnedCollapse { return collapse.partners[id] }
             return nil
@@ -3466,6 +3839,12 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                     selectedView.alphaValue = 0
                     draggingAdditionalSourceViews.append(selectedView)
                 }
+                createMultiDragCompanionProxies(
+                    units: multiDragVisualUnits,
+                    draggingTab: tab,
+                    isPinned: isPinned,
+                    primaryProxy: proxy
+                )
             }
 
             // Build a sibling proxy so the partner lifts alongside the
@@ -3515,7 +3894,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             tabFrame: dragOverlay.convert(frame, from: isPinned ? pinnedContainer : normalContainer),
             siblingSourceIndex: siblingInfo?.index,
             sourceExcludedIndices: multiDragIds == nil ? nil : multiDragSourceIndices,
-            draggingTabIds: multiDragIds
+            draggingTabIds: multiDragIds,
+            draggingVisualSlotCount: multiDragVisualSlotCount
         )
         if browserState.multiSelection.isActive, multiDragIds == nil {
             browserState.clearMultiSelection()
@@ -3537,6 +3917,83 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             return nil
         }
         return (partner, partnerView, partnerIndex)
+    }
+
+    private func normalDragVisualUnits(
+        for tabIds: [Int],
+        splitCollapseInfo: (collapsedIndices: Set<Int>, wideIndices: Set<Int>, partners: [String: Tab])?
+    ) -> [NormalDragVisualUnit] {
+        let representedIds = Set(tabIds)
+        let collapsedIndices = splitCollapseInfo?.collapsedIndices ?? []
+        let partners = splitCollapseInfo?.partners ?? [:]
+        var units: [NormalDragVisualUnit] = []
+        for (index, tab) in browserState.normalTabs.enumerated()
+        where representedIds.contains(tab.guid) {
+            if collapsedIndices.contains(index) {
+                continue
+            }
+            let partner = partners[tab.uniqueId]
+            units.append(NormalDragVisualUnit(
+                primary: tab,
+                partner: partner.flatMap { representedIds.contains($0.guid) ? $0 : nil }
+            ))
+        }
+        return units
+    }
+
+    private func createMultiDragCompanionProxies(
+        units: [NormalDragVisualUnit],
+        draggingTab: Tab,
+        isPinned: Bool,
+        primaryProxy: TabItemView
+    ) {
+        guard let primaryUnitIndex = units.firstIndex(where: { $0.contains(tabId: draggingTab.guid) }) else {
+            return
+        }
+        for (unitIndex, unit) in units.enumerated() where !unit.contains(tabId: draggingTab.guid) {
+            let companion = TabItemView()
+            let renderData = dragRenderData(for: unit.primary,
+                                            partner: unit.partner,
+                                            isPinned: isPinned)
+            companion.configure(with: renderData)
+            if !renderData.isActive {
+                companion.setDragHighlighted(true)
+            }
+            var frame = primaryProxy.frame
+            frame.origin.x += CGFloat(unitIndex - primaryUnitIndex)
+                * dragProxyStride(width: frame.width)
+            companion.frame = frame
+            dragOverlay.addSubview(companion)
+            companion.layoutSubtreeIfNeeded()
+            TabStripAnimationHelper.animateLift(companion)
+            draggingCompanionProxyViews.append(DraggingCompanionProxy(
+                view: companion,
+                tab: unit.primary,
+                partner: unit.partner,
+                slotOffset: unitIndex - primaryUnitIndex
+            ))
+        }
+    }
+
+    private func dragRenderData(for tab: Tab,
+                                partner: Tab?,
+                                isPinned: Bool) -> TabRenderData {
+        let splitInfo = splitRenderInfo(for: tab)
+        return TabRenderData(
+            id: tab.uniqueId,
+            title: tab.title,
+            url: tab.url ?? "",
+            isActive: isTabActive(tab, activeTab: browserState.focusingTab),
+            isPinned: isPinned,
+            splitPairPosition: partner == nil ? splitInfo.position : nil,
+            isSplitGroupActive: partner == nil ? splitInfo.groupActive : false,
+            pinnedSplitPartner: partner,
+            sourceTab: tab
+        )
+    }
+
+    private func dragProxyStride(width: CGFloat) -> CGFloat {
+        width + TabStripMetrics.Tab.spacing * 2 + 1.0
     }
 
     /// Indices excluded from the source zone's layout: the dragged tab and
@@ -3640,7 +4097,12 @@ extension TabStrip: TabStripDragDelegate {
                   proxy.superview != nil,
                   let ctx = dragController.context,
                   ctx.targetContainerType == .normal else { return nil }
-            let proxyInStrip = proxy.convert(proxy.bounds, to: self)
+            let proxyFrames = ([proxy] + draggingCompanionProxyViews.map(\.view))
+                .filter { $0.superview != nil }
+                .map { $0.convert($0.bounds, to: self) }
+            let proxyInStrip = proxyFrames.reduce(CGRect.null) { partial, frame in
+                partial.union(frame)
+            }
             // Translate from tab-strip space → normalContainer
             // space (matches normalTabFrames offset bookkeeping).
             return proxyInStrip
@@ -4070,21 +4532,37 @@ extension TabStrip: TabStripDragDelegate {
                                        toIndex: Int,
                                        dropAction: PendingDropAction,
                                        screenPoint: CGPoint?) {
-        clearDraggingPresentation(using: context)
         defer {
-            browserState.clearMultiSelection()
-            performLayout(context: .dataChanged)
             browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
         }
 
-        guard case .local = dropAction, toZone == .normal else {
+        guard case .local = dropAction else {
+            clearDraggingPresentation(using: context)
+            browserState.clearMultiSelection()
+            performLayout(context: .dataChanged)
             return
         }
 
         let draggedIds = context.draggingTabIds
         let draggedIdSet = Set(draggedIds)
         let draggedTabs = browserState.normalTabs.filter { draggedIdSet.contains($0.guid) }
-        guard draggedTabs.count > 1 else { return }
+        guard draggedTabs.count > 1 else {
+            clearDraggingPresentation(using: context)
+            browserState.clearMultiSelection()
+            performLayout(context: .dataChanged)
+            return
+        }
+
+        if toZone == .pinned {
+            clearDraggingPresentation(using: context)
+            let didMove = browserState.moveNormalTabs(tabIds: draggedIds,
+                                                      toPinnedTabs: toIndex)
+            if !didMove {
+                browserState.clearMultiSelection()
+            }
+            performLayout(context: .dataChanged)
+            return
+        }
 
         let target = multiDragGroupTarget(context: context,
                                           toIndex: toIndex,
@@ -4109,6 +4587,13 @@ extension TabStrip: TabStripDragDelegate {
             return (tab.guid, desired)
         }
         let membershipWillChange = !membershipUpdates.isEmpty
+
+        suppressDragCommitDataChangedAnimation = true
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                self?.suppressDragCommitDataChangedAnimation = false
+            }
+        }
 
         browserState.moveNormalTabsLocally(tabIds: draggedIds,
                                            to: toIndex,
@@ -4138,6 +4623,9 @@ extension TabStrip: TabStripDragDelegate {
             browserState.applyOptimisticGroupMembership(updates: membershipUpdates)
             browserState.syncNormalTabsRelativeOrderToChromium(tabIds: draggedIds)
         }
+        browserState.clearMultiSelection()
+        performFinalDragCommitLayout()
+        clearDraggingPresentation(using: context, snapSourceToProxy: false)
     }
 
     private func multiDragGroupTarget(context: TabDragContext,
@@ -4350,6 +4838,17 @@ extension TabStrip: TabStripDragDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         draggingView.frame = newFrame
+        for companion in draggingCompanionProxyViews {
+            companion.view.layer?.zPosition = 998
+            var companionFrame = companion.view.frame
+            companionFrame.size = newFrame.size
+            companionFrame.origin = CGPoint(
+                x: newFrame.origin.x + CGFloat(companion.slotOffset)
+                    * dragProxyStride(width: newFrame.width),
+                y: newFrame.origin.y
+            )
+            companion.view.frame = companionFrame
+        }
         // Pin the partner proxy to the primary proxy at the same horizontal
         // offset captured at drag start so the pair reads as one unit.
         if let siblingProxy = draggingSiblingProxyView,
@@ -4363,7 +4862,10 @@ extension TabStrip: TabStripDragDelegate {
             )
             siblingProxy.frame = siblingFrame
         }
+        updatePinnedMultiSelectionDragPreview(for: context, frame: newFrame)
         CATransaction.commit()
+
+        updateDragCountBadge(for: context, screenPoint: lastDragScreenPoint)
 
         // Keep the content-border active-tab gap in sync with the proxy on
         // plain drag-move ticks (when no sibling reflow fires onLayoutChanged).
@@ -4394,6 +4896,13 @@ extension TabStrip: TabStripDragDelegate {
         )
         draggingView.configure(with: renderData)
         draggingView.layoutSubtreeIfNeeded()
+        for companion in draggingCompanionProxyViews {
+            let companionRenderData = dragRenderData(for: companion.tab,
+                                                     partner: companion.partner,
+                                                     isPinned: zone == .pinned)
+            companion.view.configure(with: companionRenderData)
+            companion.view.layoutSubtreeIfNeeded()
+        }
         cachedTabDragImage = draggingView.createDraggingSnapshot(cornerRadius: TabStripMetrics.Tab.cornerRadius)
     }
 
@@ -4411,9 +4920,14 @@ extension TabStrip: TabStripDragDelegate {
             // Pinned tabs use a fixed width and centered height. Merged
             // split cells span both panes' slots (mirrors layoutPinned's
             // wideWidth) so the proxy matches what the drop will produce.
-            let pinnedWidth = draggingMergedPartner == nil
-                ? TabStripMetrics.PinnedTab.width
-                : TabStripMetrics.PinnedTab.width * 2 + TabStripMetrics.PinnedTab.spacing
+            let pinnedWidth: CGFloat
+            if shouldShowPinnedMultiSelectionDragPreview(for: context) {
+                pinnedWidth = TabStripMetrics.PinnedTab.width
+            } else if draggingMergedPartner == nil {
+                pinnedWidth = TabStripMetrics.PinnedTab.width
+            } else {
+                pinnedWidth = TabStripMetrics.PinnedTab.width * 2 + TabStripMetrics.PinnedTab.spacing
+            }
             frame.size = CGSize(width: pinnedWidth, height: TabStripMetrics.PinnedTab.height)
         case .normal:
             // Normal tabs use the current average tab width.
@@ -4464,20 +4978,29 @@ extension TabStrip: TabStripDragDelegate {
         let rightLimit = isRightmostGrouped
             ? combinedFrame.maxX - padding
             : min(combinedFrame.maxX, newTabButton.frame.minX) - padding
-        let maxX = rightLimit - frame.width
-        if minX <= maxX {
+        let slotOffsets = shouldShowPinnedMultiSelectionDragPreview(for: context)
+            ? []
+            : draggingCompanionProxyViews.map(\.slotOffset)
+        let minSlotOffset = min(0, slotOffsets.min() ?? 0)
+        let maxSlotOffset = max(0, slotOffsets.max() ?? 0)
+        let stride = dragProxyStride(width: frame.width)
+        let blockLeadingOffset = CGFloat(minSlotOffset) * stride
+        let blockTrailingOffset = CGFloat(maxSlotOffset) * stride + frame.width
+        let minPrimaryX = minX - blockLeadingOffset
+        let maxPrimaryX = rightLimit - blockTrailingOffset
+        if minPrimaryX <= maxPrimaryX {
             // Soft clamp for a slight elastic feel at the edges.
             let overshootLimit: CGFloat = 8
             let overshootFactor: CGFloat = 0.35
-            if frame.origin.x < minX {
-                let delta = min(minX - frame.origin.x, overshootLimit)
-                frame.origin.x = minX - delta * overshootFactor
-            } else if frame.origin.x > maxX {
-                let delta = min(frame.origin.x - maxX, overshootLimit)
-                frame.origin.x = maxX + delta * overshootFactor
+            if frame.origin.x < minPrimaryX {
+                let delta = min(minPrimaryX - frame.origin.x, overshootLimit)
+                frame.origin.x = minPrimaryX - delta * overshootFactor
+            } else if frame.origin.x > maxPrimaryX {
+                let delta = min(frame.origin.x - maxPrimaryX, overshootLimit)
+                frame.origin.x = maxPrimaryX + delta * overshootFactor
             }
         } else {
-            frame.origin.x = minX
+            frame.origin.x = minPrimaryX
         }
 
         return frame
@@ -4497,10 +5020,12 @@ extension TabStrip: TabStripDragDelegate {
         return totalWidth / CGFloat(frames.count)
     }
 
-    private func clearDraggingPresentation(using context: TabDragContext?) {
+    private func clearDraggingPresentation(using context: TabDragContext?,
+                                           snapSourceToProxy: Bool = true) {
         if let sourceView = draggingSourceView {
             // Snap the source view to the drop point before revealing it.
-            if let context,
+            if snapSourceToProxy,
+               let context,
                context.targetContainerType == context.sourceContainerType,
                let proxy = draggingProxyView {
                 let targetContainer = (context.sourceContainerType == .pinned) ? pinnedContainer : normalContainer
@@ -4518,7 +5043,8 @@ extension TabStrip: TabStripDragDelegate {
         // Reveal the split partner's source view too — it was hidden while
         // its proxy was lifted in the overlay.
         if let siblingSourceView = draggingSiblingSourceView {
-            if let context,
+            if snapSourceToProxy,
+               let context,
                context.targetContainerType == context.sourceContainerType,
                let siblingProxy = draggingSiblingProxyView,
                context.sourceContainerType == .normal {
@@ -4537,6 +5063,11 @@ extension TabStrip: TabStripDragDelegate {
         // Clear proxy views and cached drag state.
         draggingProxyView?.removeFromSuperview()
         draggingProxyView = nil
+        draggingCompanionProxyViews.forEach { $0.view.removeFromSuperview() }
+        draggingCompanionProxyViews.removeAll()
+        pinnedMultiSelectionDragPreviewView?.removeFromSuperview()
+        pinnedMultiSelectionDragPreviewView = nil
+        isShowingPinnedMultiSelectionDragPreview = false
         draggingSiblingProxyView?.removeFromSuperview()
         draggingSiblingProxyView = nil
         draggingSourceView = nil
@@ -4547,6 +5078,7 @@ extension TabStrip: TabStripDragDelegate {
         draggingMergedPartner = nil
         dragOverlay.isHidden = true
         hideFloatingDragPreview()
+        hideDragCountBadge()
         cachedTabDragImage = nil
         cachedPageDragImage = nil
     }

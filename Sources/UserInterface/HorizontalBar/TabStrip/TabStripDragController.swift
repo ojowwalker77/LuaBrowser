@@ -124,7 +124,8 @@ final class TabStripDragController {
         tabFrame: CGRect,
         siblingSourceIndex: Int? = nil,
         sourceExcludedIndices: Set<Int>? = nil,
-        draggingTabIds: [Int]? = nil
+        draggingTabIds: [Int]? = nil,
+        draggingVisualSlotCount: Int? = nil
     ) {
         // Capture the source geometry before any layout changes.
         context = TabDragContext(
@@ -135,7 +136,8 @@ final class TabStripDragController {
             initialTabFrame: tabFrame,
             siblingSourceIndex: siblingSourceIndex,
             sourceExcludedIndices: sourceExcludedIndices,
-            draggingTabIds: draggingTabIds
+            draggingTabIds: draggingTabIds,
+            draggingVisualSlotCount: draggingVisualSlotCount
         )
 
         // Hide the source tab before the gap is shown.
@@ -575,29 +577,24 @@ final class TabStripDragController {
         // original zone so the whole pair lifts together.
         switch context.sourceContainerType {
         case .pinned:
-            pinnedExcludedIndices.insert(context.sourceIndex)
-            if let sibling = context.siblingSourceIndex {
-                pinnedExcludedIndices.insert(sibling)
-            }
+            pinnedExcludedIndices.formUnion(sourceExclusionSet(for: context))
         case .normal:
-            normalExcludedIndices.insert(context.sourceIndex)
-            if let sibling = context.siblingSourceIndex {
-                normalExcludedIndices.insert(sibling)
-            }
+            normalExcludedIndices.formUnion(sourceExclusionSet(for: context))
         }
 
-        // Show the insertion gap in the target zone. One slot even for a
-        // split pair: the pair rests as one merged cell and re-merges into
-        // one slot on drop, so a two-slot gap made every other tab shrink
-        // at grab and snap back at drop.
+        // Show the insertion gap in the target zone. The width is based on
+        // visible drag units: a split pair remains one merged slot, while a
+        // regular multi-selection block reserves one slot per visible proxy.
         switch context.targetContainerType {
         case .pinned:
             pinnedGapIndex = context.targetIndex
         case .normal:
             normalGapIndex = context.targetIndex
             if let metrics = delegate?.dragControllerRequestMetrics() {
-                normalGapWidth = calculateAverageTabWidth(from: metrics.normalTabFrames)
-                    * CGFloat(max(1, context.draggingTabIds.count))
+                normalGapWidth = Self.dragGapWidth(
+                    perSlotWidth: calculateAverageTabWidth(from: metrics.normalTabFrames),
+                    visualSlotCount: context.draggingVisualSlotCount
+                )
             }
         }
 
@@ -618,6 +615,13 @@ final class TabStripDragController {
         }
         let totalWidth = validFrames.reduce(0) { $0 + $1.width }
         return totalWidth / CGFloat(validFrames.count)
+    }
+
+    static func dragGapWidth(perSlotWidth: CGFloat, visualSlotCount: Int) -> CGFloat {
+        let slotCount = max(1, visualSlotCount)
+        let interSlotGap = TabStripMetrics.Tab.spacing * 2 + 1.0
+        return perSlotWidth * CGFloat(slotCount)
+            + interSlotGap * CGFloat(slotCount - 1)
     }
 
     /// Resolves the destination zone and insertion index for the pointer.

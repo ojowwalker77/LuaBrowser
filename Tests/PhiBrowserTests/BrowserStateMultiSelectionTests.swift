@@ -117,6 +117,27 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[2]), [1, 2, 3])
     }
 
+    func testDragCountBadgeCollapsesSplitPairToOneVisibleUnit() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+
+        XCTAssertEqual(
+            TabDragCountBadge.visibleUnitCount(tabIds: [1, 2, 3, 4], browserState: state),
+            3
+        )
+        XCTAssertEqual(
+            TabDragCountBadge.visibleRepresentativeTabIds(tabIds: [3, 2, 4], browserState: state),
+            [3, 4]
+        )
+    }
+
     func testToggleInactiveSplitPairSelectsBothPanes() throws {
         let state = try makeState()
         seed(state, guids: [1, 2, 3, 4])

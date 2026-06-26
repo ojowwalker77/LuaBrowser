@@ -258,6 +258,7 @@
 		AA10000000000000000000B5 /* TabSwitchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F5 /* TabSwitchManager.swift */; };
 		AB1000000000000000000FA1 /* TabMultiSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1000000000000000000FA2 /* TabMultiSelection.swift */; };
 		AB1000000000000000000FB1 /* TabMultiSelectionMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */; };
+		AB1000000000000000000FC1 /* TabDragCountBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1000000000000000000FC2 /* TabDragCountBadge.swift */; };
 		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
 		B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */; };
@@ -725,6 +726,7 @@
 		AA10000000000000000000F5 /* TabSwitchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchManager.swift; sourceTree = "<group>"; };
 		AB1000000000000000000FA2 /* TabMultiSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMultiSelection.swift; sourceTree = "<group>"; };
 		AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabMultiSelectionMenu.swift; sourceTree = "<group>"; };
+		AB1000000000000000000FC2 /* TabDragCountBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDragCountBadge.swift; sourceTree = "<group>"; };
 		AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAgentEndpointResolver.swift; sourceTree = "<group>"; };
 		B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiChromiumCoordinator.swift; sourceTree = "<group>"; };
 		B02586EC2E42FD97001B08FC /* PhiBrowser-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PhiBrowser-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -1451,6 +1453,7 @@
 				8EA1FD932FEA95140060DCFF /* CrashPageData.swift */,
 				B02587112E43038B001B08FC /* Tab.swift */,
 				8EF36C052F4E9EC100FCC91E /* TabContentView.swift */,
+				AB1000000000000000000FC2 /* TabDragCountBadge.swift */,
 				8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */,
 				AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */,
 			);
@@ -2340,6 +2343,7 @@
 				CCBF8FA72E69948D00B9A99E /* BrowserState.swift in Sources */,
 				AB1000000000000000000FA1 /* TabMultiSelection.swift in Sources */,
 				AB1000000000000000000FB1 /* TabMultiSelectionMenu.swift in Sources */,
+				AB1000000000000000000FC1 /* TabDragCountBadge.swift in Sources */,
 				CCF5D0A12F00000100ABCDEF /* TabDraggingSession.swift in Sources */,
 				37C76E182F8FAD570042FE45 /* SharedHeartbeatStore.swift in Sources */,
 				AA10000000000000000000B1 /* TabSwitchMetrics.swift in Sources */,

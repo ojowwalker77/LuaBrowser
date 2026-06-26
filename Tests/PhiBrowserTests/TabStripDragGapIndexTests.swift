@@ -56,4 +56,106 @@ final class TabStripDragGapIndexTests: XCTestCase {
         XCTAssertEqual(index, 3,
             "An edge-based drop past the trailing merged pair must append after the pair, not between its records.")
     }
+
+    func test_multiDragStartExcludesEveryRepresentedSourceIndex() {
+        let controller = TabStripDragController()
+        let delegate = RecordingTabStripDragDelegate()
+        controller.delegate = delegate
+
+        let tab = Tab(guid: 2,
+                      url: "https://e2.example",
+                      isActive: false,
+                      index: 1)
+        controller.startDragging(
+            tab: tab,
+            sourceIndex: 1,
+            sourceZone: .normal,
+            mouseLocation: .zero,
+            tabFrame: CGRect(x: 110, y: 0, width: 100, height: 32),
+            sourceExcludedIndices: [1, 3, 4],
+            draggingTabIds: [2, 4, 5],
+            draggingVisualSlotCount: 3
+        )
+
+        XCTAssertEqual(delegate.normalExcludedIndices, [1, 3, 4])
+        XCTAssertEqual(delegate.normalGapIndex, 1)
+        XCTAssertEqual(
+            delegate.normalGapWidth ?? -1,
+            TabStripDragController.dragGapWidth(perSlotWidth: 100, visualSlotCount: 3),
+            accuracy: 0.001
+        )
+    }
+
+    func test_singleDragStartUsesDefaultOneSlotGap() {
+        let controller = TabStripDragController()
+        let delegate = RecordingTabStripDragDelegate()
+        controller.delegate = delegate
+
+        let tab = Tab(guid: 2,
+                      url: "https://e2.example",
+                      isActive: false,
+                      index: 1)
+        controller.startDragging(
+            tab: tab,
+            sourceIndex: 1,
+            sourceZone: .normal,
+            mouseLocation: .zero,
+            tabFrame: CGRect(x: 110, y: 0, width: 100, height: 32)
+        )
+
+        XCTAssertEqual(delegate.normalExcludedIndices, [1])
+        XCTAssertEqual(delegate.normalGapIndex, 1)
+        XCTAssertEqual(
+            delegate.normalGapWidth ?? -1,
+            TabStripDragController.dragGapWidth(perSlotWidth: 100, visualSlotCount: 1),
+            accuracy: 0.001
+        )
+    }
+}
+
+private final class RecordingTabStripDragDelegate: TabStripDragDelegate {
+    var normalExcludedIndices: Set<Int> = []
+    var normalGapIndex: Int?
+    var normalGapWidth: CGFloat?
+
+    func dragControllerDidUpdateLayout(
+        pinnedExcludedIndices: Set<Int>,
+        pinnedGapIndex: Int?,
+        normalExcludedIndices: Set<Int>,
+        normalGapIndex: Int?,
+        normalGapWidth: CGFloat?
+    ) {
+        self.normalExcludedIndices = normalExcludedIndices
+        self.normalGapIndex = normalGapIndex
+        self.normalGapWidth = normalGapWidth
+    }
+
+    func dragControllerRequestMetrics() -> TabStripMetricsSnapshot {
+        TabStripMetricsSnapshot(
+            pinnedContainerFrame: .zero,
+            normalContainerFrame: CGRect(x: 0, y: 0, width: 600, height: 32),
+            pinnedTabWidth: TabStripMetrics.PinnedTab.width,
+            normalTabFrames: [
+                CGRect(x: 0, y: 0, width: 100, height: 32),
+                CGRect(x: 110, y: 0, width: 100, height: 32),
+                CGRect(x: 220, y: 0, width: 100, height: 32),
+                CGRect(x: 330, y: 0, width: 100, height: 32),
+                CGRect(x: 440, y: 0, width: 100, height: 32),
+                CGRect(x: 550, y: 0, width: 100, height: 32),
+            ],
+            pinnedTabFrames: [],
+            normalScrollOffset: 0,
+            chipFrames: [],
+            draggedTabFrameInNormal: nil,
+            normalSplitPairLowerIndices: []
+        )
+    }
+
+    func dragControllerDidEndDrag(tab: Tab, toZone: TabContainerType, toIndex: Int) {}
+
+    func dragControllerDidCancelDrag() {}
+
+    func dragControllerConvertPointToLocal(_ windowPoint: CGPoint) -> CGPoint {
+        windowPoint
+    }
 }
