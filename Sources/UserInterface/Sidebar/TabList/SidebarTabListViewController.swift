@@ -215,7 +215,7 @@ class SidebarTabListViewController: NSViewController {
         
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
-        outlineView.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark, .tabGroup])
+        outlineView.registerForDraggedTypes([.pinnedTab, .normalTab, .normalTabs, .phiBookmark, .tabGroup])
         outlineView.phiOutlineDelegate = self
         
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarColumn"))
@@ -456,8 +456,7 @@ class SidebarTabListViewController: NSViewController {
             // Cmd+click toggles tab multi-selection; the owner decides eligibility.
             let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
             if isCommandClick,
-               let tab = item as? Tab,
-               browserState.toggleMultiSelection(for: tab) {
+               handleMultiSelectionCommandClick(for: item) {
                 return
             }
             if browserState.multiSelection.isActive {
@@ -465,6 +464,19 @@ class SidebarTabListViewController: NSViewController {
             }
             itemClicked(item)
         }
+    }
+
+    private func handleMultiSelectionCommandClick(for item: SidebarItem) -> Bool {
+        if let tab = item as? Tab {
+            return browserState.toggleMultiSelection(for: tab)
+        }
+        if let pair = item as? SplitPairSidebarItem {
+            return browserState.toggleMultiSelectionForSplitPair(
+                leftTab: pair.leftTab,
+                rightTab: pair.rightTab
+            )
+        }
+        return false
     }
 
     @objc private func outlineViewDoubleClicked(_ sender: NSOutlineView) {
@@ -740,10 +752,16 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                                                startingFrom tab: Tab) {
         pasteboardItem.setString(String(tab.guid), forType: .normalTab)
         pasteboardItem.setString(String(browserState.windowId), forType: .sourceWindowId)
-        if let ids = browserState.multiSelectionDragTabIds(startingFrom: tab) {
+        let batchIds = browserState.multiSelectionDragTabIds(startingFrom: tab)
+        if let ids = batchIds {
             pasteboardItem.setString(ids.map(String.init).joined(separator: ","),
                                      forType: .normalTabs)
         }
+        AppLogDebug(
+            "[SidebarMultiDrag] payload windowId=\(browserState.windowId) " +
+            "startTabId=\(tab.guid) batchIds=\(batchIds ?? []) " +
+            "selectionActive=\(browserState.multiSelection.isActive)"
+        )
     }
 
     private func normalTabIds(from pasteboard: NSPasteboard) -> [Int] {
@@ -1229,9 +1247,18 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                                           resolvedIndex: Int) -> Bool {
         guard !isCrossWindowDrag(info.draggingPasteboard),
               tabIds.count > 1 else {
+            AppLogDebug(
+                "[SidebarMultiDrag] batch drop rejected before resolve " +
+                "crossWindow=\(isCrossWindowDrag(info.draggingPasteboard)) " +
+                "tabIds=\(tabIds)"
+            )
             return false
         }
         if resolvedItem is Bookmark {
+            AppLogDebug(
+                "[SidebarMultiDrag] batch drop rejected on bookmark " +
+                "tabIds=\(tabIds)"
+            )
             return false
         }
         if resolvedItem == nil {
@@ -1239,6 +1266,10 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                 ? outlineView.numberOfRows
                 : resolvedIndex
             if isRowInBookmarkSection(proposedRow) {
+                AppLogDebug(
+                    "[SidebarMultiDrag] batch drop rejected in bookmark section " +
+                    "row=\(proposedRow) tabIds=\(tabIds)"
+                )
                 return false
             }
         }
@@ -1279,6 +1310,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         let requestedSet = Set(tabIds)
         let draggedTabs = browserState.normalTabs.filter { requestedSet.contains($0.guid) }
         guard draggedTabs.count > 1 else { return false }
+        let beforeOrder = browserState.normalTabs.map(\.guid)
 
         let desiredTokenById: [Int: String?] = Dictionary(
             uniqueKeysWithValues: draggedTabs.map { ($0.guid, targetGroupToken) }
@@ -1290,9 +1322,19 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         }
         let membershipWillChange = !membershipUpdates.isEmpty
 
+        AppLogDebug(
+            "[SidebarMultiDrag] batch commit begin windowId=\(browserState.windowId) " +
+            "tabIds=\(tabIds) draggedIds=\(draggedTabs.map(\.guid)) " +
+            "targetIdx=\(targetIdx) targetGroupToken=\(targetGroupToken ?? "nil") " +
+            "membershipWillChange=\(membershipWillChange) before=\(beforeOrder)"
+        )
         browserState.moveNormalTabsLocally(tabIds: tabIds,
                                            to: targetIdx,
                                            syncChromiumOrder: !membershipWillChange)
+        AppLogDebug(
+            "[SidebarMultiDrag] batch commit local order " +
+            "after=\(browserState.normalTabs.map(\.guid))"
+        )
 
         if membershipWillChange {
             let removeIds = draggedTabs.compactMap { tab -> NSNumber? in
@@ -3916,8 +3958,8 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
         let pasteboardItem = NSPasteboardItem()
         configureNormalTabDragPayload(pasteboardItem, startingFrom: tab)
         AppLogDebug(
-            "[TAB_GROUPS][INNER_DRAG] controller.pasteboard types=[normalTab, sourceWindowId] " +
-            "windowId=\(browserState.windowId)"
+            "[TAB_GROUPS][INNER_DRAG] controller.pasteboard " +
+            "types=\(pasteboardItem.types.map(\.rawValue)) windowId=\(browserState.windowId)"
         )
 
         let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
@@ -4167,8 +4209,7 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         // on this path rather than `outlineViewClicked`.
         let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
         if isCommandClick,
-           let tab = item as? Tab,
-           browserState.toggleMultiSelection(for: tab) {
+           handleMultiSelectionCommandClick(for: item) {
             return
         }
         if browserState.multiSelection.isActive {

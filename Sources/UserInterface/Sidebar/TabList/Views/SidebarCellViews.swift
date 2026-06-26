@@ -577,12 +577,10 @@ class SidebarSplitPairCellView: SidebarCellView {
         rightPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         leftPane.clickAction = { [weak self] in
-            guard let self, let tab = self.configuredLeftTab else { return }
-            tab.performAction(with: self.owner)
+            self?.handlePaneClick(isLeft: true)
         }
         rightPane.clickAction = { [weak self] in
-            guard let self, let tab = self.configuredRightTab else { return }
-            tab.performAction(with: self.owner)
+            self?.handlePaneClick(isLeft: false)
         }
 
         // Vertical seam in the gap between the two panes so the pair
@@ -597,6 +595,21 @@ class SidebarSplitPairCellView: SidebarCellView {
             make.width.equalTo(1)
             make.height.equalTo(16)
         }
+    }
+
+    private func handlePaneClick(isLeft: Bool) {
+        guard let tab = (isLeft ? configuredLeftTab : configuredRightTab) else { return }
+        let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+        if isCommandClick,
+           let leftTab = configuredLeftTab,
+           let rightTab = configuredRightTab,
+           browserState?.toggleMultiSelectionForSplitPair(leftTab: leftTab, rightTab: rightTab) == true {
+            return
+        }
+        if browserState?.multiSelection.isActive == true {
+            browserState?.clearMultiSelection()
+        }
+        tab.performAction(with: owner)
     }
 
     @discardableResult
@@ -828,6 +841,12 @@ class SidebarSplitPairCellView: SidebarCellView {
                     self?.reresolvePairOrderIfNeeded()
                 }
                 .store(in: &cancellables)
+            state.$multiSelection
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.updateSelected()
+                }
+                .store(in: &cancellables)
         }
 
         for tab in [pair.leftTab, pair.rightTab] {
@@ -946,11 +965,16 @@ class SidebarSplitPairCellView: SidebarCellView {
 
     private func updateSelected() {
         guard let pair = item as? SplitPairSidebarItem else { return }
-        // Whole cell flips to the selected pill when *either* pane is the
-        // focusing tab. The HoverableView prioritizes its `selectedColor`
-        // over its hover tint, so the cell-level NSTrackingArea-driven
-        // hover background underneath cleanly yields to the active fill.
-        outerBackground.isSelected = pair.leftTab.isActive || pair.rightTab.isActive
+        // Match SideTabView: active split rows use the regular selected
+        // fill, while temporary multi-selection uses the sub-selected fill.
+        let state = browserState ?? pair.browserState
+        let isMultiSelected = state?.multiSelection.contains(pair.leftTab.guid) == true ||
+            state?.multiSelection.contains(pair.rightTab.guid) == true
+        let isActive = pair.leftTab.isActive || pair.rightTab.isActive
+        outerBackground.selectedColor = NSColor(
+            resource: isActive ? .sidebarTabSelected : .sidebarTabSubSelected
+        )
+        outerBackground.isSelected = isActive || isMultiSelected
     }
 
     /// Re-binds the cell when the pair's membership changed in place — a

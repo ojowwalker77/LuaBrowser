@@ -357,9 +357,6 @@
     "Change Color" : {
       "comment" : "Tab group context menu - Submenu to change the group color"
     },
-    "Change Icon" : {
-      "comment" : "Spaces menu - Submenu to change the active Space's icon"
-    },
     "Change Icon…" : {
       "comment" : "Opens the icon/emoji picker for a Space\nSpaces menu - opens the icon/emoji picker below the active Space's icon\nTab-area menu - opens the icon/emoji picker below the active Space's icon"
     },
@@ -686,9 +683,6 @@
     },
     "Enable External Data Connectors" : {
       "comment" : "AI settings - Toggle to enable external data connectors"
-    },
-    "Enable Spaces" : {
-      "comment" : "View menu - Master toggle for the Spaces feature"
     },
     "Enter a name for the new folder." : {
       "comment" : "Bookmark editor - Inline new folder creation subtitle"
@@ -1097,9 +1091,6 @@
     },
     "No share actions available" : {
       "comment" : "Address bar menu - Empty share submenu item"
-    },
-    "No Space" : {
-      "comment" : "Active-Space header fallback when no Space is selected"
     },
     "Not configured" : {
       "comment" : "Phi Link - Custom bot not configured status"

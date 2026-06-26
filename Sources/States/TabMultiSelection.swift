@@ -27,6 +27,14 @@ struct TabMultiSelection: Equatable {
         }
     }
 
+    mutating func insert(_ guid: Int) {
+        guids.insert(guid)
+    }
+
+    mutating func remove(_ guid: Int) {
+        guids.remove(guid)
+    }
+
     /// Drops any guids not present in `valid`, e.g. after their tabs close.
     mutating func formIntersection(_ valid: Set<Int>) {
         guids.formIntersection(valid)

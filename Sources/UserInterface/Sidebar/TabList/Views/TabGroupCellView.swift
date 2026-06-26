@@ -490,7 +490,7 @@ final class TabGroupCellView: SidebarCellView {
         innerTable.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         innerTable.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
         innerTable.registerForDraggedTypes([
-            .normalTab, .pinnedTab, .phiBookmark, .sourceWindowId
+            .normalTab, .normalTabs, .pinnedTab, .phiBookmark, .sourceWindowId
         ])
 
         // Cell width is controlled by `GroupTabsTableView.frameOfCell`,
@@ -921,10 +921,31 @@ extension TabGroupCellView {
     @objc fileprivate func innerTableClicked(_ sender: NSTableView) {
         let row = sender.clickedRow
         guard row >= 0,
-              currentMemberOrder.indices.contains(row),
-              let tab = tabsByGuid[currentMemberOrder[row]]
+              currentMemberOrder.indices.contains(row)
         else { return }
-        tab.performAction(with: nil)
+        activateMemberRow(for: currentMemberOrder[row])
+    }
+
+    fileprivate func handleMultiSelectionCommandClick(for key: Int) -> Bool {
+        guard let state = configuredBrowserState else { return false }
+        if let pair = splitPairsByKey[key] {
+            return state.toggleMultiSelectionForSplitPair(
+                leftTab: pair.leftTab,
+                rightTab: pair.rightTab
+            )
+        }
+        if let tab = tabsByGuid[key] {
+            return state.toggleMultiSelection(for: tab)
+        }
+        return false
+    }
+
+    fileprivate func activateMemberRow(for key: Int) {
+        if let pair = splitPairsByKey[key] {
+            pair.performAction(with: nil)
+            return
+        }
+        tabsByGuid[key]?.performAction(with: nil)
     }
 }
 
@@ -1025,22 +1046,22 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
 
     func tableView(_ tableView: GroupTabsTableView,
                    didClickRow row: Int) {
-        guard currentMemberOrder.indices.contains(row),
-              let tab = tabsByGuid[currentMemberOrder[row]] else {
+        guard currentMemberOrder.indices.contains(row) else {
             return
         }
+        let key = currentMemberOrder[row]
         // Cmd+click toggles multi-selection; a plain click clears it first.
         if let state = configuredBrowserState {
             let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
             if isCommandClick,
-               state.toggleMultiSelection(for: tab) {
+               handleMultiSelectionCommandClick(for: key) {
                 return
             }
             if state.multiSelection.isActive {
                 state.clearMultiSelection()
             }
         }
-        tab.performAction(with: nil)
+        activateMemberRow(for: key)
     }
 
     func tableView(_ tableView: GroupTabsTableView,
@@ -1096,21 +1117,26 @@ extension TabGroupCellView: GroupTabsDragSource {
         // existing `.normalTab` drop handlers (reorder, pin, bookmark)
         // pick up the split-as-a-unit semantics automatically.
         let key = currentMemberOrder[row]
-        let guid: Int
+        let dragTab: Tab
         if let pair = splitPairsByKey[key] {
-            guid = pair.leftTab.guid
-        } else if tabsByGuid[key] != nil {
-            guid = key
+            dragTab = pair.leftTab
+        } else if let tab = tabsByGuid[key] {
+            dragTab = tab
         } else {
             return nil
         }
 
         let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(String(guid), forType: .normalTab)
+        pasteboardItem.setString(String(dragTab.guid), forType: .normalTab)
         pasteboardItem.setString(String(state.windowId), forType: .sourceWindowId)
+        let batchIds = state.multiSelectionDragTabIds(startingFrom: dragTab)
+        if let ids = batchIds {
+            pasteboardItem.setString(ids.map(String.init).joined(separator: ","),
+                                     forType: .normalTabs)
+        }
         AppLogDebug(
-            "[TAB_GROUPS][INNER_DRAG] dataSource.pasteboardWriter guid=\(guid) " +
-            "windowId=\(state.windowId)"
+            "[TAB_GROUPS][INNER_DRAG] dataSource.pasteboardWriter guid=\(dragTab.guid) " +
+            "windowId=\(state.windowId) batchIds=\(batchIds ?? [])"
         )
         return pasteboardItem
     }

@@ -5,8 +5,33 @@
 
 import Foundation
 import Combine
+
 /// Window-scoped browser state for tabs, layout, and sidebar UI.
 class BrowserState {
+    struct NormalTabRelativeOrderMove: Equatable {
+        enum Anchor: Equatable {
+            case before(Int)
+            case after(Int)
+        }
+
+        let tabId: Int
+        let anchor: Anchor
+    }
+
+    enum NormalTabRelativeOrderSyncOperation: Equatable {
+        case tab(NormalTabRelativeOrderMove)
+        case split(splitId: String, tabIds: [Int], toIndex: Int)
+    }
+
+    private struct NormalTabRelativeOrderSyncUnit {
+        let tabIds: [Int]
+        let splitId: String?
+
+        var firstTabId: Int { tabIds[0] }
+        var lastTabId: Int { tabIds[tabIds.count - 1] }
+        var isSplit: Bool { splitId != nil }
+    }
+
     /// Tabs mirrored from Chromium, including their order.
     @Published var tabs: [Tab] = []
     /// Non-pinned tabs shown in the sidebar list.
@@ -880,6 +905,39 @@ class BrowserState {
         // The active tab is always implicitly included; toggling it is a no-op.
         if tab.guid == focusingTab?.guid { return true }
         multiSelection.toggle(tab.guid)
+        return true
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleMultiSelectionForSplitPair(leftTab: Tab, rightTab: Tab) -> Bool {
+        guard TabMultiSelection.isEnabled else {
+            clearMultiSelection()
+            return false
+        }
+        guard activeGroupOverviewToken == nil,
+              !leftTab.isPinned,
+              !rightTab.isPinned,
+              !isBookmarkBackedTab(leftTab),
+              !isBookmarkBackedTab(rightTab) else {
+            clearMultiSelection()
+            return false
+        }
+
+        let paneIds = [leftTab.guid, rightTab.guid]
+        let selectableIds: [Int]
+        if let activeGuid = focusingTab?.guid {
+            selectableIds = paneIds.filter { $0 != activeGuid }
+        } else {
+            selectableIds = paneIds
+        }
+        guard !selectableIds.isEmpty else { return true }
+
+        if selectableIds.contains(where: { multiSelection.contains($0) }) {
+            selectableIds.forEach { multiSelection.remove($0) }
+        } else {
+            selectableIds.forEach { multiSelection.insert($0) }
+        }
         return true
     }
 
@@ -2233,6 +2291,7 @@ class BrowserState {
             return
         }
 
+        let beforeOrder = normalTabOrder
         let snappedToIndex = snapDropOutsideSplitPair(toIndex: toIndex,
                                                       fromIndex: firstSourceIndex)
         let clampedToIndex = min(max(0, snappedToIndex), normalTabOrder.count)
@@ -2263,6 +2322,12 @@ class BrowserState {
 
         normalTabOrder = newOrder
         updateNormalTabs()
+        AppLogDebug(
+            "[SidebarMultiDrag] local reorder windowId=\(windowId) " +
+            "requestedIds=\(requestedIds) movingIds=\(movingIds) " +
+            "toIndex=\(toIndex) snappedToIndex=\(snappedToIndex) " +
+            "insertIndex=\(insertIndex) before=\(beforeOrder) after=\(normalTabOrder)"
+        )
 
         if syncChromiumOrder {
             syncNormalTabsRelativeOrderToChromium(tabIds: movingIds)
@@ -2766,33 +2831,299 @@ class BrowserState {
     }
 
     func syncNormalTabsRelativeOrderToChromium(tabIds: [Int]) {
-        for tabId in tabIds {
-            syncNormalTabRelativeOrderToChromium(tabId: tabId)
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogDebug(
+                "[SidebarMultiDrag] Chromium sync skipped: no bridge " +
+                "windowId=\(windowId) tabIds=\(tabIds) order=\(normalTabOrder)"
+            )
+            return
         }
+        let operations = normalTabRelativeOrderSyncOperations(tabIds: tabIds)
+        AppLogDebug(
+            "[SidebarMultiDrag] Chromium sync plan windowId=\(windowId) " +
+            "tabIds=\(tabIds) order=\(normalTabOrder) operations=\(operations)"
+        )
+        for operation in operations {
+            switch operation {
+            case .tab(let move):
+                syncNormalTabRelativeOrderToChromium(move, bridge: bridge)
+            case .split(let splitId, let splitTabIds, let toIndex):
+                AppLogDebug(
+                    "[SidebarMultiDrag] bridge.moveSplit splitId=\(splitId) " +
+                    "tabIds=\(splitTabIds) toIndex=\(toIndex)"
+                )
+                bridge.moveSplit(splitId,
+                                 to: Int32(toIndex),
+                                 windowId: windowId.int64Value)
+            }
+        }
+    }
+
+    func normalTabRelativeOrderSyncOperations(tabIds: [Int]) -> [NormalTabRelativeOrderSyncOperation] {
+        let movingIds = normalTabRelativeOrderMovingIds(tabIds: tabIds)
+        guard !movingIds.isEmpty else { return [] }
+        let units = normalTabRelativeOrderSyncUnits(movingIds: movingIds)
+        guard units.contains(where: \.isSplit) else {
+            return normalTabRelativeOrderTabSyncMoves(tabIds: tabIds).map {
+                .tab($0)
+            }
+        }
+        guard movingIds.count > 1 else {
+            return units.flatMap { unit -> [NormalTabRelativeOrderSyncOperation] in
+                if let splitId = unit.splitId {
+                    guard let toIndex = splitInsertionIndex(for: unit.tabIds) else { return [] }
+                    return [.split(splitId: splitId, tabIds: unit.tabIds, toIndex: toIndex)]
+                }
+                return normalTabRelativeOrderSyncMove(tabId: unit.firstTabId).map {
+                    [.tab($0)]
+                } ?? []
+            }
+        }
+        guard let firstIndex = normalTabOrder.firstIndex(of: movingIds[0]),
+              let lastIndex = normalTabOrder.firstIndex(of: movingIds[movingIds.count - 1]),
+              lastIndex - firstIndex + 1 == movingIds.count else {
+            return units.flatMap { unit -> [NormalTabRelativeOrderSyncOperation] in
+                if let splitId = unit.splitId {
+                    guard let toIndex = splitInsertionIndex(for: unit.tabIds) else { return [] }
+                    return [.split(splitId: splitId, tabIds: unit.tabIds, toIndex: toIndex)]
+                }
+                return normalTabRelativeOrderSyncMove(tabId: unit.firstTabId).map {
+                    [.tab($0)]
+                } ?? []
+            }
+        }
+
+        var simulatedStripOrder = chromiumStripOrderForRelativeSync()
+        var operations: [NormalTabRelativeOrderSyncOperation] = []
+
+        if lastIndex + 1 < normalTabOrder.count {
+            var anchorTabId = splitSafeBeforeAnchorTabId(normalTabOrder[lastIndex + 1])
+            for unit in units.reversed() {
+                if let splitId = unit.splitId {
+                    guard let toIndex = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                                   before: anchorTabId,
+                                                                   order: &simulatedStripOrder) else {
+                        continue
+                    }
+                    operations.append(.split(splitId: splitId,
+                                             tabIds: unit.tabIds,
+                                             toIndex: toIndex))
+                } else {
+                    let move = NormalTabRelativeOrderMove(tabId: unit.firstTabId,
+                                                          anchor: .before(anchorTabId))
+                    _ = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                   before: anchorTabId,
+                                                   order: &simulatedStripOrder)
+                    operations.append(.tab(move))
+                }
+                anchorTabId = unit.firstTabId
+            }
+            return operations
+        }
+
+        if firstIndex > 0 {
+            var anchorTabId = splitSafeAfterAnchorTabId(normalTabOrder[firstIndex - 1])
+            for unit in units {
+                if let splitId = unit.splitId {
+                    guard let toIndex = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                                   after: anchorTabId,
+                                                                   order: &simulatedStripOrder) else {
+                        continue
+                    }
+                    operations.append(.split(splitId: splitId,
+                                             tabIds: unit.tabIds,
+                                             toIndex: toIndex))
+                } else {
+                    let move = NormalTabRelativeOrderMove(tabId: unit.firstTabId,
+                                                          anchor: .after(anchorTabId))
+                    _ = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                   after: anchorTabId,
+                                                   order: &simulatedStripOrder)
+                    operations.append(.tab(move))
+                }
+                anchorTabId = unit.lastTabId
+            }
+            return operations
+        }
+
+        return []
+    }
+
+    private func syncNormalTabRelativeOrderToChromium(_ move: NormalTabRelativeOrderMove,
+                                                      bridge: PhiChromiumBridgeProtocol) {
+        switch move.anchor {
+        case .before(let anchorTabId):
+            AppLogDebug(
+                "[SidebarMultiDrag] bridge.moveTab tabId=\(move.tabId) " +
+                "beforeTabId=\(anchorTabId)"
+            )
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+        case .after(let anchorTabId):
+            AppLogDebug(
+                "[SidebarMultiDrag] bridge.moveTab tabId=\(move.tabId) " +
+                "afterTabId=\(anchorTabId)"
+            )
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
+    }
+
+    func normalTabRelativeOrderSyncMoves(tabIds: [Int]) -> [NormalTabRelativeOrderMove] {
+        normalTabRelativeOrderTabSyncMoves(tabIds: tabIds)
+    }
+
+    private func normalTabRelativeOrderTabSyncMoves(tabIds: [Int]) -> [NormalTabRelativeOrderMove] {
+        let movingIds = normalTabRelativeOrderMovingIds(tabIds: tabIds)
+        guard !movingIds.isEmpty else { return [] }
+        guard movingIds.count > 1 else {
+            return movingIds.compactMap { normalTabRelativeOrderSyncMove(tabId: $0) }
+        }
+        guard let firstIndex = normalTabOrder.firstIndex(of: movingIds[0]),
+              let lastIndex = normalTabOrder.firstIndex(of: movingIds[movingIds.count - 1]),
+              lastIndex - firstIndex + 1 == movingIds.count else {
+            return movingIds.compactMap { normalTabRelativeOrderSyncMove(tabId: $0) }
+        }
+
+        if lastIndex + 1 < normalTabOrder.count {
+            var anchorTabId = splitSafeBeforeAnchorTabId(normalTabOrder[lastIndex + 1])
+            return movingIds.reversed().map { tabId in
+                defer { anchorTabId = tabId }
+                return NormalTabRelativeOrderMove(tabId: tabId, anchor: .before(anchorTabId))
+            }
+        }
+
+        if firstIndex > 0 {
+            var anchorTabId = splitSafeAfterAnchorTabId(normalTabOrder[firstIndex - 1])
+            return movingIds.map { tabId in
+                defer { anchorTabId = tabId }
+                return NormalTabRelativeOrderMove(tabId: tabId, anchor: .after(anchorTabId))
+            }
+        }
+
+        return []
+    }
+
+    private func normalTabRelativeOrderMovingIds(tabIds: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        let requestedIds = tabIds.filter { seen.insert($0).inserted }
+        let requestedSet = Set(requestedIds)
+        return normalTabOrder.filter { requestedSet.contains($0) }
+    }
+
+    private func normalTabRelativeOrderSyncUnits(movingIds: [Int]) -> [NormalTabRelativeOrderSyncUnit] {
+        var units: [NormalTabRelativeOrderSyncUnit] = []
+        var consumed = Set<Int>()
+        let movingSet = Set(movingIds)
+        for tabId in movingIds {
+            if consumed.contains(tabId) { continue }
+            if let group = splitGroup(forTabId: tabId),
+               !group.isPinned,
+               let partnerId = group.partnerTabId(of: tabId),
+               movingSet.contains(partnerId) {
+                let pairIds = movingIds.filter {
+                    $0 == tabId || $0 == partnerId
+                }
+                if pairIds.count == 2 {
+                    units.append(NormalTabRelativeOrderSyncUnit(tabIds: pairIds,
+                                                                splitId: group.id))
+                    consumed.insert(tabId)
+                    consumed.insert(partnerId)
+                    continue
+                }
+            }
+            units.append(NormalTabRelativeOrderSyncUnit(tabIds: [tabId],
+                                                        splitId: nil))
+            consumed.insert(tabId)
+        }
+        return units
+    }
+
+    private func chromiumStripOrderForRelativeSync() -> [Int] {
+        let ordered = tabs.sorted { lhs, rhs in
+            if lhs.index == rhs.index { return lhs.guid < rhs.guid }
+            return lhs.index < rhs.index
+        }.map(\.guid)
+        return ordered.isEmpty ? normalTabOrder : ordered
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            before anchorTabId: Int,
+                                            order: inout [Int]) -> Int? {
+        moveTabIdsInSimulatedStrip(tabIds,
+                                   insertionIndex: { $0.firstIndex(of: anchorTabId) },
+                                   order: &order)
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            after anchorTabId: Int,
+                                            order: inout [Int]) -> Int? {
+        moveTabIdsInSimulatedStrip(tabIds,
+                                   insertionIndex: { currentOrder in
+                                       currentOrder.firstIndex(of: anchorTabId).map { $0 + 1 }
+                                   },
+                                   order: &order)
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            insertionIndex: ([Int]) -> Int?,
+                                            order: inout [Int]) -> Int? {
+        let movingSet = Set(tabIds)
+        guard order.contains(where: { movingSet.contains($0) }) else { return nil }
+        order.removeAll { movingSet.contains($0) }
+        let insertIndex = min(max(0, insertionIndex(order) ?? order.count), order.count)
+        order.insert(contentsOf: tabIds, at: insertIndex)
+        return insertIndex
+    }
+
+    private func splitInsertionIndex(for tabIds: [Int]) -> Int? {
+        var order = chromiumStripOrderForRelativeSync()
+        guard let firstTabId = tabIds.first,
+              let currentIndex = order.firstIndex(of: firstTabId) else {
+            return nil
+        }
+        return moveTabIdsInSimulatedStrip(tabIds,
+                                          insertionIndex: { _ in currentIndex },
+                                          order: &order)
     }
 
     private func syncNormalTabRelativeOrderToChromium(tabId: Int) {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge,
-              let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+              let move = normalTabRelativeOrderSyncMove(tabId: tabId) else {
             return
+        }
+        switch move.anchor {
+        case .before(let anchorTabId):
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+        case .after(let anchorTabId):
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
+    }
+
+    private func normalTabRelativeOrderSyncMove(tabId: Int) -> NormalTabRelativeOrderMove? {
+        guard let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+            return nil
         }
 
         if movedIndex + 1 < normalTabOrder.count {
             let anchorTabId = splitSafeBeforeAnchorTabId(
                 normalTabOrder[movedIndex + 1])
-            bridge.moveTab(withWindowId: windowId.int64Value,
-                           tabId: tabId.int64Value,
-                           beforeTabId: anchorTabId.int64Value)
-            return
+            return NormalTabRelativeOrderMove(tabId: tabId, anchor: .before(anchorTabId))
         }
 
         if movedIndex > 0 {
             let anchorTabId = splitSafeAfterAnchorTabId(
                 normalTabOrder[movedIndex - 1])
-            bridge.moveTab(withWindowId: windowId.int64Value,
-                           tabId: tabId.int64Value,
-                           afterTabId: anchorTabId.int64Value)
+            return NormalTabRelativeOrderMove(tabId: tabId, anchor: .after(anchorTabId))
         }
+
+        return nil
     }
 
     private func splitSafeBeforeAnchorTabId(_ anchorTabId: Int) -> Int {

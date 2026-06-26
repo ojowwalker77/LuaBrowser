@@ -33,7 +33,12 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
     }
 
     private func seed(_ state: BrowserState, guids: [Int]) {
-        state.tabs = guids.map { Tab(guid: $0, url: "https://e\($0).example", isActive: false, index: 0) }
+        state.tabs = guids.enumerated().map { index, guid in
+            Tab(guid: guid,
+                url: "https://e\(guid).example",
+                isActive: false,
+                index: index)
+        }
         state.updateNormalTabs()
     }
 
@@ -101,6 +106,51 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[2]), [1, 2, 3])
     }
 
+    func testToggleInactiveSplitPairSelectsBothPanes() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.focuseTab(state.tabs[0])
+
+        state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[1], rightTab: state.tabs[2])
+
+        XCTAssertEqual(state.multiSelection.guids, [2, 3])
+        XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[1]), [1, 2, 3])
+
+        state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[1], rightTab: state.tabs[2])
+
+        XCTAssertFalse(state.multiSelection.isActive)
+    }
+
+    func testToggleActiveSplitPairSelectsPartnerPane() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.focuseTab(state.tabs[1])
+
+        state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[1], rightTab: state.tabs[2])
+
+        XCTAssertEqual(state.multiSelection.guids, [3])
+        XCTAssertEqual(state.orderedMultiSelectedTabs.map(\.guid), [2, 3])
+        XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[1]), [2, 3])
+
+        state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[1], rightTab: state.tabs[2])
+
+        XCTAssertFalse(state.multiSelection.isActive)
+    }
+
     func testMoveNormalTabsLocallyMovesIdsAsOrderedBlock() throws {
         let state = try makeState()
         seed(state, guids: [1, 2, 3, 4, 5])
@@ -108,6 +158,54 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         state.moveNormalTabsLocally(tabIds: [4, 2], to: 5, syncChromiumOrder: false)
 
         XCTAssertEqual(state.normalTabs.map(\.guid), [1, 3, 5, 2, 4])
+    }
+
+    func testMoveNormalTabsLocallyMovesNonContiguousSelectionToFront() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4, 5])
+
+        state.moveNormalTabsLocally(tabIds: [2, 4, 5], to: 0, syncChromiumOrder: false)
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [2, 4, 5, 1, 3])
+    }
+
+    func testRelativeOrderSyncMovesBatchBeforeExternalAnchorFromBackToFront() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4, 5])
+
+        state.moveNormalTabsLocally(tabIds: [2, 4, 5], to: 0, syncChromiumOrder: false)
+
+        XCTAssertEqual(
+            state.normalTabRelativeOrderSyncMoves(tabIds: [2, 4, 5]),
+            [
+                BrowserState.NormalTabRelativeOrderMove(tabId: 5, anchor: .before(1)),
+                BrowserState.NormalTabRelativeOrderMove(tabId: 4, anchor: .before(5)),
+                BrowserState.NormalTabRelativeOrderMove(tabId: 2, anchor: .before(4)),
+            ]
+        )
+    }
+
+    func testRelativeOrderSyncOperationsMoveSplitAsUnit() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4, 5])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+
+        state.moveNormalTabsLocally(tabIds: [2, 3, 5], to: 0, syncChromiumOrder: false)
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [2, 3, 5, 1, 4])
+        XCTAssertEqual(
+            state.normalTabRelativeOrderSyncOperations(tabIds: [2, 3, 5]),
+            [
+                .tab(BrowserState.NormalTabRelativeOrderMove(tabId: 5, anchor: .before(1))),
+                .split(splitId: "split-2-3", tabIds: [2, 3], toIndex: 0),
+            ]
+        )
     }
 
     func testPinnedTabToggleClearsSelection() throws {
