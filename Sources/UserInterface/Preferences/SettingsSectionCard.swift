@@ -80,3 +80,17 @@ struct SettingsRowDivider: View {
         Divider()
     }
 }
+
+/// Small "Default" pill marking the default Space or Profile in the
+/// master-detail settings lists, so the system default — which can't be deleted
+/// or moved to another profile — is identifiable at a glance.
+struct SettingsDefaultBadge: View {
+    var body: some View {
+        Text(NSLocalizedString("Default", comment: "Settings - badge marking the default Space or Profile"))
+            .font(.system(size: 10, weight: .medium))
+            .themedForeground(.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.secondary.opacity(0.15), in: Capsule())
+    }
+}

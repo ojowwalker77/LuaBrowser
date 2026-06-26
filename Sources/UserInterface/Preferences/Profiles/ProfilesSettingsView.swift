@@ -93,6 +93,7 @@ struct ProfilesSettingsView: View {
 
     private func profileListRow(_ profile: PhiBrowserProfile) -> some View {
         let isSelected = profile.profileId == selectedProfileId
+        let isDefault = profile.profileId == LocalStore.defaultProfileId
         let count = spaceManager.spaces.filter { $0.profileId == profile.profileId }.count
         return Button {
             select(profile.profileId)
@@ -102,6 +103,9 @@ struct ProfilesSettingsView: View {
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
                     .lineLimit(1)
+                if isDefault {
+                    SettingsDefaultBadge()
+                }
                 Spacer(minLength: 4)
                 Text(count == 0
                      ? NSLocalizedString("Not used", comment: "Profiles settings - tag for a profile with no Spaces")

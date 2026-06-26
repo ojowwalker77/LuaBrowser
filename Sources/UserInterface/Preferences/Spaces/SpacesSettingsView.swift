@@ -128,6 +128,9 @@ struct SpacesSettingsView: View {
                         .font(.system(size: 13))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
+                    if isDefault {
+                        SettingsDefaultBadge()
+                    }
                     Spacer(minLength: 4)
                 }
                 .contentShape(Rectangle())
@@ -390,7 +393,11 @@ struct SpacesSettingsView: View {
         let activeProfileId = selectedSpace?.profileId
             ?? spaceManager.spaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })?.profileId
             ?? LocalStore.defaultProfileId
-        CreateSpacePanel.requestCreation(initialProfileId: activeProfileId)
+        // Always present the floating popup here. `requestCreation` would route
+        // to the active browser window's sidebar overlay in vertical layouts —
+        // which lives in a different window than Settings, so the form would
+        // appear buried behind the Settings window instead of in front of it.
+        CreateSpacePanel.present(manager: spaceManager, initialProfileId: activeProfileId)
     }
 
     private func deleteSelected() {

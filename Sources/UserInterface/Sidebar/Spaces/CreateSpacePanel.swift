@@ -66,7 +66,7 @@ struct CreateSpacePanel: View {
             formStack
                 .padding(.horizontal, 20)
                 .padding(.vertical, 24)
-                .frame(width: Self.contentWidth + 40)
+                .frame(width: formMaxWidth + 40)
         case .sidebar:
             // Transparent so the themed visual-effect backdrop installed by
             // `SidebarViewController.showCreateSpaceOverlay` shows through —
@@ -104,10 +104,17 @@ struct CreateSpacePanel: View {
         // One bounded, centered column so every element shares a width and the
         // form never stretches across a wide sidebar. In a narrower sidebar it
         // shrinks to fit; the icon grid reflows to match.
-        .frame(maxWidth: Self.contentWidth)
+        .frame(maxWidth: formMaxWidth)
     }
 
-    private static let contentWidth: CGFloat = 200
+    /// Bounded column width. The floating popup uses a comfortable dialog width;
+    /// the sidebar overlay stays narrow so it fits a slim sidebar.
+    private var formMaxWidth: CGFloat {
+        style == .window ? Self.windowContentWidth : Self.sidebarContentWidth
+    }
+
+    private static let sidebarContentWidth: CGFloat = 200
+    private static let windowContentWidth: CGFloat = 280
 
     // MARK: - Sections
 
