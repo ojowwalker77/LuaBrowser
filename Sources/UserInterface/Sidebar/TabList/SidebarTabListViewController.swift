@@ -1848,12 +1848,22 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
             containerView: hostVC?.view
         )
-        // When dragging a tab that belongs to a split, override the default
-        // single-row drag image with a composite that shows both pair members
-        // stacked in their visual order, so the animation reads as "the whole
-        // split is moving" (the drop layer already moves both members).
         if let draggedTab = sessionItem as? Tab {
-            applySplitPairDragImageIfNeeded(session: session, draggedTab: draggedTab)
+            let didApplyMultiSelectionPreview = applyMultiSelectionDragImageIfNeeded(
+                session: session,
+                startingFrom: draggedTab,
+                sourceImage: nil,
+                sourceGroupCell: nil,
+                browserState: browserState,
+                outlineView: self.outlineView
+            )
+            // When dragging a tab that belongs to a split, override the default
+            // single-row drag image with a composite that shows both pair members
+            // stacked in their visual order, so the animation reads as "the whole
+            // split is moving" (the drop layer already moves both members).
+            if !didApplyMultiSelectionPreview {
+                applySplitPairDragImageIfNeeded(session: session, draggedTab: draggedTab)
+            }
         }
     }
 
@@ -1931,7 +1941,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         upper.draw(in: upperRect, from: NSRect(origin: .zero, size: upper.size), operation: .sourceOver, fraction: 1.0)
         return image
     }
-    
+
     func outlineView(_ outlineView: NSOutlineView,
                      draggingSession session: NSDraggingSession,
                      endedAt screenPoint: NSPoint,
@@ -3999,6 +4009,14 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
             screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
             containerView: hostVC?.view
         )
+        _ = applyMultiSelectionDragImageIfNeeded(
+            session: session,
+            startingFrom: tab,
+            sourceImage: nil,
+            sourceGroupCell: cell,
+            browserState: browserState,
+            outlineView: outlineView
+        )
     }
 
     func tabGroupCell(_ cell: TabGroupCellView,
@@ -4269,6 +4287,14 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
             draggingItem: tab,
             screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
             containerView: hostVC?.view
+        )
+        _ = applyMultiSelectionDragImageIfNeeded(
+            session: session,
+            startingFrom: tab,
+            sourceImage: image,
+            sourceGroupCell: nil,
+            browserState: browserState,
+            outlineView: outlineView
         )
     }
     

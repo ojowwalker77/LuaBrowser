@@ -55,6 +55,7 @@ struct SideTabView: View {
             }
 
             UnifiedTabTitleView(viewModel: model)
+                .themedForeground(.textPrimary)
 
             if model.isHovered {
                 UnifiedTabCloseButton { onClose?() }

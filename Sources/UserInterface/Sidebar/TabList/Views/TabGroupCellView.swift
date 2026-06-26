@@ -907,6 +907,25 @@ final class TabGroupCellView: SidebarCellView {
 
         return groupItem
     }
+
+    func draggingImageForMemberTabId(_ tabId: Int) -> NSImage? {
+        guard let row = currentMemberOrder.firstIndex(where: { key in
+            if let pair = splitPairsByKey[key] {
+                return pair.leftTab.guid == tabId || pair.rightTab.guid == tabId
+            }
+            return key == tabId
+        }) else {
+            return nil
+        }
+        guard let cell = innerTable.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? SidebarCellView else {
+            return nil
+        }
+        return cell.createDraggingImage()
+    }
 }
 
 // MARK: - Click activation

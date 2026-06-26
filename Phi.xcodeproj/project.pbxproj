@@ -364,6 +364,7 @@
 		CCBF8F4D2E6543E800B9A99E /* TabSectionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */; };
 		CCBF8F4E2E6543E800B9A99E /* SidebarCellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4A2E6543E800B9A99E /* SidebarCellViews.swift */; };
 		CCBF8F502E65445800B9A99E /* SidebarTabListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */; };
+		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		CCBF8F592E656DC000B9A99E /* TabModel+Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */; };
 		CCBF8F622E65719600B9A99E /* SideBarOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F612E65719600B9A99E /* SideBarOutlineView.swift */; };
 		CCBF8F642E65835900B9A99E /* BookmarkModel+Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F632E65835900B9A99E /* BookmarkModel+Sidebar.swift */; };
@@ -847,6 +848,7 @@
 		CCBF8F4A2E6543E800B9A99E /* SidebarCellViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarCellViews.swift; sourceTree = "<group>"; };
 		CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSectionController.swift; sourceTree = "<group>"; };
 		CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarTabListViewController.swift; sourceTree = "<group>"; };
+		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TabModel+Sidebar.swift"; sourceTree = "<group>"; };
 		CCBF8F612E65719600B9A99E /* SideBarOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideBarOutlineView.swift; sourceTree = "<group>"; };
 		CCBF8F632E65835900B9A99E /* BookmarkModel+Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BookmarkModel+Sidebar.swift"; sourceTree = "<group>"; };
@@ -1667,6 +1669,7 @@
 				CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */,
 				CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */,
 				CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */,
+				C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */,
 				CCBF8F492E6543E800B9A99E /* BookmarkSectionController.swift */,
 				CCBF8F432E653F3400B9A99E /* SidebarItem.swift */,
 				CCBF8F6A2E66A2C300B9A99E /* Views */,
@@ -2471,6 +2474,7 @@
 				B02587122E43038B001B08FC /* Tab.swift in Sources */,
 				8E9DAF422F765E83004EA160 /* PasswordManagerViewController.swift in Sources */,
 				CCBF8F502E65445800B9A99E /* SidebarTabListViewController.swift in Sources */,
+				C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */,
 				CCBF8F592E656DC000B9A99E /* TabModel+Sidebar.swift in Sources */,
 				37C1B2F52EE287E700DD4496 /* OverlayToastContainer.swift in Sources */,
 				CC288A692E4F12CB004A6C1C /* SidebarViewController.swift in Sources */,
