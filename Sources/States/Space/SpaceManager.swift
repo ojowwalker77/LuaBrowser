@@ -1561,6 +1561,7 @@ final class SpaceWindowSlot: ObservableObject {
         didSet {
             guard oldValue !== visibleController else { return }
             observeFrameChanges(on: visibleController)
+            updateWindowsMenuExclusion()
         }
     }
 
@@ -2881,6 +2882,20 @@ final class SpaceWindowSlot: ObservableObject {
         window.orderOut(nil)
     }
 
+    /// Keeps the macOS Window menu (and Dock window list) showing exactly one
+    /// entry per user-perceived window: the slot's visible Space. The sibling
+    /// Space windows are real NSWindows tabbed into the slot's group but hidden
+    /// behind the active one, so without this they'd each list as a separate
+    /// "window" the user never opened. Re-run whenever the visible Space or the
+    /// set of slot windows changes.
+    private func updateWindowsMenuExclusion() {
+        let visibleWindow = visibleController?.window
+        for controller in windowsBySpaceId.values {
+            guard let window = controller.window else { continue }
+            window.isExcludedFromWindowsMenu = window !== visibleWindow
+        }
+    }
+
     /// AppKit does not expose a public setter for `NSWindowTabGroup`'s tab bar.
     /// The tab bar is installed as a titlebar accessory, so keep this
     /// compatibility shim narrow and local to the native tab-group experiment.
@@ -3000,6 +3015,10 @@ final class SpaceWindowSlot: ObservableObject {
         if shouldBecomeVisible {
             visibleController = controller
         }
+        // Exclude this newly registered window from the Window menu unless it's
+        // the visible one. `visibleController`'s didSet covers the case where it
+        // changed above; this also covers a sibling joining without changing it.
+        updateWindowsMenuExclusion()
         // A profile-change respawn left the replaced window on screen until
         // this replacement arrived — retire it now. Deferred one turn:
         // registration runs inside Chromium's synchronous window-created
