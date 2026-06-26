@@ -114,6 +114,21 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    /// One-time backfill for users who completed OOBE before the
+    /// `autoInstallICloudPasswords` preference existed. If the choice was never
+    /// recorded AND there is exactly one (default) profile whose enabled
+    /// extensions already include iCloud Passwords, adopt it as the choice so
+    /// new profiles inherit it. Driven by the extensions-loaded signal so the
+    /// default profile's extensions are known; idempotent + self-healing.
+    func backfillICloudPasswordsPrefIfNeeded(installedExtensionIds: [String]) {
+        let pref = PhiPreferences.PasswordManagerSettings.autoInstallICloudPasswords
+        guard !pref.isSet else { return }
+        refresh()
+        guard profiles.count == 1 else { return }
+        guard installedExtensionIds.contains(PhiExtensionID.icloudPasswords) else { return }
+        pref.save(true)
+    }
+
     /// Schedules a profile for deletion. Completion fires on the main queue
     /// with success/error. The caller (UI) is expected to refuse the action
     /// up front when any Space is bound to this profile — see

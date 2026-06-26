@@ -242,6 +242,12 @@ extension PhiPreferences {
             UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
         }
 
+        /// Whether the user's choice has ever been recorded — distinguishes a
+        /// real `false` from "never set", which gates the existing-user backfill.
+        var isSet: Bool {
+            UserDefaults.standard.object(forKey: rawValue) != nil
+        }
+
         func save(_ value: Bool) {
             UserDefaults.standard.set(value, forKey: rawValue)
         }
