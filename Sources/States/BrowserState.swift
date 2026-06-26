@@ -3548,26 +3548,87 @@ class BrowserState {
         localStore.moveOrCreatePinnedTab(secondPane, after: firstPane.guidInLocalDB, profileId: profileId)
     }
     
-    func moveNormalTab(tabId: Int, toPinnd pinnedIndex: Int, selectAfterMove: Bool = false) {
-        guard let tab = tabs.first(where: { $0.guid == tabId }) else {
-            return
+    private func normalTabTransferUnits(tabIds: [Int]) -> [Tab] {
+        var seen = Set<Int>()
+        let requestedIds = Set(tabIds.filter { seen.insert($0).inserted })
+        guard !requestedIds.isEmpty else { return [] }
+
+        var consumedIds = Set<Int>()
+        var units: [Tab] = []
+        for tab in normalTabs where requestedIds.contains(tab.guid) {
+            guard !consumedIds.contains(tab.guid) else { continue }
+            units.append(tab)
+            consumedIds.insert(tab.guid)
+            if let group = splitGroup(forTabId: tab.guid), !group.isPinned {
+                consumedIds.insert(group.primaryTabId)
+                consumedIds.insert(group.secondaryTabId)
+            }
         }
+        return units
+    }
+
+    private func detachNormalTabFromGroupForPinning(_ tab: Tab) {
         // Phi-side pinning bypasses Chromium's TabStripModel (it stores
         // the tab as a bookmark-backed local entry instead), so the
         // automatic "pinning detaches from group" behavior in
         // `TabStripModel::SetTabPinned` doesn't fire. Detach explicitly
-        // here so all five paths into pinning — the right-click "Pin"
-        // menu plus the four drag-to-pinned-area drop sites (sidebar
-        // and horizontal strip, same- and cross-window) — keep
-        // Chromium's group state and Phi's `tab.groupToken` consistent.
-        // Local clear avoids a transient "pinned + grouped" frame
-        // before the kLeft event round-trips back through the bridge.
+        // so all paths into pinning keep Chromium's group state and Phi's
+        // `tab.groupToken` consistent.
         if tab.groupToken != nil,
            let bridge = ChromiumLauncher.sharedInstance().bridge {
             bridge.removeTabsFromGroup(withWindowId: windowId.int64Value,
-                                        tabIds: [NSNumber(value: Int64(tabId))])
+                                        tabIds: [NSNumber(value: Int64(tab.guid))])
             tab.groupToken = nil
         }
+    }
+
+    @discardableResult
+    @MainActor
+    func moveNormalTabs(tabIds: [Int], toPinnedTabs pinnedIndex: Int) -> Bool {
+        let units = normalTabTransferUnits(tabIds: tabIds)
+        guard !units.isEmpty else { return false }
+
+        let clampedIndex = max(0, min(pinnedIndex, pinnedTabs.count))
+        let snappedIndex = Self.pinnedInsertIndexOutsideSplitPair(
+            clampedIndex,
+            pinnedTabs: pinnedTabs)
+        var afterGuid: String?
+        if snappedIndex > 0, !pinnedTabs.isEmpty {
+            let anchorIndex = min(snappedIndex - 1, pinnedTabs.count - 1)
+            afterGuid = pinnedTabs[anchorIndex].guidInLocalDB
+        }
+
+        var didMove = false
+        for tab in units {
+            if let splitGroup = splitGroup(forTabId: tab.guid), !splitGroup.isPinned {
+                if let pair = pinSplit(splitGroup.id, afterPinnedGuid: afterGuid) {
+                    afterGuid = pair.secondaryGuid
+                    didMove = true
+                }
+                continue
+            }
+
+            detachNormalTabFromGroupForPinning(tab)
+            if let newGuid = moveNormalTabToPinned(tab,
+                                                   after: afterGuid,
+                                                   selectAfterMove: tab.isActive) {
+                afterGuid = newGuid
+                didMove = true
+            }
+        }
+
+        if didMove {
+            clearMultiSelection()
+        }
+        return didMove
+    }
+
+    @discardableResult
+    func moveNormalTab(tabId: Int, toPinnd pinnedIndex: Int, selectAfterMove: Bool = false) -> String? {
+        guard let tab = tabs.first(where: { $0.guid == tabId }) else {
+            return nil
+        }
+        detachNormalTabFromGroupForPinning(tab)
         var afterGuid: String?
         if pinnedIndex > 0, !pinnedTabs.isEmpty {
             let snappedIndex = Self.pinnedInsertIndexOutsideSplitPair(pinnedIndex, pinnedTabs: pinnedTabs)
@@ -3576,7 +3637,9 @@ class BrowserState {
         } else if pinnedIndex == -1, !pinnedTabs.isEmpty {
             afterGuid = pinnedTabs.last!.guidInLocalDB
         }
-        moveNormalTabToPinned(tab, after: afterGuid, selectAfterMove: selectAfterMove)
+        return moveNormalTabToPinned(tab,
+                                     after: afterGuid,
+                                     selectAfterMove: selectAfterMove)
     }
 
     /// Pin a normal tab using an explicit "after" anchor guid instead of an
@@ -3584,7 +3647,10 @@ class BrowserState {
     /// `pinnedTabs` publisher is async (background SwiftData write + main-queue
     /// hop), so an index computed against the post-first-insert state is not
     /// observable yet when a second insert runs synchronously after the first.
-    func moveNormalTabToPinned(_ tab: Tab, after afterGuid: String?, selectAfterMove: Bool = false) {
+    @discardableResult
+    func moveNormalTabToPinned(_ tab: Tab,
+                               after afterGuid: String?,
+                               selectAfterMove: Bool = false) -> String? {
         let tabId = tab.guid
         let affectedChildren = nativeRelationGraph.directChildren(of: tabId)
         nativeRelationGraph.fixOpenersAfterMovingTab(tabId)
@@ -3600,6 +3666,7 @@ class BrowserState {
         if let wrapper = tab.webContentWrapper {
             wrapper.updateTabCustomValue(newGuid)
         }
+        return newGuid
     }
     
     func movePinnedTabOut(pinnedGuid: String, to normalIndex: Int, selectAfterMove: Bool = false) {
@@ -3758,12 +3825,54 @@ class BrowserState {
     /// - Parameters:
     ///   - tabId: Chromium guid of the tab to move.
     ///   - parentGuid: Destination bookmark folder guid, or nil for the root.
-    ///   - index: Destination insertion index inside the parent folder.
+    ///   - index: Destination insertion index inside the parent folder, or nil to append.
     ///   - selectAfterMove: Whether the moved tab should remain selected.
-    func moveNormalTab(tabId: Int, toBookmark parentGuid: String?, index: Int, selectAfterMove: Bool = false) {
+    @discardableResult
+    func moveNormalTabs(tabIds: [Int],
+                        toBookmark parentGuid: String?,
+                        index: Int?) -> Bool {
+        let units = normalTabTransferUnits(tabIds: tabIds)
+        guard !units.isEmpty else { return false }
+
+        var didMove = false
+        var insertedCount = 0
+        for tab in units {
+            let targetIndex = index.map { $0 + insertedCount }
+            if let splitGroup = splitGroup(forTabId: tab.guid), !splitGroup.isPinned {
+                if addSplitBookmarkFromTab(tab,
+                                           toFolderGuid: parentGuid,
+                                           targetIndex: targetIndex) {
+                    insertedCount += 1
+                    didMove = true
+                }
+                continue
+            }
+
+            if moveNormalTab(tabId: tab.guid,
+                             toBookmark: parentGuid,
+                             index: targetIndex) {
+                insertedCount += 1
+                didMove = true
+            }
+        }
+
+        if didMove {
+            clearMultiSelection()
+        }
+        return didMove
+    }
+
+    /// Moves a normal tab into bookmarks.
+    /// - Parameters:
+    ///   - tabId: Chromium guid of the tab to move.
+    ///   - parentGuid: Destination bookmark folder guid, or nil for the root.
+    ///   - index: Destination insertion index inside the parent folder, or nil to append.
+    ///   - selectAfterMove: Whether the moved tab should remain selected.
+    @discardableResult
+    func moveNormalTab(tabId: Int, toBookmark parentGuid: String?, index: Int?, selectAfterMove: Bool = false) -> Bool {
         guard let tab = tabs.first(where: { $0.guid == tabId }),
               let url = tab.url, !url.isEmpty else {
-            return
+            return false
         }
         let newBookmarkGuid = UUID().uuidString
         prepareNormalTabForBookmark(tab, bookmarkGuid: newBookmarkGuid)
@@ -3778,6 +3887,7 @@ class BrowserState {
                                   favicon: tab.liveFaviconData ?? tab.cachedFaviconData)
 
         updateNormalTabs()
+        return true
     }
 
     private func prepareNormalTabForBookmark(_ tab: Tab, bookmarkGuid: String) {

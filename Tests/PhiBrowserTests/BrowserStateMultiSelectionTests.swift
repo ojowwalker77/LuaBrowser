@@ -42,6 +42,17 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         state.updateNormalTabs()
     }
 
+    private func waitUntil(timeout: TimeInterval = 1,
+                           condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTFail("Condition was not met before timeout.")
+        return false
+    }
+
     func testToggleNormalTabEntersAndExits() throws {
         let state = try makeState()
         seed(state, guids: [1, 2, 3])
@@ -206,6 +217,76 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
                 .split(splitId: "split-2-3", tabIds: [2, 3], toIndex: 0),
             ]
         )
+    }
+
+    func testMoveNormalTabsToBookmarksPreservesSplitAsSingleBookmark() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+
+        let moved = state.moveNormalTabs(tabIds: [1, 2, 3, 4],
+                                         toBookmark: nil,
+                                         index: 0)
+
+        XCTAssertTrue(moved)
+        XCTAssertEqual(Set(state.splitBookmarkBindings.values), ["split-2-3"])
+        XCTAssertTrue(waitUntil {
+            state.localStore.fetchBookmarks(parentId: nil as String?,
+                                            profileId: state.profileId).count == 3
+        })
+
+        let bookmarks = state.localStore
+            .fetchBookmarks(parentId: nil as String?, profileId: state.profileId)
+            .sorted { $0.index < $1.index }
+        guard bookmarks.count == 3 else { return }
+        XCTAssertEqual(bookmarks.map { $0.url.absoluteString },
+                       ["https://e1.example/", "https://e2.example/", "https://e4.example/"])
+        XCTAssertEqual(bookmarks[1].secondaryUrl?.absoluteString,
+                       "https://e3.example/")
+    }
+
+    func testMoveNormalTabsToPinnedPreservesSplitAsPinnedPair() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2, 3, 4])
+        state.splits = [
+            SplitGroup(id: "split-2-3",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+
+        let moved = state.moveNormalTabs(tabIds: [2, 3, 4],
+                                         toPinnedTabs: 0)
+
+        XCTAssertTrue(moved)
+        XCTAssertTrue(state.splits.first?.isPinned == true)
+        guard let leftPinnedGuid = state.tabs.first(where: { $0.guid == 2 })?.guidInLocalDB,
+              let rightPinnedGuid = state.tabs.first(where: { $0.guid == 3 })?.guidInLocalDB,
+              let soloPinnedGuid = state.tabs.first(where: { $0.guid == 4 })?.guidInLocalDB else {
+            return XCTFail("Moved tabs did not receive pinned guids")
+        }
+
+        XCTAssertTrue(waitUntil {
+            let pinned = state.localStore.getAllPinnedTabs(for: state.profileId)
+            guard pinned.count == 3 else { return false }
+            let first = pinned[0]
+            let second = pinned[1]
+            return first.guid == leftPinnedGuid
+                && second.guid == rightPinnedGuid
+                && first.splitPartnerGuid == rightPinnedGuid
+                && second.splitPartnerGuid == leftPinnedGuid
+        })
+
+        let pinned = state.localStore.getAllPinnedTabs(for: state.profileId)
+        guard pinned.count == 3 else { return }
+        XCTAssertEqual(pinned.map(\.guid), [leftPinnedGuid, rightPinnedGuid, soloPinnedGuid])
     }
 
     func testPinnedTabToggleClearsSelection() throws {

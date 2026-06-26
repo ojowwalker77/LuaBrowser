@@ -764,15 +764,6 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         )
     }
 
-    private func normalTabIds(from pasteboard: NSPasteboard) -> [Int] {
-        guard let payload = pasteboard.string(forType: .normalTabs) else { return [] }
-        var seen = Set<Int>()
-        return payload
-            .split(separator: ",")
-            .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
-            .filter { seen.insert($0).inserted }
-    }
-    
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let sidebarItem = item as? SidebarItem else { return nil }
 
@@ -1254,23 +1245,39 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             )
             return false
         }
-        if resolvedItem is Bookmark {
+
+        if let targetBookmark = resolvedItem as? Bookmark {
+            if targetBookmark.isFolder {
+                let insertion = resolvedIndex == NSOutlineViewDropOnItemIndex
+                    ? nil
+                    : resolvedIndex
+                return browserState.moveNormalTabs(tabIds: tabIds,
+                                                   toBookmark: targetBookmark.guid,
+                                                   index: insertion)
+            }
+            if let insertion = bookmarkInsertionTarget(before: targetBookmark) {
+                return browserState.moveNormalTabs(tabIds: tabIds,
+                                                   toBookmark: insertion.parent?.guid,
+                                                   index: insertion.index)
+            }
             AppLogDebug(
                 "[SidebarMultiDrag] batch drop rejected on bookmark " +
                 "tabIds=\(tabIds)"
             )
             return false
         }
+
         if resolvedItem == nil {
             let proposedRow = resolvedIndex == NSOutlineViewDropOnItemIndex
                 ? outlineView.numberOfRows
                 : resolvedIndex
             if isRowInBookmarkSection(proposedRow) {
-                AppLogDebug(
-                    "[SidebarMultiDrag] batch drop rejected in bookmark section " +
-                    "row=\(proposedRow) tabIds=\(tabIds)"
-                )
-                return false
+                let insertion = resolvedIndex == NSOutlineViewDropOnItemIndex
+                    ? nil
+                    : resolvedIndex
+                return browserState.moveNormalTabs(tabIds: tabIds,
+                                                   toBookmark: nil,
+                                                   index: insertion)
             }
         }
 
@@ -1536,7 +1543,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             return handleFavoriteTabDropToNormalList(tabGuid: pinnedTabId, destinationIndex: resolvedIndex)
         }
 
-        let batchTabIds = normalTabIds(from: pasteboard)
+        let batchTabIds = pasteboard.phiNormalTabIds()
         if batchTabIds.count > 1 {
             return acceptNormalTabBatchDrop(tabIds: batchTabIds,
                                             outlineView: outlineView,

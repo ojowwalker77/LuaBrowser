@@ -739,30 +739,34 @@ extension BrowserState {
     /// over from the strip into the pinned grid. After both inserts, the
     /// SplitGroup is flagged pinned and the partner relationship is
     /// persisted to match the toggle-pin flow.
+    @discardableResult
     @MainActor
-    func pinSplitInsertingAtPinnedIndex(_ splitId: String, atIndex insertionIndex: Int) {
-        guard let groupIndex = splits.firstIndex(where: { $0.id == splitId }) else { return }
-        let group = splits[groupIndex]
-        if group.isPinned { return }
-
-        guard let primaryLive = tabs.first(where: { $0.guid == group.primaryTabId }),
-              let secondaryLive = tabs.first(where: { $0.guid == group.secondaryTabId }) else {
-            return
-        }
-        // Skip if either pane is somehow already pinned — would imply a
-        // mismatched state we shouldn't double-write.
-        if primaryLive.isPinned || secondaryLive.isPinned { return }
-
+    func pinSplitInsertingAtPinnedIndex(_ splitId: String,
+                                        atIndex insertionIndex: Int) -> (primaryGuid: String, secondaryGuid: String)? {
         let clampedIndex = max(0, min(insertionIndex, pinnedTabs.count))
-        splits[groupIndex].isPinned = true
-
-        // Resolve the anchor against the *current* pinned list, then chain the
-        // secondary off the primary's freshly-issued guid. `pinnedTabs` is fed
-        // by an async publisher, so referencing `clampedIndex + 1` against it
-        // after the first insert traps (the array hasn't grown yet).
         let anchorGuid: String? = clampedIndex > 0
             ? pinnedTabs[clampedIndex - 1].guidInLocalDB
             : nil
+        return pinSplit(splitId, afterPinnedGuid: anchorGuid)
+    }
+
+    @discardableResult
+    @MainActor
+    func pinSplit(_ splitId: String,
+                  afterPinnedGuid anchorGuid: String?) -> (primaryGuid: String, secondaryGuid: String)? {
+        guard let groupIndex = splits.firstIndex(where: { $0.id == splitId }) else { return nil }
+        let group = splits[groupIndex]
+        if group.isPinned { return nil }
+
+        guard let primaryLive = tabs.first(where: { $0.guid == group.primaryTabId }),
+              let secondaryLive = tabs.first(where: { $0.guid == group.secondaryTabId }) else {
+            return nil
+        }
+        // Skip if either pane is somehow already pinned — would imply a
+        // mismatched state we shouldn't double-write.
+        if primaryLive.isPinned || secondaryLive.isPinned { return nil }
+
+        splits[groupIndex].isPinned = true
         // Detach both panes from any Chromium tab group before pinning.
         // Phi-side pinning bypasses Chromium's `TabStripModel::SetTabPinned`,
         // so the automatic "pinning detaches from group" never fires. The
@@ -780,21 +784,22 @@ extension BrowserState {
                 }
             }
         }
-        moveNormalTabToPinned(primaryLive,
-                              after: anchorGuid,
-                              selectAfterMove: primaryLive.isActive)
+        guard let primaryDB = moveNormalTabToPinned(primaryLive,
+                                                    after: anchorGuid,
+                                                    selectAfterMove: primaryLive.isActive) else {
+            return nil
+        }
         primaryLive.isPinned = true
-        moveNormalTabToPinned(secondaryLive,
-                              after: primaryLive.guidInLocalDB,
-                              selectAfterMove: secondaryLive.isActive)
+        guard let secondaryDB = moveNormalTabToPinned(secondaryLive,
+                                                      after: primaryDB,
+                                                      selectAfterMove: secondaryLive.isActive) else {
+            return nil
+        }
         secondaryLive.isPinned = true
         updateNormalTabs()
 
-        guard let primaryDB = primaryLive.guidInLocalDB,
-              let secondaryDB = secondaryLive.guidInLocalDB else {
-            return
-        }
         persistPinnedSplitPair(primaryDB: primaryDB, secondaryDB: secondaryDB)
+        return (primaryDB, secondaryDB)
     }
 
     @MainActor

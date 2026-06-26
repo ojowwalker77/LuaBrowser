@@ -170,3 +170,14 @@ extension NSPasteboard.PasteboardType {
     /// payload identifies the entire contiguous group block.
     static let tabGroup = NSPasteboard.PasteboardType("com.phibrowser.tabGroup")
 }
+
+extension NSPasteboard {
+    func phiNormalTabIds() -> [Int] {
+        guard let payload = string(forType: .normalTabs) else { return [] }
+        var seen = Set<Int>()
+        return payload
+            .split(separator: ",")
+            .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { seen.insert($0).inserted }
+    }
+}

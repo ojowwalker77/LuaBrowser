@@ -1328,6 +1328,7 @@ extension TabGroupCellView: GroupTabsDragSource {
         )
 
         let pasteboard = info.draggingPasteboard
+        let batchTabIds = pasteboard.phiNormalTabIds()
         let accepted: Bool
         if let pinnedGuid = pasteboard.string(forType: .pinnedTab),
            !pinnedGuid.isEmpty {
@@ -1345,15 +1346,10 @@ extension TabGroupCellView: GroupTabsDragSource {
                 intoGroupToken: group.token,
                 atNormalTabsIdx: normalTabsIdx,
                 groupIndex: groupIndex) ?? false
-        } else if let idsPayload = pasteboard.string(forType: .normalTabs) {
-            var seen = Set<Int>()
-            let ids = idsPayload
-                .split(separator: ",")
-                .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
-                .filter { seen.insert($0).inserted }
+        } else if !batchTabIds.isEmpty {
             accepted = groupCellDelegate?.tabGroupCell(
                 self,
-                didAcceptTabsWithGuids: ids,
+                didAcceptTabsWithGuids: batchTabIds,
                 intoGroupToken: group.token,
                 atNormalTabsIdx: normalTabsIdx) ?? false
         } else if let guidString = pasteboard.string(forType: .normalTab),

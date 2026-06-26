@@ -1018,6 +1018,11 @@ extension PinnedTabViewController {
             return []
         }
 
+        if pasteboard.phiNormalTabIds().count > 1,
+           isCrossWindowDrag(pasteboard) {
+            return []
+        }
+
         // Accept non-folder bookmarks.
         if let bookmarkId = pasteboard.string(forType: .phiBookmark),
            let bookmark = browserState?.bookmarkManager.bookmark(withGuid: bookmarkId),
@@ -1056,6 +1061,14 @@ extension PinnedTabViewController {
         
         isDragging = false // Set isDragging to false before browserState updates.
         browserState?.tabDraggingSession.end()
+
+        let batchTabIds = pasteboard.phiNormalTabIds()
+        if batchTabIds.count > 1 {
+            guard !isCrossWindow else { return false }
+            let destinationIndex = min(finalDestinationIndex, pinnedTabs.count)
+            return browserState?.moveNormalTabs(tabIds: batchTabIds,
+                                                toPinnedTabs: destinationIndex) ?? false
+        }
 
         if isCrossWindow, let sourceState {
             if let guidString = pasteboard.string(forType: .pinnedTab) {
@@ -1338,8 +1351,19 @@ extension PinnedTabViewController: NSDraggingDestination {
            !targetState.canAcceptCrossWindowDrag(from: sourceState) {
             return false
         }
+
+        if pasteboard.phiNormalTabIds().count > 1,
+           isCrossWindowDrag(pasteboard) {
+            return false
+        }
         
         // Handle normal-tab drops.
+        let batchTabIds = pasteboard.phiNormalTabIds()
+        if batchTabIds.count > 1 {
+            return browserState?.moveNormalTabs(tabIds: batchTabIds,
+                                                toPinnedTabs: 0) ?? false
+        }
+
         if let guidString = pasteboard.string(forType: .normalTab),
            let guid = Int(guidString) {
             // Insert at the first pinned position.
