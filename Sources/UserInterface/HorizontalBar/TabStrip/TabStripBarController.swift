@@ -40,18 +40,75 @@ private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Co
 /// sits in the tab strip row and needs theme env injection (e.g. the
 /// active-Space picker).
 private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, TitlebarAwareHitTestable {
+    /// Menu dropped on hover and left-click — the Space switcher. Right-click
+    /// keeps the standard `menu` (the tab-strip context menu), so the two
+    /// gestures surface different menus from the same chip.
+    var primaryMenu: NSMenu?
+
+    private var hoverTrackingArea: NSTrackingArea?
+    /// Set while a just-dropped menu could still be under the cursor, so the
+    /// `mouseEntered` AppKit re-delivers when a popped menu closes doesn't
+    /// immediately reopen it. Cleared once the cursor genuinely leaves the chip.
+    private var suppressHoverOpen = false
+
     override var safeAreaInsets: NSEdgeInsets {
         return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     }
 
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
-        // This view hosts the interactive active-Space chip, so a left-click
-        // must reach its SwiftUI button to open the Space-switcher popover
-        // (the traditional-layout equivalent of the sidebar's ellipsis). Unlike
-        // the empty tab-strip bar — where left-clicks must fall through to the
-        // titlebar for window drag — clicks here are always meant for the chip.
+        // This view hosts the active-Space chip, so a left-click must reach it
+        // to drop the Space-switcher menu (see `mouseDown`). Unlike the empty
+        // tab-strip bar — where left-clicks must fall through to the titlebar
+        // for window drag — clicks here are always meant for the chip.
         if NSApp.currentEvent?.type == .leftMouseDown { return true }
         return shouldConsumeTitlebarEvent(NSApp.currentEvent)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    /// Hovering the chip drops the Space switcher, mirroring the popover the chip
+    /// used to open on hover — now rendered as a menu.
+    override func mouseEntered(with event: NSEvent) {
+        guard !suppressHoverOpen else { return }
+        dropPrimaryMenu()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        suppressHoverOpen = false
+    }
+
+    /// Left-clicking the chip drops the same Space switcher. The chip's SwiftUI
+    /// content has no click gesture, so this `mouseDown` is reached for the click.
+    override func mouseDown(with event: NSEvent) {
+        if primaryMenu != nil {
+            dropPrimaryMenu()
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    /// Pops `primaryMenu` from the chip's bottom-leading corner, matching the old
+    /// popover's placement below the icon. `suppressHoverOpen` is latched before
+    /// the (modal) pop so the re-entrant `mouseEntered` after the menu closes
+    /// can't reopen it until the cursor leaves and returns.
+    private func dropPrimaryMenu() {
+        guard let primaryMenu else { return }
+        suppressHoverOpen = true
+        let bottomLeading = NSPoint(x: bounds.minX, y: isFlipped ? bounds.maxY : bounds.minY)
+        primaryMenu.popUp(positioning: nil, at: bottomLeading, in: self)
     }
 }
 
@@ -112,6 +169,16 @@ final class TabStripBarController: NSViewController {
     private lazy var contextMenuHelper = TabAreaContextMenuHelper(browserState: browserState, isHorizontalLayout: true)
 
     private lazy var stripContextMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }()
+
+    /// Space-switcher menu dropped by the active-Space chip on hover / left-click
+    /// (the menu rendition of the old switcher popover). Populated lazily in
+    /// `menuNeedsUpdate` so it always reflects the current Space list and active
+    /// Space; distinct from `stripContextMenu`, which the chip shows on right-click.
+    private lazy var spaceSwitcherMenu: NSMenu = {
         let menu = NSMenu()
         menu.delegate = self
         return menu
@@ -232,9 +299,11 @@ final class TabStripBarController: NSViewController {
         tabStrip.menu = stripContextMenu
         hostingView.menu = stripContextMenu
         // Right-clicking the active-Space chip shows the same strip context menu
-        // as the rest of the tab bar (it already carries the active-Space
-        // controls), rather than a chip-specific menu.
+        // as the rest of the tab bar (the active-Space controls). Hovering or
+        // left-clicking it instead drops the Space-switcher menu, popped by
+        // SafeAreaIgnoringThemedHostingView (mouseEntered / mouseDown).
         spacesHostingView.menu = stripContextMenu
+        spacesHostingView.primaryMenu = spaceSwitcherMenu
 
         // The tab strip's leading edge depends on the active-Space picker (it
         // starts just after it), so its constraints are made alongside the
@@ -353,7 +422,10 @@ final class TabStripBarController: NSViewController {
 
 extension TabStripBarController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === stripContextMenu else { return }
-        contextMenuHelper.populate(menu)
+        if menu === stripContextMenu {
+            contextMenuHelper.populate(menu)
+        } else if menu === spaceSwitcherMenu {
+            AppController.shared?.populateSpaceSwitcherMenu(menu)
+        }
     }
 }

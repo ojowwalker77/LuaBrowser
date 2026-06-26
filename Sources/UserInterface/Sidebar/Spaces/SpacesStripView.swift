@@ -185,21 +185,15 @@ struct SpacesStripView: View {
     }
 
     /// Compact affordance for the horizontal tab strip: just the active Space's
-    /// icon. Hovering it opens the Space switcher; the icon no longer opens the
-    /// icon picker on click. Right-clicking it shows the tab strip's context
-    /// menu — the same one as right-clicking empty tab-bar space, which already
-    /// carries the active-Space controls (including "Change Icon…"). That AppKit
-    /// menu is attached to the chip's hosting view in TabStripBarController, so
-    /// the chip intentionally has no SwiftUI `.contextMenu` of its own.
+    /// icon, acting as a menu button. Hovering or left-clicking it drops the
+    /// Space-switcher menu (one item per Space, plus "New Space"); right-clicking
+    /// it shows the tab strip's context menu (the active-Space controls). Both are
+    /// AppKit NSMenus attached to the chip's hosting view in TabStripBarController
+    /// — the switcher on hover/left-click, the context menu on right-click — so
+    /// the chip intentionally has no SwiftUI `.contextMenu` or popover of its own.
     private var compactChip: some View {
         activeLabel
         .help(NSLocalizedString("Spaces", comment: "Tooltip for the Spaces picker affordance"))
-        .onHover { hovering in
-            if hovering { isPickerOpen = true }
-        }
-        .popover(isPresented: $isPickerOpen, arrowEdge: .top) {
-            pickerPopup()
-        }
     }
 
     /// The active Space's icon, shown in the horizontal tab strip.
@@ -251,10 +245,10 @@ struct SpacesStripView: View {
         activeIcon(for: space)
     }
 
-    /// The active Space's icon. Clicking it no longer opens the icon picker —
-    /// switching Spaces is the chip's hover affordance — but it still hosts the
-    /// icon-picker popover that the right-click / tab-area "Change Icon…" entry
-    /// anchors to.
+    /// The active Space's icon. Clicking the chip opens the Space-switcher menu
+    /// (popped by the hosting view), not the icon picker — but this view still
+    /// hosts the icon-picker popover that the menu's / tab-area "Change Icon…"
+    /// entry anchors to.
     private func activeIcon(for space: SpaceModel?) -> some View {
         SpaceIconView(
             storedValue: space?.iconName,
@@ -487,14 +481,15 @@ struct SpacesStripView: View {
         .help(NSLocalizedString("New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
     }
 
-    /// Overflow affordance shown when the row can't fit every Space. Opens a
-    /// popover listing only the Spaces that didn't fit (`excludedSpaceIds` are the
-    /// pips already on screen) with no "New Space" row — creation stays on the
-    /// strip's own "+" button.
+    /// Overflow affordance shown when the row can't fit every Space. Drops a
+    /// native menu listing only the Spaces that didn't fit (`excludedSpaceIds` are
+    /// the pips already on screen) and no "New Space" row — creation stays on the
+    /// strip's own "+" button. Same switcher menu the horizontal chip uses, just
+    /// filtered via `AppController.populateSpaceSwitcherMenu`.
     private func moreButton(excludedSpaceIds: Set<String>) -> some View {
         Button {
             isIconPickerOpen = false
-            isPickerOpen.toggle()
+            isPickerOpen = true
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: Self.iconSize, weight: .semibold))
@@ -504,9 +499,13 @@ struct SpacesStripView: View {
         }
         .buttonStyle(.plain)
         .help(NSLocalizedString("More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
-        .popover(isPresented: $isPickerOpen, arrowEdge: .bottom) {
-            pickerPopup(excludedSpaceIds: excludedSpaceIds, showsCreate: false)
-        }
+        .background(SpaceSwitcherMenuAnchor(isPresented: $isPickerOpen) { menu in
+            AppController.shared?.populateSpaceSwitcherMenu(
+                menu,
+                excludedSpaceIds: excludedSpaceIds,
+                includeNewSpace: false
+            )
+        })
     }
 
     /// The Space-switcher popover content. The horizontal chip lists every Space
@@ -780,6 +779,47 @@ struct SpaceRowDropDelegate: DropDelegate {
         draggingSpaceId = nil
         commit(orderedIds)
         return true
+    }
+}
+
+/// Drops the native Space-switcher menu anchored to a SwiftUI button when
+/// `isPresented` flips true, then resets it. Lets the sidebar's "…" overflow
+/// affordance show the same AppKit menu as the horizontal active-Space chip
+/// (built by `AppController.populateSpaceSwitcherMenu`) instead of a SwiftUI
+/// popover, so both layouts share one switcher UI.
+private struct SpaceSwitcherMenuAnchor: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    /// Fills the menu just before it pops, so each caller chooses what it lists.
+    let populate: (NSMenu) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard isPresented, !context.coordinator.isShowing else { return }
+        context.coordinator.isShowing = true
+        // Pop on the next runloop so the menu drops after this view update and
+        // mutating `isPresented` happens outside it. `isShowing` guards against a
+        // second update re-scheduling while the (modal) menu is open.
+        DispatchQueue.main.async {
+            defer {
+                context.coordinator.isShowing = false
+                isPresented = false
+            }
+            let menu = NSMenu()
+            populate(menu)
+            guard menu.numberOfItems > 0 else { return }
+            let bottomLeading = NSPoint(
+                x: nsView.bounds.minX,
+                y: nsView.isFlipped ? nsView.bounds.maxY : nsView.bounds.minY
+            )
+            menu.popUp(positioning: nil, at: bottomLeading, in: nsView)
+        }
+    }
+
+    final class Coordinator {
+        var isShowing = false
     }
 }
 

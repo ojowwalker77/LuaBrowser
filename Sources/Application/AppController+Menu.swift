@@ -908,6 +908,112 @@ extension AppController {
         menu.addItem(deleteSpaceItem)
     }
 
+    /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
+    /// and a checkmark on the active one — that switches the focused window to
+    /// that Space, plus a trailing "New Space" item. Drives the horizontal tab
+    /// strip's active-Space chip, whose hover / left-click present this as a
+    /// switcher menu (the menu rendition of the old switcher popover). Items
+    /// target the controller and reuse the Spaces menu's activate / create
+    /// actions, so switching here behaves exactly like the menu-bar Spaces menu.
+    func populateSpaceSwitcherMenu(
+        _ menu: NSMenu,
+        excludedSpaceIds: Set<String> = [],
+        includeNewSpace: Bool = true
+    ) {
+        menu.removeAllItems()
+        let activeSpaceId = currentActiveSpace()?.spaceId
+
+        // Iterate the full list so each row keeps its ⌃-number shortcut (⌃1 = the
+        // first Space), skipping any the caller already shows elsewhere — e.g. the
+        // sidebar's pips, leaving only the overflow Spaces in its "…" menu.
+        for (index, space) in SpaceManager.shared.spaces.enumerated() {
+            if excludedSpaceIds.contains(space.spaceId) { continue }
+            let item = NSMenuItem(
+                title: space.name,
+                action: #selector(activateSpaceFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            if let command = CommandWrapper.spaceSelectionCommand(at: index) {
+                applyEffectiveShortcut(command, to: item)
+            }
+            item.target = self
+            item.representedObject = space.spaceId
+            item.state = (space.spaceId == activeSpaceId) ? .on : .off
+            item.image = spaceMenuIcon(for: space.iconName)
+            item.attributedTitle = spaceMenuTitle(name: space.name, profileId: space.profileId)
+            menu.addItem(item)
+        }
+
+        // The sidebar overflow menu suppresses creation (its strip has its own "+"
+        // button); the horizontal chip keeps a "New Space" row.
+        guard includeNewSpace else { return }
+
+        if menu.numberOfItems > 0 {
+            menu.addItem(.separator())
+        }
+        let newSpaceItem = NSMenuItem(
+            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            action: #selector(newSpaceFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        newSpaceItem.target = self
+        newSpaceItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        menu.addItem(newSpaceItem)
+    }
+
+    /// Inline title for a switcher row: the Space name in the label color followed
+    /// by its bound profile in a muted color (`name  —  profile`), so the row shows
+    /// both on one line with the ⌃-number shortcut trailing. An attributed title
+    /// (rather than `NSMenuItem.subtitle`, which is macOS 14.4+ and stacks below)
+    /// keeps it on one line and renders on every supported OS.
+    private func spaceMenuTitle(name: String, profileId: String) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: name,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+        if let profileName = ProfileManager.shared.profile(for: profileId)?.displayName,
+           !profileName.isEmpty {
+            title.append(NSAttributedString(
+                string: "  —  \(profileName)",
+                attributes: [
+                    .font: NSFont.menuFont(ofSize: 0),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]
+            ))
+        }
+        return title
+    }
+
+    /// A menu-ready icon for a Space. SF Symbols — including the empty-icon
+    /// fallback and legacy rows — become template images that invert with menu
+    /// selection; emoji and phi-icons, which `NSImage(systemSymbolName:)` can't
+    /// resolve, are rendered from `SpaceIconView` so they show in the menu too.
+    private func spaceMenuIcon(for storedValue: String) -> NSImage? {
+        let stored = storedValue.isEmpty ? "rectangle.stack" : storedValue
+        if let symbolImage = NSImage(systemSymbolName: stored, accessibilityDescription: nil) {
+            return symbolImage
+        }
+        let size: CGFloat = 16
+        let icon = SpaceIconView(
+            storedValue: stored,
+            size: size,
+            symbolWeight: .semibold,
+            tint: Color(nsColor: .labelColor)
+        )
+        .frame(width: size + 2, height: size + 2)
+        // Always called on the main thread during menu tracking; ImageRenderer is
+        // main-actor-bound, so assume the isolation rather than ripple @MainActor
+        // through the synchronous menu-build path.
+        return MainActor.assumeIsolated {
+            let renderer = ImageRenderer(content: icon)
+            renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+            return renderer.nsImage
+        }
+    }
+
     private func applyEffectiveShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
         item.tag = command.rawValue
         guard let key = Shortcuts.key(for: command) else {
