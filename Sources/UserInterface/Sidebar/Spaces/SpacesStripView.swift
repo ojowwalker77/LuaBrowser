@@ -109,6 +109,13 @@ struct SpacesStripView: View {
     /// "Change Icon…" entry. Only one picker is open at a time.
     @State private var iconEditSpaceId: String?
 
+    /// Owns the click-through floating panel that renders a pip's hover card.
+    /// A transient `.popover` consumed the next click (its own dismissal), so the
+    /// pip's switch never fired; this passthrough panel lets the click fall
+    /// straight through to the pip. Mirrors TabStrip's drag-image panel — the
+    /// codebase's existing `ignoresMouseEvents` floating-window pattern.
+    @StateObject private var tooltipController = SpaceHoverTooltipController()
+
     /// The Space whose icon + name are currently shown. Lags `slot.activeSpaceId`
     /// by one animated step so the label can scroll the outgoing Space out and
     /// the incoming one in. `scrollEdge` is set just before the animated change
@@ -414,9 +421,14 @@ struct SpacesStripView: View {
                 hoveredSpaceId = nil
             }
         }
-        .popover(isPresented: hoverBinding(for: space), arrowEdge: .top) {
-            spaceTooltip(for: space)
-        }
+        .background(
+            SpaceTooltipAnchor(
+                isPresented: isHoverCardPresented(for: space),
+                spaceId: space.spaceId,
+                card: AnyView(hoverCard(for: space)),
+                controller: tooltipController
+            )
+        )
         .popover(isPresented: iconEditBinding(for: space), arrowEdge: .bottom) {
             IconPicker(
                 selected: IconPickerSelection.fromStorageValue(space.iconName),
@@ -430,20 +442,11 @@ struct SpacesStripView: View {
         .contextMenu { pipContextMenu(for: space) }
     }
 
-    /// Presents a pip's hover tooltip while it (and only it) is hovered, and
-    /// never during a reorder drag or while its icon picker is open so the card
-    /// doesn't trail the cursor or fight the picker.
-    private func hoverBinding(for space: SpaceModel) -> Binding<Bool> {
-        Binding(
-            get: { hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil },
-            set: { presented in
-                if presented {
-                    hoveredSpaceId = space.spaceId
-                } else if hoveredSpaceId == space.spaceId {
-                    hoveredSpaceId = nil
-                }
-            }
-        )
+    /// A pip's hover card shows while it (and only it) is hovered, and never
+    /// during a reorder drag or while its icon picker is open so the card doesn't
+    /// trail the cursor or fight the picker. `.onHover` drives `hoveredSpaceId`.
+    private func isHoverCardPresented(for space: SpaceModel) -> Bool {
+        hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil
     }
 
     /// Presents the icon/emoji picker anchored to a pip when its right-click
@@ -461,60 +464,19 @@ struct SpacesStripView: View {
         )
     }
 
-    /// Hover card for a pip: the bound profile on the left, the Space (icon +
-    /// name) as a tinted pill in the middle, and its switch shortcut as keycaps
-    /// on the right. The shortcut is omitted for Spaces past the ninth, which
-    /// have no ⌃-number binding.
-    private func spaceTooltip(for space: SpaceModel) -> some View {
-        HStack(spacing: 8) {
-            Text(profileDisplayName(for: space.profileId))
-                .font(.system(size: 11))
-                .foregroundStyle(Color.secondary)
-                .lineLimit(1)
-
-            HStack(spacing: 5) {
-                SpaceIconView(
-                    storedValue: space.iconName,
-                    size: 11,
-                    symbolWeight: .semibold,
-                    tint: iconColor(for: space)
-                )
-                Text(space.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(iconColor(for: space))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(iconColor(for: space).opacity(0.15)))
-
-            if let key = spaceShortcut(for: space) {
-                HStack(spacing: 3) {
-                    ForEach(Array(keycapTokens(key).enumerated()), id: \.offset) { _, token in
-                        keycap(token)
-                    }
-                }
-            }
-        }
-        .fixedSize()
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-    }
-
-    /// A single keycap badge (one modifier symbol or the character).
-    private func keycap(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.secondary)
-            .frame(minWidth: 18, minHeight: 18)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12))
-            )
+    /// Builds a pip's hover card from its bound profile, theme tint, and switch
+    /// shortcut. Rendered in a passthrough floating panel (see
+    /// `SpaceHoverTooltipController`) so it can't swallow the click that switches
+    /// Spaces. The shortcut is empty for Spaces past the ninth, which have no
+    /// ⌃-number binding.
+    private func hoverCard(for space: SpaceModel) -> SpaceHoverCard {
+        SpaceHoverCard(
+            profileName: profileDisplayName(for: space.profileId),
+            iconStoredValue: space.iconName,
+            spaceName: space.name,
+            iconColor: iconColor(for: space),
+            shortcutTokens: spaceShortcut(for: space).map(keycapTokens) ?? []
+        )
     }
 
     /// The effective (remap-aware) switch shortcut for a Space, resolved from its
@@ -1071,4 +1033,193 @@ struct SpaceIconView: View {
 /// time so old rows keep rendering without a data migration.
 private func systemSymbolName(for stored: String) -> String? {
     stored.isEmpty ? nil : stored
+}
+
+/// A pip's hover card: the bound profile on the left, the Space (icon + name) as
+/// a tinted pill in the middle, and its switch shortcut as keycaps on the right.
+/// Self-contained (plain data in) so it can be hosted in a standalone panel by
+/// `SpaceHoverTooltipController` instead of a transient `.popover` — the popover
+/// swallowed the next click (its own dismissal), so the pip's switch never ran.
+struct SpaceHoverCard: View {
+    let profileName: String
+    let iconStoredValue: String?
+    let spaceName: String
+    let iconColor: Color
+    /// Per-keycap tokens (modifiers then key), or empty for Spaces without a
+    /// ⌃-number binding.
+    let shortcutTokens: [String]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(profileName)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+
+            HStack(spacing: 5) {
+                SpaceIconView(
+                    storedValue: iconStoredValue,
+                    size: 11,
+                    symbolWeight: .semibold,
+                    tint: iconColor
+                )
+                Text(spaceName)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(iconColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(iconColor.opacity(0.15)))
+
+            if !shortcutTokens.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(Array(shortcutTokens.enumerated()), id: \.offset) { _, token in
+                        keycap(token)
+                    }
+                }
+            }
+        }
+        .fixedSize()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        // The panel hosting this card is borderless and clear, so the card draws
+        // its own popover-like chrome (the popover used to provide it).
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        )
+    }
+
+    /// A single keycap badge (one modifier symbol or the character).
+    private func keycap(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Color.secondary)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12))
+            )
+    }
+}
+
+/// Hosts a pip's hover card in a click-through floating `NSPanel`
+/// (`ignoresMouseEvents`) anchored just above the pip. Because it is a separate,
+/// non-interactive window there is no transient-popover dismiss monitor to
+/// consume the next click, so a click on the pip falls straight through to its
+/// Button and switches the Space. Mirrors TabStrip's drag-image panel.
+final class SpaceHoverTooltipController: ObservableObject {
+    private var panel: NSPanel?
+    private var hostingView: NSHostingView<AnyView>?
+    /// The spaceId currently shown, so a stale pip's `dismiss` can't tear down a
+    /// card another pip just presented (update order between pips isn't defined).
+    private var ownerId: String?
+
+    deinit { panel?.orderOut(nil) }
+
+    /// Shows `card` for `spaceId`, centered above `anchorScreenRect`. Idempotent:
+    /// re-presenting the same pip just repositions and refreshes the content.
+    func present(spaceId: String, card: AnyView, anchorScreenRect: CGRect, screen: NSScreen?) {
+        let panel = ensurePanel()
+        ownerId = spaceId
+        guard let hostingView else { return }
+        hostingView.rootView = card
+        hostingView.layoutSubtreeIfNeeded()
+        let size = hostingView.fittingSize
+
+        let gap: CGFloat = 6
+        var origin = CGPoint(
+            x: anchorScreenRect.midX - size.width / 2,
+            y: anchorScreenRect.maxY + gap            // screen coords: +y is up → above the pip
+        )
+        if let visible = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(origin.x, visible.minX + 4), visible.maxX - size.width - 4)
+            // Flip below the pip if showing above would clip the screen top.
+            if origin.y + size.height > visible.maxY - 4 {
+                origin.y = anchorScreenRect.minY - gap - size.height
+            }
+            origin.y = max(origin.y, visible.minY + 4)
+        }
+        panel.setFrame(CGRect(origin: origin, size: size), display: true)
+        panel.orderFront(nil)
+    }
+
+    /// Hides the card iff `spaceId` is the one currently shown.
+    func dismiss(spaceId: String) {
+        guard ownerId == spaceId else { return }
+        ownerId = nil
+        panel?.orderOut(nil)
+    }
+
+    private func ensurePanel() -> NSPanel {
+        if let panel { return panel }
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.isMovable = false
+        panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+
+        let hosting = NSHostingView(rootView: AnyView(EmptyView()))
+        panel.contentView = hosting
+
+        self.panel = panel
+        self.hostingView = hosting
+        return panel
+    }
+}
+
+/// Invisible SwiftUI ↔ AppKit bridge placed behind a pip. It reports the pip's
+/// screen frame to `SpaceHoverTooltipController` and shows/hides the card as the
+/// pip's hover state changes — without participating in event handling itself.
+private struct SpaceTooltipAnchor: NSViewRepresentable {
+    let isPresented: Bool
+    let spaceId: String
+    let card: AnyView
+    let controller: SpaceHoverTooltipController
+
+    func makeCoordinator() -> Coordinator { Coordinator(controller: controller, spaceId: spaceId) }
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.controller = controller
+        context.coordinator.spaceId = spaceId
+        guard isPresented, let window = nsView.window else {
+            controller.dismiss(spaceId: spaceId)
+            return
+        }
+        let rectInWindow = nsView.convert(nsView.bounds, to: nil)
+        let screenRect = window.convertToScreen(rectInWindow)
+        controller.present(spaceId: spaceId, card: card, anchorScreenRect: screenRect, screen: window.screen)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        // The pip left the hierarchy (e.g. overflow recompute) while its card was
+        // up; tear the card down so it can't linger.
+        coordinator.controller.dismiss(spaceId: coordinator.spaceId)
+    }
+
+    final class Coordinator {
+        var controller: SpaceHoverTooltipController
+        var spaceId: String
+        init(controller: SpaceHoverTooltipController, spaceId: String) {
+            self.controller = controller
+            self.spaceId = spaceId
+        }
+    }
 }
