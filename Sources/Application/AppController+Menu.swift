@@ -357,23 +357,36 @@ extension AppController {
     }
 
     @objc func newProfile(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("New Profile", comment: "Title of the create-profile dialog")
-        alert.informativeText = NSLocalizedString(
-            "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
-            comment: "Body of the create-profile dialog")
-        alert.addButton(withTitle: NSLocalizedString("Create", comment: "Create button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        textField.placeholderString = NSLocalizedString("Profile name", comment: "Placeholder for the profile-name field")
-        alert.accessoryView = textField
-        DispatchQueue.main.async {
-            textField.window?.makeFirstResponder(textField)
+        // Re-prompt on an empty name instead of silently dropping it, so the
+        // user is told the name is required rather than left wondering why
+        // "Create" did nothing.
+        var showEmptyError = false
+        while true {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("New Profile", comment: "Title of the create-profile dialog")
+            alert.informativeText = showEmptyError
+                ? NSLocalizedString("The name cannot be empty.",
+                    comment: "Validation shown when the profile name is left blank")
+                : NSLocalizedString(
+                    "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
+                    comment: "Body of the create-profile dialog")
+            alert.addButton(withTitle: NSLocalizedString("Create", comment: "Create button"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            textField.placeholderString = NSLocalizedString("Profile name", comment: "Placeholder for the profile-name field")
+            alert.accessoryView = textField
+            DispatchQueue.main.async {
+                textField.window?.makeFirstResponder(textField)
+            }
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                showEmptyError = true
+                continue
+            }
+            ProfileManager.shared.createProfile(displayName: trimmed) { _ in }
+            return
         }
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        ProfileManager.shared.createProfile(displayName: trimmed) { _ in }
     }
 
     @objc func deleteSelectedProfile(_ sender: Any?) {
