@@ -36,9 +36,10 @@ struct CreateSpacePanel: View {
     /// Spaces settings pane uses. Defaults to the picker's first Phi icon.
     @State private var selectedIcon: IconPickerSelection = .defaultSelection
     @State private var selectedProfileId: String = ""
-    /// Built-in theme id pinned to the new Space. Pre-selected in `onAppear`;
-    /// the form always pins a concrete theme — no "follow global" option here.
-    @State private var selectedThemeId: String = Theme.default.id
+    /// Theme pinned to the new Space, or `nil` to follow the global theme via
+    /// the "Follow Global" toggle above the swatches. `onAppear` pre-selects a
+    /// random built-in theme; the user can switch to Follow Global or another.
+    @State private var selectedThemeId: String? = nil
     @FocusState private var nameFocused: Bool
 
     @Environment(\.phiAppearance) private var appearance
@@ -53,7 +54,8 @@ struct CreateSpacePanel: View {
                 // random Phi icon and a random built-in theme — so Spaces are
                 // visually distinct instead of all defaulting to the same first
                 // icon and the inherited theme. The user can still override both
-                // before creating; whatever is selected is pinned on create.
+                // before creating: a pinned theme, or "Follow Global" to track
+                // the global theme instead of pinning one.
                 selectedIcon = .phiIcon(id: PhiIconCatalog.allIds.randomElement() ?? PhiIconCatalog.allIds[0])
                 selectedThemeId = Theme.builtInThemes.randomElement()?.id ?? Theme.default.id
                 DispatchQueue.main.async { nameFocused = true }
@@ -239,6 +241,10 @@ struct CreateSpacePanel: View {
             count: Self.themeColumns
         )
         return VStack(spacing: 14) {
+            // A "Follow Global" toggle above the swatches: it and the theme dots
+            // form one selection group, so the new Space either follows the
+            // global theme or pins one of the eight built-ins.
+            followGlobalToggle
             // Lay the eight built-in themes out as two rows of four rather than a
             // single cramped strip, so each swatch is big enough to read its hue
             // and tap comfortably. Flexible columns spread the swatches evenly
@@ -261,6 +267,55 @@ struct CreateSpacePanel: View {
         .padding(.vertical, 12)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Full-width "Follow Global" toggle above the swatch grid. It and the theme
+    /// dots form one selection group: tapping it clears the pin
+    /// (`selectedThemeId = nil`) so the new Space tracks the global theme, and a
+    /// checkmark marks it active — matching the dots' selected read. A leading
+    /// dot previews the current global theme color.
+    private var followGlobalToggle: some View {
+        let globalTheme = ThemeManager.shared.currentTheme
+        let isPure = globalTheme == .pure
+        let globalAccent = Color(globalTheme.color(for: .themeColor, appearance: appearance))
+        let isSelected = selectedThemeId == nil
+        return Button {
+            selectedThemeId = nil
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isPure ? Color.white : globalAccent)
+                    .frame(width: 14, height: 14)
+                    .overlay {
+                        Circle().stroke(Color.black.opacity(0.12), lineWidth: 0.5)
+                    }
+                Text(NSLocalizedString("Follow Global",
+                    comment: "Create-Space panel — toggle so the new Space follows the global theme"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.primary.opacity(0.85))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Self.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Self.accentColor.opacity(0.14) : Color.primary.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isSelected ? Self.accentColor : Color.clear, lineWidth: 1.5)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .help(NSLocalizedString("Follow Global",
+            comment: "Create-Space panel — toggle so the new Space follows the global theme"))
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 
     /// One picker dot for a built-in theme. The colored dot keeps a 3pt margin
@@ -303,9 +358,14 @@ struct CreateSpacePanel: View {
         .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 
-    /// Name of the currently-selected theme.
+    /// Caption under the swatches: the pinned theme's name, or "Follow Global"
+    /// when no theme is pinned.
     private var selectedThemeName: String {
-        effectiveTheme().name
+        if selectedThemeId == nil {
+            return NSLocalizedString("Follow Global",
+                comment: "Create-Space panel — toggle so the new Space follows the global theme")
+        }
+        return effectiveTheme().name
     }
 
     private var actions: some View {
@@ -334,17 +394,25 @@ struct CreateSpacePanel: View {
 
     // MARK: - Color math
 
+    /// The theme id used to resolve the swatch fill, caption, and derived
+    /// `colorHex`. Follow-Global (`nil`) resolves to the current global theme so
+    /// those track whatever the global theme is.
+    private var effectiveThemeId: String {
+        selectedThemeId ?? ThemeManager.shared.currentTheme.id
+    }
+
     /// The Space's stored `colorHex` (which drives the sidebar tint) is derived
-    /// from the chosen theme's overlay color, so the tint always matches the
-    /// Space's pinned theme.
+    /// from the resolved theme's overlay color, so the tint matches the Space's
+    /// pinned theme — or the global theme when it follows global.
     private func resolvedColorHex() -> String {
         effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance).hexRGBString
     }
 
-    /// The theme backing the new Space, resolved from the pinned selection.
+    /// The theme backing the new Space, resolved from the selection (or the
+    /// global theme when following global).
     private func effectiveTheme() -> Theme {
-        ThemeManager.shared.registeredThemes[selectedThemeId]
-            ?? Theme.builtInThemes.first(where: { $0.id == selectedThemeId })
+        ThemeManager.shared.registeredThemes[effectiveThemeId]
+            ?? Theme.builtInThemes.first(where: { $0.id == effectiveThemeId })
             ?? ThemeManager.shared.currentTheme
     }
 
@@ -418,8 +486,9 @@ struct CreateSpacePanel: View {
             iconName: selectedIcon.storageValue,
             profileId: profileId
         )
-        // Pin the new Space's chosen theme. Persisted now; applied when its
-        // window spawns in activateInFocusedWindow.
+        // Apply the chosen theme to the new Space: a pinned id pins it, `nil`
+        // (Follow Global) clears the override so it tracks the global theme.
+        // Persisted now; applied when its window spawns in activateInFocusedWindow.
         if let newSpaceId {
             manager.setTheme(forSpaceId: newSpaceId, themeId: selectedThemeId)
         }
