@@ -9,10 +9,10 @@ import XCTest
 /// and a pinned tab), plus creating and deleting a browser profile.
 ///
 /// The feature is gated behind `spacesFeatureEnabled`, which defaults to
-/// `false`, so the suite turns it on with the `-spacesFeatureEnabled YES`
-/// launch argument (it lands in `UserDefaults`' argument domain — higher
-/// precedence than the persisted value, written to no store). Without it the
-/// top-level **Spaces** menu stays hidden and there is nothing to drive.
+/// `true`. The suite still passes `-spacesFeatureEnabled YES` so the run is
+/// pinned on regardless of any persisted value (it lands in `UserDefaults`'
+/// argument domain — higher precedence than the persisted value, written to no
+/// store), keeping the top-level **Spaces** menu present to drive.
 ///
 /// The Spaces / Profile surfaces are SwiftUI panels and `NSAlert`s with few
 /// stable identifiers, so the tests drive them through the two most reliable
@@ -72,8 +72,9 @@ final class SpaceTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments += [
             "-uitest", "1",
-            // Master toggle for the Spaces + profile-management UI. Defaults to
-            // false; the argument domain flips it on for this launch only.
+            // Master flag for the Spaces + profile-management UI. Defaults to
+            // true; the argument domain pins it on for this launch regardless
+            // of any persisted value.
             "-spacesFeatureEnabled", "YES",
             // `--user-data-dir` (a `--` arg, forwarded straight to Chromium by
             // `ChromiumLauncher`) gives the test an isolated profile so it

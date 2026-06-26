@@ -56,7 +56,7 @@ extension PhiPreferences {
         case alwaysShowBookmarkBar // In traditional layout, always show bookmark bar below address bar
         case showBookmarkBarOnNewTabPage // In traditional layout, show bookmark bar on new tab page
         case alwaysShowURLPath // In address bar menu, always show full URL path
-        case spacesFeatureEnabled // Master toggle for Spaces + profile management UI
+        case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
 
         var defaultValue: Bool {
             switch self {
@@ -73,7 +73,7 @@ extension PhiPreferences {
             case .alwaysShowURLPath:
                 return false
             case .spacesFeatureEnabled:
-                return false
+                return true
             }
         }
         

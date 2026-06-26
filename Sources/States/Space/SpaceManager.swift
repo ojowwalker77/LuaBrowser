@@ -962,55 +962,6 @@ final class SpaceManager: ObservableObject {
         )
     }
 
-    // MARK: - Feature toggle
-
-    /// Single entry point for flipping the master Spaces switch. Writes the
-    /// preference and, on disable, retreats every slot to the default Space
-    /// and closes the windows of all non-default Spaces. The File menu
-    /// toggle and the layout-mode auto-disable path both call this so the
-    /// side effect cannot drift between callers.
-    func setFeatureEnabled(_ enabled: Bool) {
-        let key = PhiPreferences.GeneralSettings.spacesFeatureEnabled.rawValue
-        let current = UserDefaults.standard.bool(
-            forKey: key,
-            default: PhiPreferences.GeneralSettings.spacesFeatureEnabled.defaultValue
-        )
-        guard current != enabled else { return }
-        UserDefaults.standard.set(enabled, forKey: key)
-        if !enabled {
-            collapseToDefaultSpaceOnly()
-        }
-        // Reflect the toggle in the web-content "Open Link In Space" menu
-        // immediately (disable pushes an empty list; enable repopulates it).
-        pushOpenLinkSpaceMenuToChromium()
-    }
-
-    /// Retreats every slot to the default Space and closes every window
-    /// bound to a non-default Space. Called by `setFeatureEnabled(false)` —
-    /// keeps the feature-off invariant ("the user only sees one Space, the
-    /// default one") even when multiple windows are currently live.
-    func collapseToDefaultSpaceOnly() {
-        for slot in slots where slot.activeSpaceId != LocalStore.defaultSpaceId {
-            slot.activate(spaceId: LocalStore.defaultSpaceId)
-        }
-        let nonDefaultSpaceIds = spaces
-            .map(\.spaceId)
-            .filter { $0 != LocalStore.defaultSpaceId }
-        for slot in slots {
-            for spaceId in nonDefaultSpaceIds {
-                guard let controller = slot.windowController(for: spaceId) else { continue }
-                // Same guard as `deleteSpace`: if the retreat to the default
-                // Space failed to spawn, closing the still-visible window
-                // would cascade the whole slot shut.
-                guard slot.visibleController !== controller else {
-                    AppLogWarn("[SpaceManager] collapse: not closing \(spaceId)'s window — it is still visible (retreat to default did not complete)")
-                    continue
-                }
-                controller.window?.close()
-            }
-        }
-    }
-
     // MARK: - Per-Space theme
 
     /// Returns the user-pinned theme id for `spaceId`, or nil when that

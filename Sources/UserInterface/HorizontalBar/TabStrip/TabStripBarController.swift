@@ -173,9 +173,13 @@ final class TabStripBarController: NSViewController {
     /// Horizontal inset that aligns the strip with the surrounding chrome.
     private static let horizontalInset: CGFloat = 78 + 10
 
-    /// Leading inset that clears the macOS traffic-light buttons, so the
-    /// active-Space switch sits just to their right (matching the design).
-    private static let trafficLightInset: CGFloat = 70
+    /// Leading inset for the active-Space chip, tuned so the Space icon sits
+    /// between the macOS traffic-light buttons and the first pinned tab. The
+    /// first tab is pinned to the chip's trailing edge, so moving the chip only
+    /// changes the *left* gap (the icon→tab gap moves with it). The chip uses
+    /// tight internal padding (`SpacesStripView.compactChipHorizontalPadding`),
+    /// so the inset carries the left clearance.
+    private static let trafficLightInset: CGFloat = 80
 
     /// Maximum width budget for the leading active-Space chip. Short names hug
     /// their content; long names truncate inside this budget rather than

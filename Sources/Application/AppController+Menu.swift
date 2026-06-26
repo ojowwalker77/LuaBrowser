@@ -25,8 +25,6 @@ extension AppController {
     static let bookmarksMenuIdentifier = NSUserInterfaceItemIdentifier("phi.bookmarks.menu")
     static let spacesNewProfileItemTag = 500015
     static let spacesDeleteProfileParentItemTag = 500016
-    static let viewMenuSpacesToggleItemTag = 500017
-    static let viewMenuSpacesToggleSeparatorTag = 500019
     static let viewMenuPhiSectionSeparatorTag = 500023
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
@@ -80,9 +78,7 @@ extension AppController {
                     item.tag == AppController.layoutModeDefaultItemTag ||
                     item.tag == AppController.layoutModeNavigationAtTopItemTag ||
                     item.tag == AppController.layoutModeTraditionalItemTag ||
-                    item.tag == AppController.layoutModeTitleItemTag ||
-                    item.tag == AppController.viewMenuSpacesToggleItemTag ||
-                    item.tag == AppController.viewMenuSpacesToggleSeparatorTag
+                    item.tag == AppController.layoutModeTitleItemTag
                 }
 
                 if submenu.items.last?.isSeparatorItem == false {
@@ -163,19 +159,6 @@ extension AppController {
                 Shortcuts.updateShortcut(for: newConversationItem)
                 newConversationItem.target = self
                 submenu.addItem(newConversationItem)
-
-                let spacesToggleSeparator = NSMenuItem.separator()
-                spacesToggleSeparator.tag = AppController.viewMenuSpacesToggleSeparatorTag
-                submenu.addItem(spacesToggleSeparator)
-
-                let spacesToggleItem = NSMenuItem(
-                    title: NSLocalizedString("Enable Spaces", comment: "View menu - Master toggle for the Spaces feature"),
-                    action: #selector(toggleSpacesFeature(_:)),
-                    keyEquivalent: ""
-                )
-                spacesToggleItem.tag = AppController.viewMenuSpacesToggleItemTag
-                spacesToggleItem.target = self
-                submenu.addItem(spacesToggleItem)
             } else
             
             if menuItem.title == "Phi", let subMenu = menuItem.submenu {
@@ -609,22 +592,6 @@ extension AppController {
         }
     }
 
-    @objc func toggleSpacesFeature(_ sender: Any?) {
-        let enabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-        SpaceManager.shared.setFeatureEnabled(!enabled)
-        updateSpacesMenuVisibility()
-    }
-
-    /// Toggles the Spaces top-level menu item's visibility to match the
-    /// current feature flag. Called right after `toggleSpacesFeature` flips
-    /// the preference so the menu bar reflects the new state without waiting
-    /// for the next main-menu rebuild.
-    private func updateSpacesMenuVisibility() {
-        guard let mainMenu = NSApp.mainMenu else { return }
-        let enabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-        mainMenu.item(withTag: AppController.spacesMenuItemTag)?.isHidden = !enabled
-    }
-    
     @objc func showWhatsNew(_ sender: Any?) {
         BrowserState.currentState()?.createTab("chrome://whats-new", focusAfterCreate: true)
     }
@@ -1450,13 +1417,6 @@ extension AppController {
             }
         }
         let spacesFeatureEnabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-        if item.action == #selector(toggleSpacesFeature(_:)) {
-            if let menuItem = item as? NSMenuItem {
-                menuItem.isHidden = false
-                menuItem.state = spacesFeatureEnabled ? .on : .off
-            }
-            return LoginController.shared.isLoggedin()
-        }
         if item.action == #selector(newProfile(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled

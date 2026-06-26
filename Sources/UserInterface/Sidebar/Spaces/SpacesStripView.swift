@@ -128,6 +128,11 @@ struct SpacesStripView: View {
     /// Slimmer height used when the switch sits at the top of the sidebar.
     static let sidebarHeight: CGFloat = 24
     private static let horizontalPadding: CGFloat = 10
+    /// Tighter horizontal padding for the lone horizontal-layout chip, so the
+    /// single Space icon hugs its glyph instead of floating in a wide chip.
+    /// `TabStripBarController.trafficLightInset` is tuned against this value to
+    /// keep the icon centered between the traffic lights and the first tab.
+    private static let compactChipHorizontalPadding: CGFloat = 2
     private static let iconSize: CGFloat = 14
     private static let iconHitSize: CGFloat = 22
     /// Uniform hit-target width of every item in the single-row strip — pips,
@@ -159,7 +164,7 @@ struct SpacesStripView: View {
                 compactChip
             }
         }
-        .padding(.horizontal, Self.horizontalPadding)
+        .padding(.horizontal, showsEllipsisAffordance ? Self.horizontalPadding : Self.compactChipHorizontalPadding)
         .contentShape(Rectangle())
         .onChange(of: slot.iconPickerRequestToken) { _ in
             openActiveIconPicker()
@@ -179,16 +184,20 @@ struct SpacesStripView: View {
         }
     }
 
-    /// Compact tap target for the horizontal tab strip: the active Space's
-    /// icon opens the icon picker; the name opens the Space picker.
+    /// Compact affordance for the horizontal tab strip: just the active Space's
+    /// icon. Hovering it opens the Space switcher; the icon no longer opens the
+    /// icon picker on click. Change Icon stays on the right-click menu and the
+    /// tab-area "Change Icon…" entry.
     private var compactChip: some View {
         activeLabel
         .help(NSLocalizedString("Spaces", comment: "Tooltip for the Spaces picker affordance"))
+        .onHover { hovering in
+            if hovering { isPickerOpen = true }
+        }
         .contextMenu {
             if activeSpace != nil {
                 Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
-                    // Drop the picker below the active Space's icon — the same
-                    // popover the icon button opens on click.
+                    // Drop the icon picker below the active Space's icon.
                     isPickerOpen = false
                     isIconPickerOpen = true
                 }
@@ -199,24 +208,21 @@ struct SpacesStripView: View {
         }
     }
 
-    /// Active Space's icon + name. The per-Space tweaks (rename, change icon,
-    /// edit theme, change profile) now live in the Spaces menu and the
-    /// tab-area / sidebar context menu, so the header no longer carries its
-    /// own right-click menu.
+    /// The active Space's icon, shown in the horizontal tab strip.
     @ViewBuilder
     private var activeLabel: some View {
         scrollingLabel
         .contentShape(Rectangle())
     }
 
-    /// Icon + name that scrolls vertically when the active Space changes: the
-    /// outgoing Space slides off one edge while the incoming one slides in from
-    /// the other (later Space → scroll up, earlier → scroll down), clipped to
-    /// the row height so it reads as a ticker.
+    /// The active Space's icon, scrolling vertically when the active Space
+    /// changes: the outgoing Space's icon slides off one edge while the incoming
+    /// one slides in from the other (later Space → scroll up, earlier → scroll
+    /// down), clipped to the row height so it reads as a ticker.
     private var scrollingLabel: some View {
         // The clip + fixed frame live on the STABLE container (the ZStack), not
         // on the transitioning label — otherwise the clip travels out with the
-        // outgoing label and the old name lingers above/below the row.
+        // outgoing icon and the old icon lingers above/below the row.
         ZStack(alignment: .leading) {
             label(for: spaceModel(displayedSpaceId))
                 .id(displayedSpaceId ?? "none")
@@ -235,7 +241,7 @@ struct SpacesStripView: View {
             let newIndex = manager.spaces.firstIndex { $0.spaceId == newId }
             scrollEdge = (newIndex ?? 0) >= (oldIndex ?? 0) ? .bottom : .top
             // Match the band push-in exactly (same curve + duration) so the
-            // name scroll and the slide move together.
+            // icon scroll and the slide move together.
             withAnimation(.easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration())) {
                 displayedSpaceId = newId
             }
@@ -248,30 +254,22 @@ struct SpacesStripView: View {
     }
 
     private func label(for space: SpaceModel?) -> some View {
-        HStack(spacing: 6) {
-            iconButton(for: space)
-            name(for: space)
-        }
+        activeIcon(for: space)
     }
 
-    private func iconButton(for space: SpaceModel?) -> some View {
-        Button {
-            guard space != nil else { return }
-            isPickerOpen = false
-            isIconPickerOpen.toggle()
-        } label: {
-            SpaceIconView(
-                storedValue: space?.iconName,
-                size: Self.iconSize,
-                symbolWeight: .semibold,
-                tint: space.map(iconColor(for:)) ?? Color.secondary
-            )
-            .frame(width: Self.iconHitSize, height: Self.iconHitSize)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(space == nil)
-        .help(NSLocalizedString("Change Icon", comment: "Spaces menu - Submenu to change the active Space's icon"))
+    /// The active Space's icon. Clicking it no longer opens the icon picker —
+    /// switching Spaces is the chip's hover affordance — but it still hosts the
+    /// icon-picker popover that the right-click / tab-area "Change Icon…" entry
+    /// anchors to.
+    private func activeIcon(for space: SpaceModel?) -> some View {
+        SpaceIconView(
+            storedValue: space?.iconName,
+            size: Self.iconSize,
+            symbolWeight: .semibold,
+            tint: space.map(iconColor(for:)) ?? Color.secondary
+        )
+        .frame(width: Self.iconHitSize, height: Self.iconHitSize)
+        .contentShape(Rectangle())
         .popover(isPresented: $isIconPickerOpen, arrowEdge: .bottom) {
             iconPicker(for: space)
         }
@@ -291,30 +289,9 @@ struct SpacesStripView: View {
         }
     }
 
-    @ViewBuilder
-    private func name(for space: SpaceModel?) -> some View {
-        let name = Text(space?.name ?? NSLocalizedString("No Space", comment: "Active-Space header fallback when no Space is selected"))
-            .font(.system(size: 13, weight: .medium))
-            .lineLimit(1)
-            .truncationMode(.tail)
-
-        if showsEllipsisAffordance {
-            name
-        } else {
-            Button {
-                isIconPickerOpen = false
-                isPickerOpen.toggle()
-            } label: {
-                name
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
     /// Sidebar chooser: one tappable icon per Space (the active one carries its
     /// theme tint, the rest read muted) followed by a trailing "+" that creates
-    /// a new Space. Right-clicking a pip exposes the same per-Space edits the
-    /// popover used to host. A large number of Spaces can overflow the row; the
+    /// a new Space. A large number of Spaces can overflow the row; the
     /// common handful fit within the sidebar width.
     private var iconStrip: some View {
         // Single row that never wraps: show as many leading pips as fit, then a
@@ -439,7 +416,6 @@ struct SpacesStripView: View {
                 }
             )
         }
-        .contextMenu { pipContextMenu(for: space) }
     }
 
     /// A pip's hover card shows while it (and only it) is hovered, and never
@@ -537,56 +513,6 @@ struct SpacesStripView: View {
         .popover(isPresented: $isPickerOpen, arrowEdge: .bottom) {
             pickerPopup(excludedSpaceIds: excludedSpaceIds, showsCreate: false)
         }
-    }
-
-    /// Per-Space management, mirroring the popover rows so dropping the ellipsis
-    /// popover from the sidebar doesn't strip the edits it used to host.
-    @ViewBuilder
-    private func pipContextMenu(for space: SpaceModel) -> some View {
-        Button(NSLocalizedString("Rename\u{2026}", comment: "")) { promptRename(for: space) }
-        Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
-            iconEditSpaceId = space.spaceId
-        }
-        Menu(NSLocalizedString("Change Theme", comment: "")) {
-            Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeBinding(for: space)) {
-                Label {
-                    Text(NSLocalizedString("Follow Global", comment: "Theme menu: clear per-Space override"))
-                } icon: {
-                    Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
-                        .renderingMode(.original)
-                }
-                .tag(String?.none)
-
-                Divider()
-
-                ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
-                    Label {
-                        Text(theme.name)
-                    } icon: {
-                        Image(nsImage: .themeColorSwatch(for: theme))
-                            .renderingMode(.original)
-                    }
-                    .tag(String?(theme.id))
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        }
-        if space.spaceId != LocalStore.defaultSpaceId {
-            Divider()
-            Button(role: .destructive) {
-                confirmDelete(space)
-            } label: {
-                Text(NSLocalizedString("Delete", comment: "Destructive menu item"))
-            }
-        }
-    }
-
-    private func themeBinding(for space: SpaceModel) -> Binding<String?> {
-        Binding(
-            get: { manager.themeId(forSpaceId: space.spaceId) },
-            set: { manager.setTheme(forSpaceId: space.spaceId, themeId: $0) }
-        )
     }
 
     /// The Space-switcher popover content. The horizontal chip lists every Space
