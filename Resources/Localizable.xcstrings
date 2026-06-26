@@ -1560,6 +1560,9 @@
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
     },
+    "A profile with this name already exists." : {
+      "comment" : "Validation shown when a new or renamed profile name duplicates an existing profile"
+    },
     "The name cannot be empty." : {
       "comment" : "Validation shown when the profile name is left blank"
     },

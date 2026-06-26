@@ -71,18 +71,53 @@ final class ProfileManager: ObservableObject {
         profiles.first(where: { $0.profileId == profileId })
     }
 
+    /// True when some existing profile already uses `name` (compared
+    /// case-insensitively, after trimming). Pass `excluding` while renaming so
+    /// a profile isn't flagged as a duplicate of itself. Chromium itself allows
+    /// duplicate profile names; this is a Phi-side guard so the create / rename
+    /// prompts can keep display names unique — two identically named profiles
+    /// are indistinguishable in menus and pickers.
+    func displayNameExists(_ name: String, excluding profileId: String? = nil) -> Bool {
+        let target = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return false }
+        return profiles.contains {
+            $0.profileId != profileId &&
+            $0.displayName.caseInsensitiveCompare(target) == .orderedSame
+        }
+    }
+
     // MARK: - Mutations
 
-    /// Creates a new on-disk profile. Completion fires on the main queue
-    /// with the new profileId, or nil on failure. Refreshes the published
-    /// list before completion fires.
+    /// Creates a new on-disk profile. Completion fires on the main queue with
+    /// the new profileId, or nil on failure (including an empty or duplicate
+    /// name). Refreshes the published list before completion fires.
+    ///
+    /// The create prompts grey out their confirm button on a live duplicate
+    /// check, but that's UI state — re-check uniqueness here at submit time so a
+    /// profile list that went stale (or changed while the prompt was open) can't
+    /// slip a duplicate through. `refresh()` first so the check sees the latest.
+    ///
+    /// Limitation: this is a check-then-act guard, not an authoritative
+    /// cross-flight uniqueness constraint — the pending name isn't reserved
+    /// during the async bridge create, so two *concurrent* same-name creates (or
+    /// a create racing a rename) could both pass it and leave indistinguishable
+    /// profiles. Today every create/rename goes through an app-modal prompt,
+    /// which serializes user operations and makes that unreachable; a future
+    /// non-modal path would need a pending-name reservation here or uniqueness
+    /// enforced Chromium-side.
     func createProfile(displayName: String,
                        completion: @escaping (String?) -> Void) {
+        refresh()
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !displayNameExists(trimmed) else {
+            completion(nil)
+            return
+        }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             completion(nil)
             return
         }
-        bridge.createProfile(withDisplayName: displayName) { [weak self] newId in
+        bridge.createProfile(withDisplayName: trimmed) { [weak self] newId in
             DispatchQueue.main.async {
                 self?.refresh()
                 if let newId {
@@ -147,17 +182,27 @@ final class ProfileManager: ObservableObject {
         }
     }
 
-    /// Renames a profile's display name. Completion fires on the main queue
-    /// with success/error. Refreshes the published list before completion fires
-    /// so subscribers observe the new name.
+    /// Renames a profile's display name. Completion fires on the main queue with
+    /// success/error (failing on an empty or duplicate name). Refreshes the
+    /// published list before completion fires so subscribers observe the new name.
+    ///
+    /// Same submit-time guard as `createProfile`: the rename prompt greys out its
+    /// confirm button live, but re-check uniqueness here so a stale list can't
+    /// commit a duplicate.
     func renameProfile(_ profileId: String,
                        to displayName: String,
                        completion: @escaping (Bool, String?) -> Void) {
+        refresh()
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !displayNameExists(trimmed, excluding: profileId) else {
+            completion(false, nil)
+            return
+        }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             completion(false, "bridge unavailable")
             return
         }
-        bridge.renameProfile(profileId, toDisplayName: displayName) { [weak self] success, error in
+        bridge.renameProfile(profileId, toDisplayName: trimmed) { [weak self] success, error in
             DispatchQueue.main.async {
                 self?.refresh()
                 completion(success, error)

@@ -424,57 +424,16 @@ struct ProfilesSettingsView: View {
     }
 
     private func newProfile() {
-        // Re-prompt on an empty name instead of silently dropping it, so the
-        // user is told the name is required rather than left wondering why
-        // "Create" did nothing.
-        var showEmptyError = false
-        while true {
-            let alert = NSAlert()
-            alert.messageText = NSLocalizedString("New Profile", comment: "Title of the create-profile dialog")
-            alert.informativeText = showEmptyError
-                ? NSLocalizedString("The name cannot be empty.",
-                    comment: "Validation shown when the profile name is left blank")
-                : NSLocalizedString(
-                    "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
-                    comment: "Body of the create-profile dialog")
-            alert.addButton(withTitle: NSLocalizedString("Create", comment: "Create button"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
-            let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-            textField.placeholderString = NSLocalizedString("Profile name", comment: "Placeholder for the profile-name field")
-            alert.accessoryView = textField
-            DispatchQueue.main.async {
-                textField.window?.makeFirstResponder(textField)
-            }
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                showEmptyError = true
-                continue
-            }
-            profileManager.createProfile(displayName: trimmed) { newId in
-                if let newId { select(newId) }
-            }
-            return
+        guard let name = ProfileNameFieldValidator.present(.create) else { return }
+        profileManager.createProfile(displayName: name) { newId in
+            if let newId { select(newId) }
         }
     }
 
     private func renameProfile(_ profile: PhiBrowserProfile) {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Rename Profile", comment: "Title of the rename-profile dialog")
-        alert.informativeText = NSLocalizedString("Enter a new name for this profile.", comment: "Body of the rename-profile dialog")
-        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        textField.stringValue = profile.displayName
-        textField.placeholderString = profile.displayName
-        alert.accessoryView = textField
-        DispatchQueue.main.async {
-            textField.window?.makeFirstResponder(textField)
-            textField.selectText(nil)
-        }
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != profile.displayName else { return }
+        guard let trimmed = ProfileNameFieldValidator.present(
+            .rename(currentName: profile.displayName, profileId: profile.profileId)) else { return }
+        guard trimmed != profile.displayName else { return }
         profileManager.renameProfile(profile.profileId, to: trimmed) { success, error in
             if !success {
                 let errAlert = NSAlert()
@@ -508,5 +467,123 @@ struct ProfilesSettingsView: View {
                 errAlert.runModal()
             }
         }
+    }
+}
+
+/// Live validator for a profile-name field inside an `NSAlert`. Owns the field
+/// and a vertical accessory (field above, an inline red message below) and keeps
+/// the alert's confirm button greyed out until the trimmed name is non-empty and
+/// unique. Replaces the old dismiss-and-re-present-on-error loop: errors now
+/// appear inline without the alert flickering. Shared by the create (Phi menu /
+/// Profiles settings / create-Space) and rename prompts; pass `excludingProfileId`
+/// when renaming so a profile's own name isn't treated as a clash. An empty field
+/// just disables confirm — no red message until the user types a duplicate.
+///
+/// The caller must keep the instance alive for the modal's lifetime; a local
+/// `let` across `runModal()` suffices (`NSTextField.delegate` is weak).
+final class ProfileNameFieldValidator: NSObject, NSTextFieldDelegate {
+    let field = NSTextField(frame: NSRect(x: 0, y: 20, width: 240, height: 24))
+    let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 44))
+    private let errorLabel = NSTextField(labelWithString: "")
+    private weak var confirmButton: NSButton?
+    private let excludingProfileId: String?
+
+    init(confirmButton: NSButton,
+         excludingProfileId: String?,
+         placeholder: String,
+         initialValue: String = "") {
+        self.confirmButton = confirmButton
+        self.excludingProfileId = excludingProfileId
+        super.init()
+        field.placeholderString = placeholder
+        field.stringValue = initialValue
+        field.delegate = self
+        field.autoresizingMask = [.width]
+        errorLabel.frame = NSRect(x: 0, y: 0, width: 240, height: 16)
+        errorLabel.font = .systemFont(ofSize: 11)
+        errorLabel.textColor = .systemRed
+        errorLabel.autoresizingMask = [.width]
+        accessory.addSubview(field)
+        accessory.addSubview(errorLabel)
+        revalidate()
+    }
+
+    /// The field's trimmed contents — what the caller should persist.
+    var trimmedValue: String {
+        field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Which prompt to present — `create` for a brand-new profile, `rename` for
+    /// an existing one (its own name is excluded from the duplicate check and
+    /// pre-filled for editing).
+    enum Mode {
+        case create
+        case rename(currentName: String, profileId: String)
+    }
+
+    /// Presents the shared create/rename name alert modally and returns the
+    /// confirmed, trimmed name — or nil if the user cancelled. Centralizes the
+    /// `NSAlert` + field wiring that every create entry point and rename would
+    /// otherwise duplicate. The live validator greys out the confirm button on an
+    /// empty/duplicate name; `ProfileManager` re-checks uniqueness at submit time.
+    static func present(_ mode: Mode) -> String? {
+        // Pull the latest profile list before the live validator reads it: the
+        // singleton can still be empty if it was first touched before the
+        // Chromium bridge came up, which would let an existing name pass the
+        // inline check and then fail silently at submit time. refresh() is sync.
+        ProfileManager.shared.refresh()
+        let alert = NSAlert()
+        let validator: ProfileNameFieldValidator
+        switch mode {
+        case .create:
+            alert.messageText = NSLocalizedString("New Profile", comment: "Title of the create-profile dialog")
+            alert.informativeText = NSLocalizedString(
+                "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
+                comment: "Body of the create-profile dialog")
+            alert.addButton(withTitle: NSLocalizedString("Create", comment: "Create button"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            validator = ProfileNameFieldValidator(
+                confirmButton: alert.buttons[0],
+                excludingProfileId: nil,
+                placeholder: NSLocalizedString("Profile name", comment: "Placeholder for the profile-name field"))
+        case let .rename(currentName, profileId):
+            alert.messageText = NSLocalizedString("Rename Profile", comment: "Title of the rename-profile dialog")
+            alert.informativeText = NSLocalizedString("Enter a new name for this profile.", comment: "Body of the rename-profile dialog")
+            alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            validator = ProfileNameFieldValidator(
+                confirmButton: alert.buttons[0],
+                excludingProfileId: profileId,
+                placeholder: currentName,
+                initialValue: currentName)
+        }
+        alert.accessoryView = validator.accessory
+        DispatchQueue.main.async {
+            validator.field.window?.makeFirstResponder(validator.field)
+            if case .rename = mode { validator.field.selectText(nil) }
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return validator.trimmedValue
+    }
+
+    /// Greys out the confirm button unless the name is non-empty and unique, and
+    /// shows the inline red message only on a duplicate.
+    private func revalidate() {
+        let trimmed = trimmedValue
+        if trimmed.isEmpty {
+            errorLabel.stringValue = ""
+            confirmButton?.isEnabled = false
+        } else if ProfileManager.shared.displayNameExists(trimmed, excluding: excludingProfileId) {
+            errorLabel.stringValue = NSLocalizedString("A profile with this name already exists.",
+                comment: "Validation shown when a new or renamed profile name duplicates an existing profile")
+            confirmButton?.isEnabled = false
+        } else {
+            errorLabel.stringValue = ""
+            confirmButton?.isEnabled = true
+        }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        revalidate()
     }
 }
