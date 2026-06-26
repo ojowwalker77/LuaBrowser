@@ -231,6 +231,10 @@ final class TabStripBarController: NSViewController {
         view.menu = stripContextMenu
         tabStrip.menu = stripContextMenu
         hostingView.menu = stripContextMenu
+        // Right-clicking the active-Space chip shows the same strip context menu
+        // as the rest of the tab bar (it already carries the active-Space
+        // controls), rather than a chip-specific menu.
+        spacesHostingView.menu = stripContextMenu
 
         // The tab strip's leading edge depends on the active-Space picker (it
         // starts just after it), so its constraints are made alongside the

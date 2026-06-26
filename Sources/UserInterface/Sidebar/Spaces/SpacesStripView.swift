@@ -186,22 +186,16 @@ struct SpacesStripView: View {
 
     /// Compact affordance for the horizontal tab strip: just the active Space's
     /// icon. Hovering it opens the Space switcher; the icon no longer opens the
-    /// icon picker on click. Change Icon stays on the right-click menu and the
-    /// tab-area "Change Icon…" entry.
+    /// icon picker on click. Right-clicking it shows the tab strip's context
+    /// menu — the same one as right-clicking empty tab-bar space, which already
+    /// carries the active-Space controls (including "Change Icon…"). That AppKit
+    /// menu is attached to the chip's hosting view in TabStripBarController, so
+    /// the chip intentionally has no SwiftUI `.contextMenu` of its own.
     private var compactChip: some View {
         activeLabel
         .help(NSLocalizedString("Spaces", comment: "Tooltip for the Spaces picker affordance"))
         .onHover { hovering in
             if hovering { isPickerOpen = true }
-        }
-        .contextMenu {
-            if activeSpace != nil {
-                Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
-                    // Drop the icon picker below the active Space's icon.
-                    isPickerOpen = false
-                    isIconPickerOpen = true
-                }
-            }
         }
         .popover(isPresented: $isPickerOpen, arrowEdge: .top) {
             pickerPopup()
