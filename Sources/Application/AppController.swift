@@ -48,6 +48,17 @@ import PostHog
     override init() {
         super.init()
         Self.shared = self
+        // Opt out of AppKit's window-state restoration. macOS otherwise
+        // re-enters native fullscreen on a previously-fullscreen window a few
+        // seconds into the next launch (its own Spaces/saved-state restoration),
+        // independent of Chromium's restored show-state and the window's
+        // `isRestorable` — leaving restored windows fullscreen (and the reconcile
+        // then orphans empty fullscreen Spaces). Chromium owns tab/session
+        // restore and Phi owns window frame/Space affinity, so AppKit's
+        // window-state restoration is redundant here; turning it off makes
+        // restored windows come back as normal windows. Set in `init` (before
+        // `applicationWillFinishLaunching`) so it lands before AppKit reads it.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {

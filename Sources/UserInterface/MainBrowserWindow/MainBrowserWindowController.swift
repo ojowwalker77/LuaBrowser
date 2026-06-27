@@ -104,6 +104,16 @@ class MainBrowserWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.animationBehavior = .none
+        // Do NOT let AppKit secure-state restoration bring these windows back in
+        // fullscreen. On a slot that owned several Space windows in one
+        // fullscreen Space at quit, AppKit re-applies the persisted `.fullScreen`
+        // styleMask per window on cold launch; combined with Chromium's own
+        // session restore recreating the windows, that leaves an orphaned, empty
+        // fullscreen Space (the blank desktop in Mission Control). Chromium owns
+        // session restore (tabs/content) and `SpaceWindowSlot` owns frame/Space
+        // continuity, so AppKit window restoration is redundant here — turning it
+        // off makes restored windows come back as normal windows.
+        window.isRestorable = false
         //        window.delegate = self
         // No frame autosave name. Chromium owns window placement (CreateParams
         // override bounds / WindowSizer / saved-placement prefs /
@@ -225,7 +235,7 @@ class MainBrowserWindowController: NSWindowController {
             browserState.toggleFullScreenMode(true)
         }
     }
-    
+
     @objc private func myWindowWillExitFullScreen(_ noti: Notification) {
         if noti.object as? NSWindow === self.window {
             browserState.toggleFullScreenMode(false)
