@@ -89,6 +89,8 @@ class BrowserDataImporter {
             return false
         }
         isImporting = true
+        let lockedSpaceId = targetSpaceId
+        ImportTargetLock.shared.begin(into: lockedSpaceId)
         failedImports.removeAll()
 
         // Only clear bookmarks if at least one browser is importing bookmarks
@@ -144,15 +146,22 @@ class BrowserDataImporter {
 
         if importingBookmarks || !arcBookmarks.isEmpty {
             Task { [weak self] in
-                guard let self else { return }
-                await self.persistImportedBookmarksAfterSnapshot(
-                    windowId: windowId,
-                    arcBookmarks: arcBookmarks
-                )
-                await MainActor.run { self.isImporting = false }
+                if let self {
+                    await self.persistImportedBookmarksAfterSnapshot(
+                        windowId: windowId,
+                        arcBookmarks: arcBookmarks
+                    )
+                    await MainActor.run { self.isImporting = false }
+                }
+                // Release the Space lock even if the importer was deallocated
+                // (its window can close right after startImportData returns);
+                // otherwise the Space stays locked until restart. `lockedSpaceId`
+                // is value-captured and the lock is global, so this needs no self.
+                ImportTargetLock.shared.end(into: lockedSpaceId)
             }
         } else {
             isImporting = false
+            ImportTargetLock.shared.end(into: lockedSpaceId)
         }
 
         return true
@@ -328,4 +337,32 @@ class BrowserDataImporter {
 // MARK: - Notification Name
 extension Notification.Name {
     static let browserImportCompleted = Notification.Name("browserImportCompleted")
+}
+
+/// Tracks which Spaces currently have an import writing into them so a Space
+/// can't be deleted out from under an in-flight import — which would otherwise
+/// strand the imported bookmarks under an orphan root (the persist path also
+/// revalidates the Space as a backstop). The importer brackets this around its
+/// `isImporting` window. Lock-guarded rather than actor-isolated so the
+/// non-isolated `SpaceManager.deleteSpace` can consult it synchronously.
+final class ImportTargetLock {
+    static let shared = ImportTargetLock()
+    private let lock = NSLock()
+    private var importingSpaceIds: Set<String> = []
+    private init() {}
+
+    func begin(into spaceId: String) {
+        lock.lock(); defer { lock.unlock() }
+        importingSpaceIds.insert(spaceId)
+    }
+
+    func end(into spaceId: String) {
+        lock.lock(); defer { lock.unlock() }
+        importingSpaceIds.remove(spaceId)
+    }
+
+    func isImporting(into spaceId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return importingSpaceIds.contains(spaceId)
+    }
 }

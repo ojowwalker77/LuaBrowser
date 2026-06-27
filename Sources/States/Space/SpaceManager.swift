@@ -814,6 +814,24 @@ final class SpaceManager: ObservableObject {
             AppLogWarn("[SpaceManager] refusing to delete the default space")
             return
         }
+        // An import currently writing into this Space must finish first, or its
+        // pending bookmark snapshot would be stranded under a root whose Space
+        // we just deleted. Refuse and tell the user rather than racing the write.
+        guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
+            AppLogWarn("[SpaceManager] refusing to delete space \(spaceId): import in progress")
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString(
+                "Can’t delete this Space yet",
+                comment: "Title shown when deleting a Space is blocked by an in-progress import"
+            )
+            alert.informativeText = NSLocalizedString(
+                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+                comment: "Body shown when deleting a Space is blocked by an in-progress import"
+            )
+            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.runModal()
+            return
+        }
         // A queued profile-change reopen for this Space is moot once the
         // Space itself goes away.
         pendingProfileChangeReopens.removeValue(forKey: spaceId)
@@ -877,6 +895,25 @@ final class SpaceManager: ObservableObject {
     func changeProfile(spaceId: String, toProfileId newProfileId: String) {
         guard spaceId != LocalStore.defaultSpaceId else {
             AppLogWarn("[SpaceManager] refusing to change the default space's profile")
+            return
+        }
+        // An import currently writing into this Space must finish first:
+        // re-profiling re-stamps the Space's bookmark rows, so the deferred
+        // import snapshot would be stranded under the old (profileId, spaceId)
+        // and silently dropped by the persist backstop. Refuse and tell the user.
+        guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
+            AppLogWarn("[SpaceManager] refusing to change profile of space \(spaceId): import in progress")
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString(
+                "Can’t change this Space’s profile yet",
+                comment: "Title shown when changing a Space's profile is blocked by an in-progress import"
+            )
+            alert.informativeText = NSLocalizedString(
+                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+                comment: "Body shown when a Space action is blocked by an in-progress import"
+            )
+            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.runModal()
             return
         }
         guard let space = spaces.first(where: { $0.spaceId == spaceId }) else {

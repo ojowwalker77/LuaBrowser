@@ -228,6 +228,10 @@ extension LocalStore {
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
+                guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
+                    AppLogWarn("Skipping Arc bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
+                    return
+                }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
                       let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
 
@@ -300,6 +304,10 @@ extension LocalStore {
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
+                guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
+                    AppLogWarn("Skipping Chromium bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
+                    return
+                }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
                       let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
                 guard let bookmarksBar = bookmarks.first(where: { $0.title == "Bookmarks Bar" }) else {
@@ -615,6 +623,19 @@ extension LocalStore {
 
 // MARK: - Bookmark Root (visible to sibling LocalStore extensions)
 extension LocalStore {
+    /// Whether imported bookmarks may be written into `(profileId, spaceId)`.
+    /// The default Space is always allowed (its root is the legacy profile root
+    /// and needs no `SpaceModel`). A non-default Space must still have a live
+    /// `SpaceModel`: if it was deleted or re-profiled mid-import, writing would
+    /// create an orphan root the UI never shows, so the import is dropped.
+    func importTargetSpaceIsWritable(profileId: String, spaceId: String, in context: ModelContext) throws -> Bool {
+        if spaceId == Self.defaultSpaceId { return true }
+        let descriptor = FetchDescriptor<SpaceModel>(
+            predicate: #Predicate { $0.spaceId == spaceId && $0.profileId == profileId }
+        )
+        return try context.fetchCount(descriptor) > 0
+    }
+
     /// Resolves the hidden root folder for `(profileId, spaceId)`.
     ///
     /// For the default Space, the root is shared with `ProfileModel.bookmarkRoot`

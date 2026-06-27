@@ -273,7 +273,20 @@ final class LocalStoreProfileTests: XCTestCase {
     /// path stands in for the shared behavior.
     func testSaveArcBookmarksToLocalStoreLandsInTargetSpace() async throws {
         let store = try makeStore()
+        let context = try XCTUnwrap(store.getMainContext())
         let targetSpaceId = "space-secondary"
+
+        // The target Space must exist: the persist path drops imports whose
+        // Space was deleted/re-profiled mid-flight (see importTargetSpaceIsWritable).
+        context.insert(SpaceModel(
+            spaceId: targetSpaceId,
+            profileId: LocalStore.defaultProfileId,
+            name: "Secondary",
+            colorHex: "#000000",
+            iconName: "circle",
+            sortOrder: 1
+        ))
+        try context.save()
 
         let bookmark = ArcDataParserTool.Bookmark(
             guid: "arc-1",
@@ -313,6 +326,46 @@ final class LocalStoreProfileTests: XCTestCase {
             spaceId: LocalStore.defaultSpaceId
         )
         XCTAssertTrue(defaultRootChildren.isEmpty, "Importing into a non-default Space must not touch the default Space.")
+    }
+
+    /// Backstop for the delete/re-profile race: when the target Space has no
+    /// live SpaceModel (deleted or re-profiled mid-import), the persist path
+    /// drops the import instead of writing an orphan root the UI never shows.
+    func testSaveArcBookmarksAbortsWhenTargetSpaceMissing() async throws {
+        let store = try makeStore()
+        let targetSpaceId = "space-gone"   // intentionally no SpaceModel inserted
+
+        let bookmark = ArcDataParserTool.Bookmark(
+            guid: "arc-1",
+            title: "Example",
+            url: "https://example.com",
+            isFolder: false
+        )
+        await store.saveArcBookmarksToLocalStore(
+            [bookmark],
+            profileId: LocalStore.defaultProfileId,
+            spaceId: targetSpaceId
+        )
+
+        XCTAssertTrue(
+            store.fetchBookmarks(parentId: nil, profileId: LocalStore.defaultProfileId, spaceId: targetSpaceId).isEmpty,
+            "Nothing should be written into a Space that no longer exists."
+        )
+        XCTAssertTrue(
+            store.fetchBookmarks(parentId: nil, profileId: LocalStore.defaultProfileId, spaceId: LocalStore.defaultSpaceId).isEmpty,
+            "A dropped import must not spill into the default Space either."
+        )
+    }
+
+    func testImportTargetLockTracksImportingSpaces() {
+        let lock = ImportTargetLock.shared
+        let spaceId = "space-lock-\(UUID().uuidString)"
+
+        XCTAssertFalse(lock.isImporting(into: spaceId))
+        lock.begin(into: spaceId)
+        XCTAssertTrue(lock.isImporting(into: spaceId))
+        lock.end(into: spaceId)
+        XCTAssertFalse(lock.isImporting(into: spaceId))
     }
 
     /// The single import window is retargeted (not duplicated) when re-invoked
