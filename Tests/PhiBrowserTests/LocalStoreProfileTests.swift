@@ -5,6 +5,7 @@
 
 import XCTest
 import SwiftData
+import Cocoa
 @testable import Phi
 
 @MainActor
@@ -366,6 +367,21 @@ final class LocalStoreProfileTests: XCTestCase {
         XCTAssertTrue(lock.isImporting(into: spaceId))
         lock.end(into: spaceId)
         XCTAssertFalse(lock.isImporting(into: spaceId))
+    }
+
+    func testFormatImportTargetLabel() {
+        XCTAssertEqual(
+            ImportFromOtherBrowserViewController.formatImportTargetLabel(spaceName: "Work", profileName: "Personal"),
+            "Work (Personal)"
+        )
+        XCTAssertEqual(
+            ImportFromOtherBrowserViewController.formatImportTargetLabel(spaceName: "Work", profileName: nil),
+            "Work"
+        )
+        XCTAssertEqual(
+            ImportFromOtherBrowserViewController.formatImportTargetLabel(spaceName: "Work", profileName: ""),
+            "Work"
+        )
     }
 
     /// The single import window is retargeted (not duplicated) when re-invoked

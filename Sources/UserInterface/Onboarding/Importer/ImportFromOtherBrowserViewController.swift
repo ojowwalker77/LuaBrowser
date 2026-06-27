@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import AVFoundation
+import SwiftUI
 
 class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     enum Phase {
@@ -79,6 +80,34 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         targetSpaceId = spaceId
         targetWindowId = windowId
         importer.updateTarget(profileId: profileId, spaceId: spaceId, windowId: windowId)
+        refreshTargetLabel()
+    }
+
+    /// Caption (standalone window only) showing where bookmarks will land: the
+    /// target Space's icon + name and, in parentheses, its profile.
+    private lazy var targetHostingView = NSHostingView(rootView: ImportTargetView(iconStoredValue: nil, text: ""))
+
+    /// Formats the import-target caption: "Space Name (Profile Name)", or just
+    /// the Space name when the profile can't be resolved.
+    static func formatImportTargetLabel(spaceName: String, profileName: String?) -> String {
+        if let profileName, !profileName.isEmpty {
+            return "\(spaceName) (\(profileName))"
+        }
+        return spaceName
+    }
+
+    private func refreshTargetLabel() {
+        guard isViewLoaded, displayMode == .normal else { return }
+        let space = SpaceManager.shared.spaces.first { $0.spaceId == targetSpaceId }
+        let profileName = ProfileManager.shared.profile(for: targetProfileId)?.displayName
+        let spaceName = space?.name ?? NSLocalizedString(
+            "Current Space",
+            comment: "Fallback label for the import-target Space when it can't be resolved by id"
+        )
+        targetHostingView.rootView = ImportTargetView(
+            iconStoredValue: space?.iconName,
+            text: Self.formatImportTargetLabel(spaceName: spaceName, profileName: profileName)
+        )
     }
     /// Browsers that have been configured with data types (returned from data type page).
     private(set) var configuredBrowsers: Set<BrowserType> = []
@@ -234,6 +263,16 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         view.addSubview(importStatusLabel)
         view.addSubview(permisionImageView)
         view.addSubview(desLabel)
+
+        if displayMode == .normal {
+            view.addSubview(targetHostingView)
+            targetHostingView.snp.makeConstraints { make in
+                make.centerX.equalToSuperview()
+                make.top.equalTo(titleLabel.snp.bottom).offset(12)
+                make.width.lessThanOrEqualTo(optionWidth)
+            }
+            refreshTargetLabel()
+        }
 
         applyOptionViewStyle(chromeOptionView)
         applyOptionViewStyle(safariOptionView)
@@ -420,6 +459,13 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private func showPermissionView() {
         optionsContainer.isHidden = true
         importStatusLabel.isHidden = true
+        // The standalone target caption sits just under the title, where the
+        // permission explanation (`desLabel`) also goes — hide it on this screen
+        // so the two don't overlap. The flow proceeds to import (never back to
+        // the selection screen) afterwards, so it needn't be restored.
+        if displayMode == .normal {
+            targetHostingView.isHidden = true
+        }
         permisionImageView.isHidden = false
         browserOptionsStackView.isHidden = true
         titleLabel.stringValue = NSLocalizedString("Permissions", comment: "Import browser data page - Page title when showing permission request")
@@ -955,6 +1001,28 @@ class OnboardingBaseViewController: NSViewController {
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
             loopObserver = nil
+        }
+    }
+}
+
+/// Import-target caption hosted in the standalone import window: the target
+/// Space's icon followed by "Space Name (Profile Name)". Reuses the shared
+/// Spaces icon renderer so phi-icons and emoji render identically to the strip.
+private struct ImportTargetView: View {
+    let iconStoredValue: String?
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Reuse the strip's icon view: it renders phi-icons, emoji (with
+            // `.fixedSize()` so the glyph isn't clipped), and SF-symbol
+            // fallbacks correctly — unlike IconPickerSelectionView, whose emoji
+            // branch clips to a tight size×size frame.
+            SpaceIconView(storedValue: iconStoredValue, size: 16, symbolWeight: .regular, tint: .white)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
         }
     }
 }
