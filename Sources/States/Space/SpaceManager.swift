@@ -1949,16 +1949,26 @@ final class SpaceWindowSlot: ObservableObject {
                     self?.windowsBySpaceId[spaceId]?.window?.setFrame(inheritedFrame, display: false)
                 }
             }
-            // A spawned Browser starts with zero tabs and nothing else
-            // populates it (the placeholder shell only engages on
-            // last-tab-close), so the Space would surface as an empty
-            // window. Replay tabs captured by a profile change when one is
-            // queued for this (Space, profile) pair; otherwise give it a
-            // new tab page. Routed through the bridge by windowId rather
-            // than the controller's BrowserState so the rare
-            // async-registration path (controller not yet in
-            // `windowsBySpaceId`) is covered too; the tabs.isEmpty check
-            // keeps this idempotent should the spawn contract ever change.
+            // A spawned Browser starts with zero tabs, so the Space would
+            // surface as an empty window — UNLESS something repopulates it.
+            // Two repopulators exist:
+            //   1. A profile-change reopen queued for this (Space, profile)
+            //      pair — replay those URLs immediately.
+            //   2. Chromium session restore. After a window-driven close
+            //      cascades the slot shut, SessionService saves the session;
+            //      re-entering a Space spawns a fresh Browser into which
+            //      Chromium then replays the saved tabs (kind=restore) ~tens
+            //      of ms later. The window is NOT flagged restored
+            //      (restoredFromWindowId==0), so it lands here, not on the
+            //      restore path.
+            // Because restore is asynchronous, a synchronous tabs.isEmpty check
+            // can't see it — creating a quick-lookup tab now leaves a spurious
+            // new tab page beside the restored tabs (the close-recover double).
+            // So defer the new-tab page past the restore burst and create it
+            // only if the Space still has nothing in its normal tab list. Any
+            // real tab arriving first (restore or otherwise) cancels it.
+            // Routed by windowId rather than the controller's BrowserState so
+            // the rare async-registration path is covered too.
             if self.windowsBySpaceId[spaceId]?.browserState.tabs.isEmpty != false {
                 if let reopenURLs = manager?.consumePendingProfileChangeReopenURLs(
                     forSpaceId: spaceId,
@@ -1972,8 +1982,14 @@ final class SpaceWindowSlot: ObservableObject {
                                             focusAfterCreate: index == 0)
                     }
                 } else {
-                    bridge.createQuickLookupTab(withWindowId: windowIdNumber.int64Value,
-                                                customGuid: nil)
+                    let wid = windowIdNumber.int64Value
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        guard let self,
+                              let state = self.windowsBySpaceId[spaceId]?.browserState,
+                              state.normalTabs.isEmpty else { return }
+                        ChromiumLauncher.sharedInstance().bridge?
+                            .createQuickLookupTab(withWindowId: wid, customGuid: nil)
+                    }
                 }
             }
             // The new window's `makeKeyAndOrderFront` happens after this turn
