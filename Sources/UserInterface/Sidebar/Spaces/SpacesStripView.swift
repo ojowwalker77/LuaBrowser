@@ -1027,8 +1027,9 @@ private func systemSymbolName(for stored: String) -> String? {
     stored.isEmpty ? nil : stored
 }
 
-/// A pip's hover card: the bound profile on the left, the Space (icon + name) as
-/// a tinted pill in the middle, and its switch shortcut as keycaps on the right.
+/// A pip's hover card: the Space (icon + name) as a tinted pill on the left, the
+/// bound profile name in the middle, and its switch shortcut as keycaps on the
+/// right.
 /// Self-contained (plain data in) so it can be hosted in a standalone panel by
 /// `SpaceHoverTooltipController` instead of a transient `.popover` — the popover
 /// swallowed the next click (its own dismissal), so the pip's switch never ran.
@@ -1043,11 +1044,6 @@ struct SpaceHoverCard: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(profileName)
-                .font(.system(size: 11))
-                .foregroundStyle(Color.secondary)
-                .lineLimit(1)
-
             HStack(spacing: 5) {
                 SpaceIconView(
                     storedValue: iconStoredValue,
@@ -1064,7 +1060,16 @@ struct SpaceHoverCard: View {
             .padding(.vertical, 3)
             .background(Capsule().fill(iconColor.opacity(0.15)))
 
+            separatorDot
+
+            Text(profileName)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+
             if !shortcutTokens.isEmpty {
+                separatorDot
+
                 HStack(spacing: 3) {
                     ForEach(Array(shortcutTokens.enumerated()), id: \.offset) { _, token in
                         keycap(token)
@@ -1082,6 +1087,13 @@ struct SpaceHoverCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08))
         )
+    }
+
+    /// A subtle middle-dot divider between the card's sections.
+    private var separatorDot: some View {
+        Text("\u{00B7}")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(Color.secondary.opacity(0.45))
     }
 
     /// A single keycap badge (one modifier symbol or the character).
