@@ -814,21 +814,37 @@ struct SpaceRowDropDelegate: DropDelegate {
         DropProposal(operation: .move)
     }
 
+    /// How long to keep the lifted row hidden after a drop, covering the beat
+    /// during which the system fades out its floating drag image. Revealing the
+    /// row before the snapshot is gone shows the item twice -- the settling
+    /// snapshot and the row reappearing beneath it. Tuned by eye: a touch long
+    /// is harmless (the open slot just waits a moment longer), too short lets the
+    /// double flash back.
+    static let dragImageSettle: TimeInterval = 0.2
+
     func performDrop(info: DropInfo) -> Bool {
-        // Clearing the drag un-hides the lifted row via the `.opacity` modifier.
-        // Ease it back with the same 0.15s curve dropEntered opened the gap with
-        // (0 -> 1 in the settings list, 0.5 -> 1 in the strip/picker) so the row
-        // settles into its already-positioned slot instead of popping in. Scope
-        // the animation to this drop only: the lift-time hide is set in each
-        // view's `.onDrag` WITHOUT animation, so it stays instant and the source
-        // row never lingers beside the floating drag preview. `commit` stays
-        // outside -- its model republish re-syncs orderedIds to identical values
-        // (a no-op) and must not animate -- and runs after the reset so each
-        // view's `draggingSpaceId == nil` onChange re-sync guard still passes.
-        withAnimation(.easeInOut(duration: 0.15)) {
-            draggingSpaceId = nil
-        }
+        // Persist the new order now. The model republish re-syncs each view's
+        // orderedIds to the identical committed order (a no-op) and is gated by
+        // its `draggingSpaceId == nil` onChange guard -- which still holds here
+        // because the reveal below is deferred, so the in-flight order is kept.
+        let dropped = draggingSpaceId
         commit(orderedIds)
+        // Defer un-hiding the lifted row until the system's floating drag image
+        // has faded. The `.opacity` modifier reveals the row the instant
+        // `draggingSpaceId` clears; doing that immediately (as before) dropped
+        // the row back into its slot while the snapshot was still settling onto
+        // the same spot, so the item briefly appeared twice. Holding it hidden
+        // lets the snapshot fade into the open slot first, then the row eases in
+        // where it landed, with the same 0.15s curve dropEntered opened the gap
+        // with (0 -> 1 in the settings list, 0.5 -> 1 in the strip/picker).
+        // Guard on the captured id so a fresh drag begun within the delay keeps
+        // its own hidden-source state instead of being cleared from under it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.dragImageSettle) {
+            guard draggingSpaceId == dropped else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                draggingSpaceId = nil
+            }
+        }
         return true
     }
 }
@@ -855,15 +871,19 @@ struct SpaceListResetDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        // Match SpaceRowDropDelegate: ease the lifted row's opacity back so a
-        // drop that lands off every row -- the dragged row's own open slot, the
-        // area below the last row, or surrounding chrome -- settles with the
-        // same 0.15s fade rather than popping. commit stays outside the
-        // animation and after the reset, as before.
-        withAnimation(.easeInOut(duration: 0.15)) {
-            draggingSpaceId = nil
-        }
+        // Match SpaceRowDropDelegate: commit now, then hold the lifted row
+        // hidden until the system's floating drag image has faded so a drop that
+        // lands off every row -- the dragged row's own open slot, the area below
+        // the last row, or surrounding chrome -- doesn't flash the row beside the
+        // settling snapshot. Guarded on the captured id for the same reason.
+        let dropped = draggingSpaceId
         commit(orderedIds)
+        DispatchQueue.main.asyncAfter(deadline: .now() + SpaceRowDropDelegate.dragImageSettle) {
+            guard draggingSpaceId == dropped else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                draggingSpaceId = nil
+            }
+        }
         return true
     }
 }
