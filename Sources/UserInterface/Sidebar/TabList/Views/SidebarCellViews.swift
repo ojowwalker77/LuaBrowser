@@ -1240,6 +1240,19 @@ class NewTabButtonCellView: SidebarCellView {
         )
         return LottieAnimationNSView(config: config)
     }()
+
+    /// Static fallback used only while sidebar Space-switch snapshots are captured.
+    private lazy var snapshotIconView: NSImageView = {
+        let imageView = NSImageView()
+        let image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        image?.isTemplate = true
+        imageView.image = image
+        imageView.imageAlignment = .alignCenter
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.isHidden = true
+        return imageView
+    }()
     
     private var titleLabel: NSTextField = {
         let titleLabel = NSTextField(labelWithString: NSLocalizedString("New Tab", comment: "side bar new tab button text"))
@@ -1263,6 +1276,19 @@ class NewTabButtonCellView: SidebarCellView {
         iconHoverState = false
         didPlayForwardAnimationForCurrentHover = false
         cleanupButton.stopOrganizing()
+    }
+
+    func withStaticSnapshotIcon<T>(_ body: () throws -> T) rethrows -> T {
+        let wasLottieHidden = iconView.isHidden
+        let wasSnapshotHidden = snapshotIconView.isHidden
+        snapshotIconView.contentTintColor = ThemedColor.textTertiary.resolve(in: self)
+        iconView.isHidden = true
+        snapshotIconView.isHidden = false
+        defer {
+            iconView.isHidden = wasLottieHidden
+            snapshotIconView.isHidden = wasSnapshotHidden
+        }
+        return try body()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1322,6 +1348,7 @@ class NewTabButtonCellView: SidebarCellView {
         }
        
         backgoundView.addSubview(iconView)
+        backgoundView.addSubview(snapshotIconView)
         backgoundView.addSubview(titleLabel)
         backgoundView.addSubview(cleanupButton)
 
@@ -1329,6 +1356,10 @@ class NewTabButtonCellView: SidebarCellView {
             make.leading.equalToSuperview().offset(6)
             make.centerY.equalToSuperview()
             make.size.equalTo(16)
+        }
+
+        snapshotIconView.snp.makeConstraints { make in
+            make.edges.equalTo(iconView)
         }
 
         cleanupButton.snp.makeConstraints { make in

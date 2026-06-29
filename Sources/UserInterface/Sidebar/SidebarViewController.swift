@@ -712,10 +712,43 @@ class SidebarViewController: NSViewController {
               let rep = mainStackView.bitmapImageRepForCachingDisplay(in: bandInStack) else {
             return nil
         }
-        mainStackView.cacheDisplay(in: bandInStack, to: rep)
+        withStaticNewTabSnapshotIcons {
+            mainStackView.cacheDisplay(in: bandInStack, to: rep)
+        }
         let image = NSImage(size: bandInStack.size)
         image.addRepresentation(rep)
         return image
+    }
+
+    private func withStaticNewTabSnapshotIcons(_ body: () -> Void) {
+        let cells = newTabButtonCells(in: tabList.view)
+        guard !cells.isEmpty else {
+            body()
+            return
+        }
+
+        func apply(at index: Int) {
+            guard index < cells.count else {
+                body()
+                return
+            }
+            cells[index].withStaticSnapshotIcon {
+                apply(at: index + 1)
+            }
+        }
+
+        apply(at: 0)
+    }
+
+    private func newTabButtonCells(in view: NSView) -> [NewTabButtonCellView] {
+        var cells: [NewTabButtonCellView] = []
+        if let cell = view as? NewTabButtonCellView {
+            cells.append(cell)
+        }
+        for subview in view.subviews {
+            cells.append(contentsOf: newTabButtonCells(in: subview))
+        }
+        return cells
     }
 
     /// Hides/reveals the live band content while the push-in overlay (which
