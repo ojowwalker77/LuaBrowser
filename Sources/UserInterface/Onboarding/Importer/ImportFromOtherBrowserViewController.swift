@@ -1082,6 +1082,7 @@ private struct ImportTargetView: View {
             // fallbacks correctly — unlike IconPickerSelectionView, whose emoji
             // branch clips to a tight size×size frame.
             SpaceIconView(storedValue: iconStoredValue, size: 16, symbolWeight: .regular, tint: .white)
+                .environment(\.colorScheme, .dark)
             Text(text)
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.9))
