@@ -485,9 +485,16 @@ extension BrowserState {
         // immediately after `createSplit` returns, but at that point this
         // group hasn't been appended to `splits` yet — the bridge call is
         // synchronous from Swift but Chromium echoes the split back here
-        // asynchronously. Refilter now so the two panes hide behind the
-        // bookmark cell without waiting for an unrelated tab event.
-        if splitBookmarkBindings.values.contains(splitId) {
+        // asynchronously. Sync now that the group exists so the bookmark
+        // cell picks up opened/active state, then refilter so the two panes
+        // hide behind the bookmark cell without waiting for another tab event.
+        let boundBookmarkGuids = splitBookmarkBindings
+            .filter { $0.value == splitId }
+            .map { $0.key }
+        if !boundBookmarkGuids.isEmpty {
+            for bookmarkGuid in boundBookmarkGuids {
+                syncSplitBookmarkOpenedState(bookmarkGuid: bookmarkGuid)
+            }
             updateNormalTabs()
         }
 
