@@ -1084,11 +1084,11 @@ struct SpaceIconView: View {
     }
 
     private var emojiFontSize: CGFloat {
-        size + 1
+        size
     }
 
     private var emojiFrameSize: CGSize {
-        CGSize(width: size + 4, height: size + 8)
+        CGSize(width: size + 4, height: size + 4)
     }
 
     /// A menu-ready icon for a Space's stored icon value, for use as an
@@ -1103,13 +1103,18 @@ struct SpaceIconView: View {
         if let symbolImage = NSImage(systemSymbolName: stored, accessibilityDescription: nil) {
             return symbolImage
         }
+        // Match the menu's appearance so phi-icons pick their light/dark asset
+        // variant — ImageRenderer defaults to light, which leaves dark-mode menus
+        // showing the dark-ink variant on a dark background. Unlike the import
+        // label (always dark) this follows the current system appearance.
         let icon = SpaceIconView(
             storedValue: stored,
             size: size,
             symbolWeight: .semibold,
             tint: Color(nsColor: .labelColor)
         )
-        .frame(width: size + 2, height: size + 2)
+        .environment(\.colorScheme, appAppearance.isDark ? .dark : .light)
+        .frame(width: size + 4, height: size + 4)
         let renderer = ImageRenderer(content: icon)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         return renderer.nsImage
