@@ -159,6 +159,10 @@ import PostHog
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppLogInfo("-----------------------------  Quitting: \(Self.makeClientString()) ------------------------------")
+        // Note: on Cmd+Q this fires AFTER Chromium's window teardown; the restore
+        // snapshot is frozen earlier, in phiWillTryToTerminateApplicationNotification.
+        // Re-assert here as a backstop for any quit path that reaches this hook.
+        SpaceManager.shared.markTerminating()
         return .terminateNow
     }
     
@@ -265,6 +269,14 @@ import PostHog
     
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
+        // Posted (synchronously, main thread) by phi_app_controller_mac.mm's
+        // -tryToTerminateApplication: BEFORE chrome::CloseAllBrowsers() tears the
+        // windows down. This is the only quit signal that fires ahead of that
+        // teardown cascade (the AppKit applicationWillTerminate hook runs after
+        // it). Freeze the restore snapshot here so the closing windows can't
+        // drain it — the next launch then regroups restored windows into their
+        // slots and re-enters fullscreen.
+        SpaceManager.shared.markTerminating()
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {

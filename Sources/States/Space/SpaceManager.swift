@@ -257,6 +257,14 @@ final class SpaceManager: ObservableObject {
         /// Previous-session Chromium windowId → spaceId for every window
         /// the slot owned.
         let windowMap: [Int: String]
+        /// True when the slot's visible window was in native macOS fullscreen
+        /// at snapshot time. Restored windows always come back as normal
+        /// windows (Chromium forces kNormal so macOS doesn't spawn a separate
+        /// fullscreen Space per restored window); when this is set the live
+        /// slot re-enters fullscreen on its active window once restore settles,
+        /// so the slot reopens fullscreen as ONE Space instead of orphaning
+        /// blank Spaces. See `SpaceWindowSlot.applyPendingRestoreFullScreen`.
+        let wasFullScreen: Bool
     }
     private var restoreEntries: [SlotRestoreEntry] = []
     /// Previous-session windowId → index into `restoreEntries`. Entries are
@@ -451,13 +459,21 @@ final class SpaceManager: ObservableObject {
             restoreIndexByWindowId.removeValue(forKey: restoredFromWindowId)
             return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
         }
-        // Fallback: no usable previous-session windowId. Within the launch
-        // grace period, reattach by profile — claim the first not-yet-restored
+        // Fallback: ONLY for a window with no usable previous-session id
+        // (`restoredFromWindowId == 0` — Chromium's multi-profile startup opens
+        // one fresh window per last-open profile). Within the launch grace
+        // period, reattach by profile — claim the first not-yet-restored
         // snapshot window, in saved-slot order, whose Space is bound to
-        // `profileId`. Keeps a profile's restored window in the macOS window it
-        // shared last session instead of letting the coordinator mint a new
-        // slot (a separate window) for it.
-        guard !profileId.isEmpty,
+        // `profileId`.
+        //
+        // A NON-zero id that misses the primary lookup is a window genuinely not
+        // in the snapshot (e.g. opened while the live count was below the
+        // session peak, so the monotonic persist guard never recorded it). It
+        // must NOT be reattached by profile to some stale closed slot — that
+        // would surface it as a closed Space (and force fullscreen). Returning
+        // nil lets the coordinator mint a fresh slot on the resolved Space.
+        guard restoredFromWindowId == 0,
+              !profileId.isEmpty,
               let deadline = restoreReattachDeadline,
               Date() < deadline else { return nil }
         for index in restoreEntries.indices {
@@ -482,6 +498,9 @@ final class SpaceManager: ObservableObject {
         }
         let initial = restoreEntries[index].activeSpaceId ?? fallbackSpaceId
         let slot = createSlot(initialSpaceId: initial)
+        if restoreEntries[index].wasFullScreen {
+            slot.markPendingRestoreFullScreen()
+        }
         restoredSlotsByIndex[index] = slot
         return slot
     }
@@ -557,14 +576,34 @@ final class SpaceManager: ObservableObject {
         return resolved
     }
 
+    /// Set once app termination begins (see `markTerminating`). Quit tears the
+    /// slots down window-by-window, and every teardown step that reaches
+    /// `persistSlotsSnapshot` would otherwise rewrite the snapshot with the
+    /// dismantled (eventually empty) layout — wiping the healthy grouping the
+    /// next launch needs to reattach restored windows. Freeze persistence here.
+    private var isTerminating = false
+
+    /// Called when quit begins, from `AppController`'s handler for
+    /// `PhiWillTryToTerminateApplicationNotification` — posted by
+    /// phi_app_controller_mac.mm's -tryToTerminateApplication: BEFORE
+    /// chrome::CloseAllBrowsers(), the only quit signal that fires ahead of the
+    /// window teardown (the AppKit applicationWillTerminate hook runs after it).
+    /// Once set, `persistSlotsSnapshot` no-ops, freezing the snapshot at the last
+    /// healthy layout for the rest of the process's life.
+    func markTerminating() {
+        isTerminating = true
+    }
+
     /// Writes the current slot/window/Space layout to
     /// `AccountUserDefaults.slotsRestoreSnapshot`. Called from
-    /// `SpaceWindowSlot.registerWindow` so the persisted snapshot always
-    /// reflects the most recent live state — sufficient to reattach
-    /// Chromium-restored windows next launch, even though unregister does
-    /// not rewrite (cascade-close would otherwise drain the snapshot
-    /// to empty right before `NSApp.terminate`).
+    /// `SpaceWindowSlot.registerWindow` (and a few live-state mutations) so the
+    /// persisted snapshot reflects the most recent healthy layout — sufficient
+    /// to reattach Chromium-restored windows next launch. Frozen during
+    /// termination (`isTerminating`, set before the teardown cascade) and never
+    /// overwrites a non-empty snapshot with an empty one, so quit teardown can't
+    /// drain it before the next launch reads it.
     fileprivate func persistSlotsSnapshot() {
+        guard !isTerminating else { return }
         guard let userDefaults = boundAccount?.userDefaults else { return }
         var dicts: [[String: Any]] = []
         for slot in slots {
@@ -578,8 +617,17 @@ final class SpaceManager: ObservableObject {
             if let active = slot.activeSpaceId {
                 dict["activeSpaceId"] = active
             }
+            // Only written when set, so a normal slot's plist entry stays small.
+            if slot.snapshotIsFullScreen() {
+                dict["isFullScreen"] = true
+            }
             dicts.append(dict)
         }
+        // Backstop: never overwrite a saved snapshot with an empty one. A
+        // transient "no live slots" moment (teardown, or all windows closed
+        // while the app stays alive) must not erase the layout the next launch
+        // restores into.
+        guard !dicts.isEmpty else { return }
         userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
     }
 
@@ -599,7 +647,8 @@ final class SpaceManager: ObservableObject {
             guard !windowMap.isEmpty else { continue }
             let entry = SlotRestoreEntry(
                 activeSpaceId: dict["activeSpaceId"] as? String,
-                windowMap: windowMap
+                windowMap: windowMap,
+                wasFullScreen: (dict["isFullScreen"] as? Bool) ?? false
             )
             let index = restoreEntries.count
             restoreEntries.append(entry)
@@ -1554,6 +1603,20 @@ final class SpaceWindowSlot: ObservableObject {
     /// affinity while `SpaceWindowSlot` still owns Space selection and
     /// animations.
     private let tabbingIdentifier = "phi.space.slot.\(UUID().uuidString)"
+
+    /// Whether this slot's visible window is currently in native macOS
+    /// fullscreen. Maintained from the will-enter / will-exit fullscreen hooks
+    /// (`windowFullScreenStateChanged`) rather than read from a live styleMask:
+    /// the restore snapshot can be written during the will-enter callback,
+    /// before AppKit has flipped the styleMask. Persisted in
+    /// `slotsRestoreSnapshot` so the slot can reopen fullscreen next launch.
+    private var isFullScreen = false
+
+    /// Set when this slot is recreated for a snapshot entry that was fullscreen
+    /// last session. Once `reconcileRestoreVisibility` has surfaced the active
+    /// window the slot re-enters fullscreen on it exactly once, then clears
+    /// this. See `applyPendingRestoreFullScreen`.
+    private var pendingRestoreFullScreen = false
 
     /// spaceId → controller dedicated to this slot for that Space.
     /// Populated lazily by `activate`'s spawn path and `registerWindow`.
@@ -2924,6 +2987,7 @@ final class SpaceWindowSlot: ObservableObject {
     /// it by `syncSlotTabGroup` on the next switch); restoring on exit returns
     /// the normal sibling-follow behavior.
     func windowFullScreenStateChanged(isFullScreen: Bool) {
+        self.isFullScreen = isFullScreen
         for controller in windowsBySpaceId.values {
             guard let window = controller.window else { continue }
             if isFullScreen {
@@ -2931,6 +2995,38 @@ final class SpaceWindowSlot: ObservableObject {
             } else {
                 window.collectionBehavior.insert(.moveToActiveSpace)
             }
+        }
+        // Capture the new fullscreen state in the cross-launch snapshot so the
+        // slot reopens fullscreen (or not) next launch. The will-enter/exit
+        // hooks can fire before AppKit flips the styleMask, so the snapshot
+        // reads `isFullScreen` (tracked here) rather than a live styleMask.
+        manager?.persistSlotsSnapshot()
+    }
+
+    /// Marks this slot for fullscreen re-entry after a cold-launch restore. Set
+    /// by `SpaceManager.slotForRestoreIndex` for a snapshot entry that was
+    /// fullscreen last session; consumed once by `applyPendingRestoreFullScreen`.
+    func markPendingRestoreFullScreen() {
+        pendingRestoreFullScreen = true
+    }
+
+    /// Re-enters native fullscreen on the slot's active window after restore,
+    /// if it was fullscreen last session. Runs at most once. The active window
+    /// owns the slot's single fullscreen Space; siblings stay normal/hidden and
+    /// re-group into it on the next switch (`syncSlotTabGroup`). Letting each
+    /// restored window keep its own fullscreen state instead would make macOS
+    /// spawn a separate Space per window and orphan the hidden ones — which is
+    /// why restore comes back normal first (see Chromium session_restore.cc).
+    private func applyPendingRestoreFullScreen(activeWindow: NSWindow) {
+        guard pendingRestoreFullScreen, activeWindow.isVisible else { return }
+        pendingRestoreFullScreen = false
+        guard !activeWindow.styleMask.contains(.fullScreen) else { return }
+        // Defer one runloop turn so the just-surfaced window has settled before
+        // the fullscreen transition begins; re-check the state at fire time.
+        DispatchQueue.main.async { [weak activeWindow] in
+            guard let activeWindow,
+                  !activeWindow.styleMask.contains(.fullScreen) else { return }
+            activeWindow.toggleFullScreen(nil)
         }
     }
 
@@ -3058,6 +3154,10 @@ final class SpaceWindowSlot: ObservableObject {
             makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
         }
         updateWindowsMenuExclusion()
+        // The active window is now surfaced; re-enter fullscreen on it if this
+        // slot was fullscreen last session (no-op otherwise / after the first
+        // successful pass).
+        applyPendingRestoreFullScreen(activeWindow: activeWindow)
         if hidCount > 0 {
             AppLogInfo("[SpaceWindowSlot] restore reconcile: showing \(activeId), hid \(hidCount) sibling window(s)")
         }
@@ -3168,7 +3268,14 @@ final class SpaceWindowSlot: ObservableObject {
             // window joins the slot's fullscreen Space via `syncSlotTabGroup`
             // below, and the fullscreen-exit hook restores the behavior. See
             // `windowFullScreenStateChanged`.
-            if !slotHasFullScreenWindow {
+            // Also skip while the slot is pending a restore into fullscreen:
+            // its active window registers BEFORE `applyPendingRestoreFullScreen`
+            // toggles it, so `slotHasFullScreenWindow` is still false here.
+            // Inserting `.moveToActiveSpace` now lets a SECOND restored slot's
+            // fullscreen entry drag this window out before it goes fullscreen,
+            // leaving a blank Space (the will-enter hook would clear it, but too
+            // late). The flag is cleared once the toggle fires.
+            if !slotHasFullScreenWindow && !pendingRestoreFullScreen {
                 window.collectionBehavior.insert(.moveToActiveSpace)
             }
         }
@@ -3509,6 +3616,12 @@ final class SpaceWindowSlot: ObservableObject {
             map[controller.windowId] = spaceId
         }
         return map
+    }
+
+    /// Whether the slot was in native fullscreen at the last persist, for the
+    /// cross-launch restore record. Read by `SpaceManager.persistSlotsSnapshot`.
+    fileprivate func snapshotIsFullScreen() -> Bool {
+        isFullScreen
     }
 
     /// Used by `SpaceManager.handleSpacesUpdate` when a slot's active Space
