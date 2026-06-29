@@ -958,30 +958,38 @@ class BrowserState {
         return normalTabs.filter { target.contains($0.guid) }
     }
 
+    /// Selected normal tabs in tab order, expanded so any selected split pane
+    /// carries its partner through actions that should treat splits as tabs.
+    var orderedMultiSelectedTabsIncludingSplitPartners: [Tab] {
+        let selectedIds = Set(orderedMultiSelectedTabs.map(\.guid))
+        let expandedIds = multiSelectionTabIdsIncludingSplitPartners(selectedIds: selectedIds)
+        return normalTabs.filter { expandedIds.contains($0.guid) }
+    }
+
     /// Tab ids represented by a multi-selection drag that starts from `tab`.
     /// Split panes expand to include their partner so drag/reorder never tears
     /// an active split apart. Returns `nil` when the drag should behave as a
     /// regular single-tab drag.
     func multiSelectionDragTabIds(startingFrom tab: Tab) -> [Int]? {
         guard TabMultiSelection.isEnabled, multiSelection.isActive else { return nil }
-        let selectedIds = Set(orderedMultiSelectedTabs.map(\.guid))
-        guard !selectedIds.isEmpty else { return nil }
+        let orderedIds = orderedMultiSelectedTabsIncludingSplitPartners.map(\.guid)
+        guard orderedIds.count > 1, orderedIds.contains(tab.guid) else { return nil }
+        return orderedIds
+    }
 
-        var representedIds = selectedIds
+    private func multiSelectionTabIdsIncludingSplitPartners(selectedIds: Set<Int>) -> Set<Int> {
+        guard !selectedIds.isEmpty else { return selectedIds }
+
+        var expandedIds = selectedIds
         for tabId in selectedIds {
             guard let group = splitGroup(forTabId: tabId),
                   !group.isPinned,
                   let partnerId = group.partnerTabId(of: tabId) else {
                 continue
             }
-            representedIds.insert(partnerId)
+            expandedIds.insert(partnerId)
         }
-
-        let orderedIds = normalTabs
-            .map(\.guid)
-            .filter { representedIds.contains($0) }
-        guard orderedIds.count > 1, orderedIds.contains(tab.guid) else { return nil }
-        return orderedIds
+        return expandedIds
     }
 
     private func isBookmarkBackedTab(_ tab: Tab) -> Bool {
@@ -1013,7 +1021,7 @@ class BrowserState {
     }
 
     func copyLinksOfMultiSelectedTabs() {
-        let urls = orderedMultiSelectedTabs.compactMap { $0.url }
+        let urls = orderedMultiSelectedTabsIncludingSplitPartners.compactMap { $0.url }
         clearMultiSelection()
         guard !urls.isEmpty else { return }
         let pasteboard = NSPasteboard.general

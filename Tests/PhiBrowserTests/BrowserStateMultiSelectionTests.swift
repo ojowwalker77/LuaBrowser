@@ -118,6 +118,30 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertEqual(state.multiSelectionDragTabIds(startingFrom: state.tabs[2]), [1, 2, 3])
     }
 
+    func testCopyLinksExpandsFocusedSplitPartner() throws {
+        for focusedIndex in [1, 2] {
+            let state = try makeState()
+            seed(state, guids: [1, 2, 3, 4])
+            state.splits = [
+                SplitGroup(id: "split-2-3",
+                           primaryTabId: 2,
+                           secondaryTabId: 3,
+                           layout: .vertical,
+                           ratio: 0.5)
+            ]
+
+            state.focuseTab(state.tabs[focusedIndex])
+            state.toggleMultiSelection(for: state.tabs[3])
+            NSPasteboard.general.clearContents()
+
+            state.copyLinksOfMultiSelectedTabs()
+
+            XCTAssertEqual(NSPasteboard.general.string(forType: .string),
+                           "https://e2.example\nhttps://e3.example\nhttps://e4.example")
+            XCTAssertFalse(state.multiSelection.isActive)
+        }
+    }
+
     func testDragCountBadgeCollapsesSplitPairToOneVisibleUnit() throws {
         let state = try makeState()
         seed(state, guids: [1, 2, 3, 4])

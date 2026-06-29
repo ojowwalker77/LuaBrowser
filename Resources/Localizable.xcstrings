@@ -1569,6 +1569,9 @@
     "The Phi user data folder was not found. Continuing will still remove other local application data and quit." : {
       "comment" : "Debug clear data - Alert body when Phi folder is missing; clearing will still proceed for other locations"
     },
+    "The restored Phi user data is not a directory." : {
+      "comment" : "Debug import user data - Error message when extracted Phi item is not a directory"
+    },
     "The selected Time Machine backup is no longer available." : {
       "comment" : "Help menu - Time Machine restore error when a selected backup disappears"
     },
