@@ -411,6 +411,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                              tabId:(int64_t)tabId;
 - (void)moveTabToLastWithWindowId:(int64_t)windowId
                             tabId:(int64_t)tabId;
+- (void)moveTabsToNewWindowWithWindowId:(int64_t)windowId
+                                 tabIds:(NSArray<NSNumber *> *)tabIds;
 
 // ==========================================================================
 // Space URL routing (Mac → Chromium)

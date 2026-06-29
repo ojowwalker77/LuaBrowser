@@ -2869,6 +2869,67 @@ class BrowserState {
         )
     }
 
+    /// Tear off an ordered batch of normal tabs into a brand-new Browser
+    /// window. The caller supplies the selected tab ids, but this method
+    /// re-resolves the final member list from `normalTabs` so the destination
+    /// order matches the source window's visible order. Split partners are
+    /// included defensively so Chromium receives complete split collections
+    /// and can move them atomically.
+    @MainActor
+    @discardableResult
+    func moveNormalTabsToNewWindow(tabIds: [Int],
+                                   dropScreenLocation: CGPoint) -> Bool {
+        let requestedSet = Set(tabIds)
+        let expandedSet = multiSelectionTabIdsIncludingSplitPartners(selectedIds: requestedSet)
+        let memberIds = normalTabs.map(\.guid).filter { expandedSet.contains($0) }
+
+        guard memberIds.count > 1 else {
+            AppLogWarn("[MultiTabDrag] moveNormalTabsToNewWindow needs batch ids=\(tabIds)")
+            return false
+        }
+
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogWarn("[MultiTabDrag] moveNormalTabsToNewWindow missing bridge")
+            return false
+        }
+
+        let memberSet = Set(memberIds)
+        var externalChildren: Set<Int> = []
+        for memberId in memberIds {
+            for childId in nativeRelationGraph.directChildren(of: memberId)
+            where !memberSet.contains(childId) {
+                externalChildren.insert(childId)
+            }
+        }
+        nativeRelationGraph.fixOpenersAfterMovingSlice(memberSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        let sourceWindow = windowController?.window
+        tabDraggingSession.recordPendingTearOffWindowPlacement(
+            screenLocation: dropScreenLocation,
+            sourceWindow: sourceWindow
+        )
+
+        Self.stashCrossWindowFavicons(forMemberIds: memberIds, in: tabs)
+
+        for tab in tabs where memberSet.contains(tab.guid) {
+            tab.webContentWrapper?.updateTabCustomValue("")
+        }
+
+        AppLogDebug(
+            "[MultiTabDrag] moveNormalTabsToNewWindow windowId=\(windowId) " +
+            "requestedIds=\(tabIds) memberIds=\(memberIds) dropScreen=\(dropScreenLocation)"
+        )
+        bridge.moveTabsToNewWindow(
+            withWindowId: windowId.int64Value,
+            tabIds: memberIds.map { NSNumber(value: Int64($0)) }
+        )
+        clearMultiSelection()
+        return true
+    }
+
     /// Reorder a split pair as a unit. Called from `moveNormalTabLocally` when
     /// the dragged tab is part of a split — both members travel together so
     /// the split collection stays intact, and Chromium's `MoveSplit` is used

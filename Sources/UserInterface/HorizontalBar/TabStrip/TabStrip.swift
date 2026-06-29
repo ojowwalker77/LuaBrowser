@@ -3074,7 +3074,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     private func updateDragCountBadge(for context: TabDragContext, screenPoint: CGPoint?) {
         guard context.isMultiTabDrag,
-              let screenPoint else {
+              let screenPoint,
+              !browserState.tabDraggingSession.shouldUsePageSnapshotPreview(at: screenPoint) else {
             hideDragCountBadge()
             return
         }
@@ -3353,7 +3354,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         let image: NSImage?
         if shouldUsePageSnapshot {
             if cachedPageDragImage == nil {
-                cachedPageDragImage = browserState.tabDraggingSession.pageSnapshotImage(for: context.draggingTab)
+                cachedPageDragImage = pageDragImage(for: context)
             }
             image = cachedPageDragImage ?? cachedTabDragImage
         } else {
@@ -3382,6 +3383,29 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         if !panel.isVisible {
             panel.orderFront(nil)
         }
+    }
+
+    private func pageDragImage(for context: TabDragContext) -> NSImage? {
+        guard let image = browserState.tabDraggingSession.pageSnapshotImage(for: context.draggingTab) else {
+            return nil
+        }
+        guard context.isMultiTabDrag else {
+            return image
+        }
+
+        let count = TabDragCountBadge.visibleUnitCount(
+            tabIds: context.draggingTabIds,
+            browserState: browserState
+        )
+        guard count > 1 else {
+            return image
+        }
+
+        return TabDragCountBadge.image(
+            image,
+            drawingBadgeCount: count,
+            nearAnchor: CGPoint(x: image.size.width * 0.5, y: image.size.height * 0.25)
+        )
     }
 
     /// Floating chip preview for whole-group drag. Visibility gate:
@@ -4542,6 +4566,23 @@ extension TabStrip: TabStripDragDelegate {
                                        toIndex: Int,
                                        dropAction: PendingDropAction,
                                        screenPoint: CGPoint?) {
+        if case .tearOff = dropAction {
+            clearDraggingPresentation(using: context)
+            let didMove = browserState.moveNormalTabsToNewWindow(
+                tabIds: context.draggingTabIds,
+                dropScreenLocation: screenPoint ?? NSEvent.mouseLocation
+            )
+            if !didMove {
+                AppLogWarn(
+                    "[MultiTabDrag] moveNormalTabsToNewWindow failed from TabStrip; " +
+                    "cancelling tear-off ids=\(context.draggingTabIds)"
+                )
+            }
+            browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
+            performLayout(context: .dataChanged)
+            return
+        }
+
         defer {
             browserState.tabDraggingSession.end(screenLocation: screenPoint, dragOperation: .move)
         }

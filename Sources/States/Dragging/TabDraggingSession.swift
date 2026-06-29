@@ -321,6 +321,21 @@ final class TabDraggingSession {
             return
         }
 
+        if let tab = item as? Tab,
+           let sourceState = state,
+           let tabIds = sourceState.multiSelectionDragTabIds(startingFrom: tab) {
+            if !sourceState.moveNormalTabsToNewWindow(
+                tabIds: tabIds,
+                dropScreenLocation: snapshot.screenLocation ?? NSEvent.mouseLocation
+            ) {
+                AppLogWarn(
+                    "[MultiTabDrag] moveNormalTabsToNewWindow failed; " +
+                    "cancelling tear-off ids=\(tabIds)"
+                )
+            }
+            return
+        }
+
         // Split bookmark: if the bookmark is already open as a live split in
         // any window, tear that live split off instead of spawning a duplicate.
         // Otherwise spawn a new window and open both URLs as a fresh split —
@@ -799,7 +814,7 @@ extension TabDraggingSession {
         captureOriginalDraggingItemsIfNeeded()
 
         if cachedTabSnapshotImage == nil {
-            cachedTabSnapshotImage = resolveOutsideWindowDragImage(for: item)
+            cachedTabSnapshotImage = resolveOutsideWindowDragImageWithBadge(for: item)
         }
 
         guard let snapshotImage = cachedTabSnapshotImage else { return }
@@ -821,6 +836,35 @@ extension TabDraggingSession {
         _ = enumerateDraggingItems { draggingItem in
             draggingItem.setDraggingFrame(frame, contents: image)
         }
+    }
+
+    private func snapshotBadgeCount(for item: SidebarItem) -> Int? {
+        guard let tab = item as? Tab,
+              let state,
+              let tabIds = state.multiSelectionDragTabIds(startingFrom: tab) else {
+            return nil
+        }
+
+        let count = TabDragCountBadge.visibleUnitCount(tabIds: tabIds, browserState: state)
+        return count > 1 ? count : nil
+    }
+
+    private func resolveOutsideWindowDragImageWithBadge(for item: SidebarItem) -> NSImage? {
+        guard let image = resolveOutsideWindowDragImage(for: item) else {
+            return nil
+        }
+        guard let count = snapshotBadgeCount(for: item) else {
+            return image
+        }
+        let badgeSize = TabDragCountBadge.size(for: count)
+        return TabDragCountBadge.image(
+            image,
+            drawingBadgeCount: count,
+            nearAnchor: CGPoint(
+                x: image.size.width * 0.5,
+                y: image.size.height * 0.25 + badgeSize.height * 0.5 + 4
+            )
+        )
     }
 
     /// Resolve the drag image to use when the cursor is outside the source window.

@@ -20,6 +20,27 @@ enum TabDragCountBadge {
         )
     }
 
+    static func image(_ image: NSImage, drawingBadgeCount count: Int, nearAnchor anchor: CGPoint) -> NSImage {
+        let badgeSize = size(for: count)
+        let badgeOrigin = badgeOrigin(nearAnchor: anchor, badgeSize: badgeSize, canvasSize: image.size)
+        let result = NSImage(size: image.size)
+        result.lockFocus()
+        defer { result.unlockFocus() }
+
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(
+            in: CGRect(origin: .zero, size: image.size),
+            from: CGRect(origin: .zero, size: image.size),
+            operation: .sourceOver,
+            fraction: 1
+        )
+        draw(
+            count: count,
+            in: CGRect(origin: badgeOrigin, size: badgeSize)
+        )
+        return result
+    }
+
     static func draw(count: Int, in rect: CGRect) {
         let drawingRect = rect.insetBy(dx: 0.5, dy: 0.5)
         guard drawingRect.width > 0, drawingRect.height > 0 else { return }
@@ -74,6 +95,19 @@ enum TabDragCountBadge {
         }
 
         return visibleIds
+    }
+
+    private static func badgeOrigin(nearAnchor anchor: CGPoint, badgeSize: CGSize, canvasSize: CGSize) -> CGPoint {
+        let gap: CGFloat = 4
+        let inset: CGFloat = 2
+        let minX = inset
+        let minY = inset
+        let maxX = Swift.max(minX, canvasSize.width - badgeSize.width - inset)
+        let maxY = Swift.max(minY, canvasSize.height - badgeSize.height - inset)
+        return CGPoint(
+            x: Swift.min(Swift.max(anchor.x + gap, minX), maxX),
+            y: Swift.min(Swift.max(anchor.y - badgeSize.height * 0.5, minY), maxY)
+        )
     }
 
     private static func displayText(for count: Int) -> String {
