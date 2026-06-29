@@ -237,14 +237,11 @@ struct ProfilesSettingsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.accentColor)
+                        .themedForeground(.textSecondary)
                     Text(downloadFolderName)
                         .font(.system(size: 13))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9, weight: .medium))
-                        .themedForeground(.textSecondary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
