@@ -322,6 +322,19 @@ struct SpacesStripView: View {
         ))
         .onAppear { stripOrderedIds = manager.spaces.map(\.spaceId) }
         .onChange(of: manager.spaces.map(\.spaceId)) { ids in
+            // A deleted Space's pip leaves the ForEach with no mouse-exit, so
+            // its `.onHover(false)` never fires and `hoveredSpaceId` /
+            // `iconEditSpaceId` stay pinned to a Space that no longer exists.
+            // Prune that stale state, and — because `dismiss(spaceId:)` is a
+            // no-op unless the caller already knows the exact owner id — have
+            // the controller authoritatively drop any card whose owner Space is
+            // gone (covers the active-Space delete, whose strip rides the
+            // leaving window's header through the push-in). This runs ahead of
+            // the drag guard so it self-heals regardless of drag state and never
+            // depends on SpaceTooltipAnchor.dismantleNSView firing.
+            if let hovered = hoveredSpaceId, !ids.contains(hovered) { hoveredSpaceId = nil }
+            if let editing = iconEditSpaceId, !ids.contains(editing) { iconEditSpaceId = nil }
+            tooltipController.dismissIfOwnerMissing(liveSpaceIds: ids)
             // Leave an in-flight drag's local rearrangement alone; the drop's
             // commit writes through and re-syncs on the next pass.
             guard stripDraggingId == nil else { return }
@@ -1223,6 +1236,21 @@ final class SpaceHoverTooltipController: ObservableObject {
     func dismiss(spaceId: String) {
         guard ownerId == spaceId else { return }
         ownerId = nil
+        panel?.orderOut(nil)
+    }
+
+    /// Tears the card down when the Space it shows is no longer live. The
+    /// per-id `dismiss(spaceId:)` only fires for a caller that passes the exact
+    /// owner id, so a deleted Space — whose pip leaves the strip with no
+    /// mouse-exit and no `dismiss` keyed to its now-missing id — would never be
+    /// cleared by it, and `dismantleNSView` is not guaranteed to run in time on
+    /// ForEach removal or window teardown. The strip calls this on every
+    /// `manager.spaces` change as the authoritative escape hatch. The
+    /// `contains` check preserves the per-id guard's intent: a card still owned
+    /// by a live Space (e.g. a sibling pip that just re-presented) is untouched.
+    func dismissIfOwnerMissing(liveSpaceIds: [String]) {
+        guard let ownerId, !liveSpaceIds.contains(ownerId) else { return }
+        self.ownerId = nil
         panel?.orderOut(nil)
     }
 
