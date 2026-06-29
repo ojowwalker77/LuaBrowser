@@ -802,7 +802,19 @@ struct SpaceRowDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        draggingSpaceId = nil
+        // Clearing the drag un-hides the lifted row via the `.opacity` modifier.
+        // Ease it back with the same 0.15s curve dropEntered opened the gap with
+        // (0 -> 1 in the settings list, 0.5 -> 1 in the strip/picker) so the row
+        // settles into its already-positioned slot instead of popping in. Scope
+        // the animation to this drop only: the lift-time hide is set in each
+        // view's `.onDrag` WITHOUT animation, so it stays instant and the source
+        // row never lingers beside the floating drag preview. `commit` stays
+        // outside -- its model republish re-syncs orderedIds to identical values
+        // (a no-op) and must not animate -- and runs after the reset so each
+        // view's `draggingSpaceId == nil` onChange re-sync guard still passes.
+        withAnimation(.easeInOut(duration: 0.15)) {
+            draggingSpaceId = nil
+        }
         commit(orderedIds)
         return true
     }
@@ -830,7 +842,14 @@ struct SpaceListResetDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        draggingSpaceId = nil
+        // Match SpaceRowDropDelegate: ease the lifted row's opacity back so a
+        // drop that lands off every row -- the dragged row's own open slot, the
+        // area below the last row, or surrounding chrome -- settles with the
+        // same 0.15s fade rather than popping. commit stays outside the
+        // animation and after the reset, as before.
+        withAnimation(.easeInOut(duration: 0.15)) {
+            draggingSpaceId = nil
+        }
         commit(orderedIds)
         return true
     }
