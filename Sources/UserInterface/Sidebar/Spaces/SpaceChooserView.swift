@@ -115,7 +115,10 @@ struct SpaceChooserView: View {
         let background: Color = isSelected ? Color.accentColor.opacity(0.22) : item.themeColor
         let foreground: Color = isSelected ? .primary : item.textColor
         return HStack(spacing: 10) {
-            Image(systemName: item.iconName.isEmpty ? "rectangle.stack" : item.iconName)
+            SpaceIconView(storedValue: item.iconName,
+                          size: 16,
+                          symbolWeight: .regular,
+                          tint: foreground)
                 .frame(width: 18)
             Text(item.name)
                 .fontWeight(.medium)
