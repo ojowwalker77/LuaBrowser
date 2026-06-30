@@ -252,10 +252,8 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
 
     /// A Space URL rule routed a new-tab navigation to a different Space (the
     /// URL opened elsewhere). Reset the source window's active new-tab page back
-    /// to a clean state — submitting from the NTP omnibox hid its native
-    /// controls in anticipation of a page that loaded in the other Space,
-    /// leaving a blank tab. Used by the auto-route-to-an-open-window path, which
-    /// is handled entirely on the Chromium side and so signals the refresh here.
+    /// to a clean state. Used by the auto-route-to-an-open-window path, which is
+    /// handled entirely on the Chromium side and so signals the refresh here.
     func refreshNewTab(inWindow windowId: Int64) {
         Task { @MainActor in
             SpaceManager.shared.refreshActiveNewTab(inWindow: windowId)

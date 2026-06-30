@@ -1122,6 +1122,31 @@ class WebContentViewController: NSViewController {
         updateContentForTab(tab)
     }
 
+    /// Restores this tab to a clean NTP after a Space URL rule routed a
+    /// navigation that started here to another Space. Regular windows use the
+    /// Chromium-rendered NTP; incognito windows may use the native NTP view.
+    func resetToCleanNewTab() {
+        guard let tab = associatedTab else { return }
+
+        if tab.usesNativeNTP {
+            showNativeNtp(for: tab)
+            nativeNtpController?.resetToInitialState(for: tab)
+            if let wrapper = tab.webContentWrapper, !(tab.url?.isNTP ?? false) {
+                wrapper.navigate(toURL: "chrome://newtab")
+            }
+            return
+        }
+
+        guard let wrapper = tab.webContentWrapper else { return }
+        if let webView = tab.webContentView {
+            showWebContent(webView, tabId: tab.guid)
+        }
+        // The cancelled in-place navigation can leave the source WebContents in
+        // a stale transient state. Navigate the regular web NTP back to newtab;
+        // chrome:// is not http/https, so Space URL rules do not re-route it.
+        wrapper.navigate(toURL: "chrome://newtab")
+    }
+
     /// Re-mount content when this controller becomes current.
     /// One WebContentViewController exists per tab. When two split tabs
     /// trade focus, each `installSplitContent` reparents the partner's
@@ -1130,37 +1155,6 @@ class WebContentViewController: NSViewController {
     /// Similarly, a controller can be left holding a stale split host
     /// after its split was dissolved while it was inactive. Re-running
     /// the mount path here re-claims views and reconciles the hierarchy.
-    /// Forces this tab back to a clean native NTP after a Space URL rule routed
-    /// a navigation that started here to another Space. Unlike
-    /// `refreshContentForCurrentTab` — which re-runs `shouldShowNativeNtp` (and
-    /// so can keep a stale web view) and never clears the omnibox — this re-shows
-    /// the native NTP overlay directly and resets its omnibox to the clean
-    /// new-tab state. Guarded to native-NTP tabs; the caller
-    /// (`SpaceManager.refreshActiveNewTab(inWindow:)`) only invokes it for a
-    /// stranded new tab.
-    func resetToCleanNativeNTP() {
-        guard let tab = associatedTab else { return }
-        // The caller (Chromium's `IsSourceTabStranded`, keyed on the committed
-        // entry) already confirmed this is a stranded new tab, so force the
-        // native NTP even if the Swift `usesNativeNTP` mirror is out of sync
-        // (e.g. a session-restored NTP). Re-mark it native-NTP-capable so a
-        // later `shouldShowNativeNtp` re-eval agrees.
-        tab.usesNativeNTP = true
-        // Re-show the clean native NTP overlay immediately and clear the omnibox
-        // (showNativeNtp / updateForTab do not clear typed text on their own).
-        showNativeNtp(for: tab)
-        nativeNtpController?.resetToInitialState(for: tab)
-        // The cancelled in-place navigation can leave the tab's URL pointing at
-        // the typed target. If so, navigate back to the new-tab page so the tab
-        // is genuinely an NTP again — otherwise a later re-mount would re-run
-        // `shouldShowNativeNtp` against the stale URL and resurface the dead
-        // page. chrome:// is not http/https, so this re-navigation is never
-        // re-routed by the Space throttle.
-        if let wrapper = tab.webContentWrapper, !(tab.url?.isNTP ?? false) {
-            wrapper.navigate(toURL: "chrome://newtab")
-        }
-    }
-
     func refreshContentForCurrentTab() {
         guard let tab = associatedTab else { return }
         updateContentForTab(tab)

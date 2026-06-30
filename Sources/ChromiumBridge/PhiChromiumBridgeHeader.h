@@ -260,12 +260,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                     url:(NSString *)urlString
          sourceWindowId:(int64_t)sourceWindowId;
 
-/// A Space URL rule routed a navigation that started from a new tab / native NTP
-/// to a DIFFERENT Space, so the URL is opening elsewhere. The Mac client should
-/// reset `windowId`'s active new-tab page back to a clean state: submitting the
-/// URL from the NTP omnibox hid the NTP's native controls in anticipation of a
-/// page load that never happens here, leaving a blank tab. A no-op if that
-/// window's active tab is not a new tab / NTP.
+/// A Space URL rule routed a navigation that started from a new tab page to a
+/// DIFFERENT Space, so the URL is opening elsewhere. The Mac client should reset
+/// `windowId`'s active new-tab page back to a clean state because the source
+/// navigation was cancelled before it could complete. A no-op if that window's
+/// active tab is not a new tab page.
 - (void)refreshNewTabInWindow:(int64_t)windowId;
 
 // ==========================================================================
