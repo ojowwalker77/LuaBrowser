@@ -826,6 +826,16 @@ class WebContentContainerViewController: NSViewController {
         }
     }
 
+    /// Forces the active tab's native new-tab page back to a clean state after a
+    /// Space URL rule routed a new-tab navigation elsewhere: submitting the URL
+    /// from the NTP omnibox hid the native controls (and the cancelled in-place
+    /// navigation can leave the typed text), so the clean NTP must be re-shown
+    /// and its omnibox cleared. `currentWebContentController` is private, so this
+    /// forwarder is the seam `SpaceManager.refreshActiveNewTab(inWindow:)` calls.
+    func refreshActiveNativeNewTab() {
+        currentWebContentController?.resetToCleanNativeNTP()
+    }
+
     private func handleTabsChanged(_ tabs: [Tab]) {
         guard let state = browserState else { return }
         

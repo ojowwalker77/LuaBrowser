@@ -1334,7 +1334,7 @@ final class SpaceManager: ObservableObject {
     /// resolved (rare cold-spawn race), it falls back to the source window so
     /// the URL is never silently dropped.
     @MainActor
-    func routeAskedURL(_ urlString: String, toSpaceId spaceId: String?, sourceWindowId: Int64) {
+    func routeAskedURL(_ urlString: String, toSpaceId spaceId: String?, sourceWindowId: Int64, sourceIsNewTab: Bool) {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
         // Bypass space routing for the re-open: the URL matched an ask-rule,
         // so a plain new tab would be caught by the same rule and prompt
@@ -1342,10 +1342,43 @@ final class SpaceManager: ObservableObject {
         let open: (Int64) -> Void = { windowId in
             bridge.openTabBypassingSpaceRouting(withUrl: urlString, windowId: windowId)
         }
-        guard let spaceId else {
-            open(sourceWindowId)
+
+        let sourceController = MainBrowserWindowControllersManager.shared
+            .controller(for: Int(sourceWindowId))
+        let currentSpaceId = sourceController?.spaceId
+        // Whether the source is a stranded new tab / NTP. The Chromium-side
+        // `sourceIsNewTab` is used when set, but its `IsSourceTabStranded` check
+        // misses the native NTP (the NTP's webContents doesn't carry a newtab
+        // committed entry), so fall back to the Swift focusing-tab state, which
+        // reliably reports `isNTP` for the native NTP.
+        let sourceIsStranded = sourceIsNewTab
+            || (sourceController?.browserState.focusingTab.map(Self.isStrandedNewTab) ?? false)
+
+        // Staying in the source window's current Space: the user kept the URL
+        // here (`spaceId == nil`) or chose the Space it already lives in. When
+        // the navigation started from a new tab / NTP, open the URL directly in
+        // that NTP (in place, exempted from routing so an ask-rule doesn't
+        // re-prompt) instead of spawning a separate tab; otherwise keep the
+        // new-tab behavior.
+        guard let spaceId, spaceId != currentSpaceId else {
+            if sourceIsStranded {
+                bridge.navigateActiveTabBypassingSpaceRouting(
+                    withUrl: urlString, windowId: sourceWindowId)
+            } else {
+                open(sourceWindowId)
+            }
             return
         }
+
+        // The URL is going to a DIFFERENT Space. Keep the source new tab and
+        // reset it to a clean NTP — submitting from the NTP omnibox hid its
+        // native controls in anticipation of a page that now loads in the other
+        // Space, leaving a blank tab. Do it before the slot swaps the source
+        // window out of view so the reset lands while it's still mounted.
+        if sourceIsStranded {
+            refreshActiveNewTab(inWindow: sourceWindowId)
+        }
+
         let sourceSlot = slots.first { $0.contains(windowId: Int(sourceWindowId)) }
         let slot = sourceSlot ?? keySlot ?? slots.first
         // Re-key the source window before a cold spawn. When the target Space
@@ -1396,6 +1429,35 @@ final class SpaceManager: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Resets `windowId`'s active new-tab page to a clean state after a Space
+    /// URL rule routed a new-tab navigation to a DIFFERENT Space. Submitting the
+    /// URL from the NTP omnibox hid the NTP's native controls in anticipation of
+    /// a page load that now happens in the other Space, leaving a blank tab; the
+    /// reset re-shows the clean NTP. Callers only invoke this when the source
+    /// really was a new tab (Chromium's reliable `IsSourceTabStranded`), so it
+    /// trusts that here; the actual re-show self-guards on `usesNativeNTP`.
+    /// Shared by `routeAskedURL`'s different-Space path and the
+    /// `refreshNewTabInWindow` bridge callback (auto-route to an open window).
+    /// True when `tab` is a stranded new tab / NTP — the only source state for
+    /// which Space routing reuses or refreshes the tab in place. Uses the Swift
+    /// focusing-tab state (reliable for the native NTP), since the Chromium
+    /// `IsSourceTabStranded` check can miss it.
+    static func isStrandedNewTab(_ tab: Tab) -> Bool {
+        tab.isShowingNativeNTP || tab.isNTP || (tab.url?.isEmpty ?? true)
+    }
+
+    @MainActor
+    func refreshActiveNewTab(inWindow windowId: Int64) {
+        // Gate here too: the auto-route C++ callback can fire for a non-NTP
+        // source, and only a stranded new tab should be reset.
+        guard let controller = MainBrowserWindowControllersManager.shared
+                .controller(for: Int(windowId)),
+              let tab = controller.browserState.focusingTab,
+              Self.isStrandedNewTab(tab) else { return }
+        controller.mainSplitViewController.webContentContainerViewController
+            .refreshActiveNativeNewTab()
     }
 
     /// Picks one windowId per Space that is currently VISIBLE on screen. A

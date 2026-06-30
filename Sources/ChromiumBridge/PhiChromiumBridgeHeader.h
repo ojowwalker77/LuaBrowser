@@ -237,7 +237,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// default selection in the prompt.
 - (void)askSpaceForURL:(NSString *)urlString
         defaultSpaceId:(NSString *)defaultSpaceId
-        sourceWindowId:(int64_t)sourceWindowId;
+        sourceWindowId:(int64_t)sourceWindowId
+        sourceIsNewTab:(BOOL)sourceIsNewTab;
 
 /// The user picked a Space from the web-content right-click "Open link as"
 /// submenu. The Mac client should open `urlString` as a new foreground tab in
@@ -258,6 +259,14 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)routeURLInSpace:(NSString *)spaceId
                     url:(NSString *)urlString
          sourceWindowId:(int64_t)sourceWindowId;
+
+/// A Space URL rule routed a navigation that started from a new tab / native NTP
+/// to a DIFFERENT Space, so the URL is opening elsewhere. The Mac client should
+/// reset `windowId`'s active new-tab page back to a clean state: submitting the
+/// URL from the NTP omnibox hid the NTP's native controls in anticipation of a
+/// page load that never happens here, leaving a blank tab. A no-op if that
+/// window's active tab is not a new tab / NTP.
+- (void)refreshNewTabInWindow:(int64_t)windowId;
 
 // ==========================================================================
 // Split view notifications (Chromium → Mac)
@@ -459,6 +468,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// one-shot exemption matched on (url, windowId).
 - (void)openTabBypassingSpaceRoutingWithUrl:(NSString *)url
                                     windowId:(int64_t)windowId;
+
+/// Navigate `windowId`'s ACTIVE tab to `url` IN PLACE, bypassing Space URL
+/// routing for that one navigation. Used by the "ask every time" flow when the
+/// user keeps the URL in the current Space and the active tab is a new tab /
+/// NTP: the URL replaces that NTP directly instead of spawning a separate tab.
+/// Like `openTabBypassingSpaceRoutingWithUrl:`, the bypass is a one-shot
+/// exemption matched on (url, windowId) so the same rule doesn't re-prompt in a
+/// loop. Falls back to opening a new tab if the window has no active tab.
+- (void)navigateActiveTabBypassingSpaceRoutingWithUrl:(NSString *)url
+                                             windowId:(int64_t)windowId;
 
 /// Create a new tab group containing the given Phi-stable tab ids in
 /// `windowId`. Returns the new group's 32-char uppercase hex token, or an

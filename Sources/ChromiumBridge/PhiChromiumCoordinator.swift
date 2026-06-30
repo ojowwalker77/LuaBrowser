@@ -112,7 +112,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     /// Space chooser (current Space first); opens the URL in the chosen Space,
     /// or keeps it in the source window if the user declines. Owns the prompt
     /// + routing so Chromium stays out of the UI and Space-window lifecycle.
-    func askSpace(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64) {
+    func askSpace(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64, sourceIsNewTab: Bool) {
         Task { @MainActor in
             let manager = SpaceManager.shared
             let spaces = manager.spaces
@@ -124,7 +124,8 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // back to the rule's default Space rather than dropping the URL.
                 manager.routeAskedURL(urlString,
                                       toSpaceId: spaces.isEmpty ? nil : defaultSpaceId,
-                                      sourceWindowId: sourceWindowId)
+                                      sourceWindowId: sourceWindowId,
+                                      sourceIsNewTab: sourceIsNewTab)
                 return
             }
 
@@ -180,7 +181,8 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 self?.dismissChooser(windowId: sourceWindowId)
                 SpaceManager.shared.routeAskedURL(urlString,
                                                   toSpaceId: chosen,
-                                                  sourceWindowId: sourceWindowId)
+                                                  sourceWindowId: sourceWindowId,
+                                                  sourceIsNewTab: sourceIsNewTab)
             }
 
             // Borderless child window over the source window: a child window
@@ -219,9 +221,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     /// and opens the URL there, bypassing Space URL routing for the re-open.
     func openLink(inSpace spaceId: String, url urlString: String, sourceWindowId: Int64) {
         Task { @MainActor in
+            // Right-click "Open link as <Space>" always originates from a real
+            // page (you right-clicked a link), never a new tab — so no in-place
+            // open / NTP reset.
             SpaceManager.shared.routeAskedURL(urlString,
                                               toSpaceId: spaceId,
-                                              sourceWindowId: sourceWindowId)
+                                              sourceWindowId: sourceWindowId,
+                                              sourceIsNewTab: false)
         }
     }
 
@@ -233,9 +239,26 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     /// routing for the re-open so the same rule doesn't re-match in a loop.
     func routeURL(inSpace spaceId: String, url urlString: String, sourceWindowId: Int64) {
         Task { @MainActor in
+            // Silent auto-route to a Space with no open window. The stranded
+            // source NTP (if any) is reset on the Chromium side via
+            // `refreshNewTabInWindow`, so pass false here to avoid resetting it
+            // twice; this path is always a Space switch, never an in-place open.
             SpaceManager.shared.routeAskedURL(urlString,
                                               toSpaceId: spaceId,
-                                              sourceWindowId: sourceWindowId)
+                                              sourceWindowId: sourceWindowId,
+                                              sourceIsNewTab: false)
+        }
+    }
+
+    /// A Space URL rule routed a new-tab navigation to a different Space (the
+    /// URL opened elsewhere). Reset the source window's active new-tab page back
+    /// to a clean state — submitting from the NTP omnibox hid its native
+    /// controls in anticipation of a page that loaded in the other Space,
+    /// leaving a blank tab. Used by the auto-route-to-an-open-window path, which
+    /// is handled entirely on the Chromium side and so signals the refresh here.
+    func refreshNewTab(inWindow windowId: Int64) {
+        Task { @MainActor in
+            SpaceManager.shared.refreshActiveNewTab(inWindow: windowId)
         }
     }
 

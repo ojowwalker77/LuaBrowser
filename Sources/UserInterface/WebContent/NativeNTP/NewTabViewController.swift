@@ -112,6 +112,17 @@ final class NewTabViewController: NSViewController {
         omniBoxController.setCurrentTabForNavigation(tab)
     }
 
+    /// Restores the NTP to its initial clean state — native controls visible and
+    /// the omnibox cleared — after a navigation that started here was routed to
+    /// another Space and cancelled. Submitting from the omnibox hid the controls
+    /// (`omniBoxDidClear`) and can leave the typed text behind; this brings the
+    /// clean new-tab page back. `updateForTab` alone does NOT clear the omnibox.
+    func resetToInitialState(for tab: Tab?) {
+        omniBoxController.reset()
+        setNativeControlsHidden(false)
+        omniBoxController.setCurrentTabForNavigation(tab)
+    }
+
     func focusOmnibox() {
         omniBoxController.focusTextField()
     }
