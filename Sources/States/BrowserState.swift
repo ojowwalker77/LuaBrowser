@@ -928,6 +928,10 @@ class BrowserState {
             clearMultiSelection()
             return false
         }
+        if let activeTab = focusingTab, isBookmarkBackedTab(activeTab) {
+            clearMultiSelection()
+            return false
+        }
 
         let paneIds = [leftTab.guid, rightTab.guid]
         let selectableIds: [Int]
@@ -993,8 +997,15 @@ class BrowserState {
     }
 
     private func isBookmarkBackedTab(_ tab: Tab) -> Bool {
-        guard !tab.isPinned, let guid = tab.guidInLocalDB, !guid.isEmpty else { return false }
-        return bookmarkManager.bookmark(withGuid: guid) != nil
+        guard !tab.isPinned else { return false }
+        if let guid = tab.guidInLocalDB, !guid.isEmpty,
+           bookmarkManager.bookmark(withGuid: guid) != nil {
+            return true
+        }
+        guard let group = splitGroup(forTabId: tab.guid) else { return false }
+        return splitBookmarkBindings.contains { bookmarkGuid, splitId in
+            splitId == group.id && bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
+        }
     }
 
     // MARK: - Multi-selection batch actions

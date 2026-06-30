@@ -499,6 +499,101 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertFalse(state.multiSelection.isActive)
     }
 
+    func testActiveSplitBookmarkCannotCrossSelectNormalTabOrSplitPair() throws {
+        let state = try makeState()
+        let bookmarkGuid = "split-bookmark-1"
+        state.localStore.createBookmark(url: "https://e1.example",
+                                        title: "Split Bookmark",
+                                        profileId: state.profileId,
+                                        parentId: nil,
+                                        guid: bookmarkGuid,
+                                        spaceId: state.spaceId,
+                                        secondaryUrl: "https://e2.example")
+        guard waitUntil(condition: {
+            state.bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
+        }) else { return }
+        guard let bookmark = state.bookmarkManager.bookmark(withGuid: bookmarkGuid) else {
+            return XCTFail("Bookmark was not indexed.")
+        }
+        seed(state, guids: [1, 2, 3, 4, 5])
+        let primaryWrapper = TestWebContentWrapper(urlString: "https://e1.example")
+        state.tabs[0].setWebContentsWrapper(wrapper: primaryWrapper)
+        state.splits = [
+            SplitGroup(id: "split-bookmark",
+                       primaryTabId: 1,
+                       secondaryTabId: 2,
+                       layout: .vertical,
+                       ratio: 0.5),
+            SplitGroup(id: "split-normal",
+                       primaryTabId: 4,
+                       secondaryTabId: 5,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.splitBookmarkBindings[bookmarkGuid] = "split-bookmark"
+        state.updateNormalTabs()
+
+        state.focuseTab(state.tabs[0])
+        state.toggleMultiSelection(for: state.tabs[2])
+
+        XCTAssertEqual(state.focusingTab?.guid, 3)
+        XCTAssertFalse(state.multiSelection.isActive)
+
+        state.openBookmark(bookmark)
+
+        XCTAssertEqual(state.focusingTab?.guid, 1)
+        XCTAssertTrue(state.tabs[0].isActive)
+        XCTAssertFalse(state.tabs[2].isActive)
+        XCTAssertEqual(primaryWrapper.setAsActiveTabCallCount, 1)
+        XCTAssertFalse(state.multiSelection.isActive)
+
+        state.focuseTab(state.tabs[0])
+        let handled = state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[3],
+                                                             rightTab: state.tabs[4])
+
+        XCTAssertFalse(handled)
+        XCTAssertFalse(state.multiSelection.isActive)
+    }
+
+    func testActiveBookmarkTabCannotCrossSelectNormalSplitPair() throws {
+        let state = try makeState()
+        let bookmarkGuid = "bookmark-2"
+        state.localStore.createBookmark(url: "https://bookmark.example",
+                                        title: "Bookmark",
+                                        profileId: state.profileId,
+                                        parentId: nil,
+                                        guid: bookmarkGuid,
+                                        spaceId: state.spaceId)
+        guard waitUntil(condition: {
+            state.bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
+        }) else { return }
+        state.tabs = [
+            Tab(guid: 1,
+                url: "https://bookmark.example",
+                isActive: false,
+                index: 0,
+                title: "Bookmark",
+                customGuid: bookmarkGuid),
+            Tab(guid: 2, url: "https://e2.example", isActive: false, index: 1),
+            Tab(guid: 3, url: "https://e3.example", isActive: false, index: 2)
+        ]
+        state.splits = [
+            SplitGroup(id: "split-normal",
+                       primaryTabId: 2,
+                       secondaryTabId: 3,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.updateNormalTabs()
+        state.focuseTab(state.tabs[0])
+
+        let handled = state.toggleMultiSelectionForSplitPair(leftTab: state.tabs[1],
+                                                             rightTab: state.tabs[2])
+
+        XCTAssertFalse(handled)
+        XCTAssertFalse(state.multiSelection.isActive)
+    }
+
     func testAddToGroupDedupsTabsAlreadyInThatGroup() throws {
         let state = try makeState()
         state.tabs = [

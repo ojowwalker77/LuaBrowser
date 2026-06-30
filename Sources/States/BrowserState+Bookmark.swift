@@ -212,6 +212,9 @@ extension BrowserState {
                let primaryTab = tabs.first(where: { $0.guid == group.primaryTabId }),
                let wrapper = primaryTab.webContentWrapper {
                 wrapper.setAsActiveTab()
+                MainActor.assumeIsolated {
+                    focuseTab(primaryTab)
+                }
             } else {
                 openTwoURLsAsSplit(primaryURL: url,
                                    secondaryURL: secondaryURL,

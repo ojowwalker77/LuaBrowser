@@ -321,7 +321,7 @@
       "comment" : "Phi Link - Custom bot token label"
     },
     "Browser data" : {
-      "comment" : "Import browser data page - Page title\nImport data type selection - Page title"
+      "comment" : "Import browser data page - Page title"
     },
     "Browser memory" : {
       "comment" : "AI settings - Section title for browser memory management"
@@ -1400,9 +1400,6 @@
     },
     "Retry after Phi Sentinel is running normally." : {
       "comment" : "IM Channels - Official bot retry hint when service is unavailable"
-    },
-    "Return" : {
-      "comment" : "Import data type selection - Return button to go back"
     },
     "Reverse Panes" : {
       "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
