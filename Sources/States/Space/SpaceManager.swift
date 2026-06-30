@@ -1370,13 +1370,30 @@ final class SpaceManager: ObservableObject {
             open(Int64(controller.windowId))
             return
         }
-        // Cold path: the Space's window spawns asynchronously. Retry on the
-        // next runloop tick, then fall back to the source window.
-        DispatchQueue.main.async { [weak slot] in
-            if let controller = slot?.windowController(for: spaceId) {
-                open(Int64(controller.windowId))
-            } else {
-                open(sourceWindowId)
+        // Cold path: the Space's window spawns asynchronously. A
+        // cross-/unloaded-profile target's `ensureProfileLoaded` completion can
+        // land hundreds of ms later (the first cross-profile activation of a
+        // session pays a disk profile load), so a single next-tick retry
+        // deterministically misses it — the URL would then open in the source
+        // window while a blank target window surfaces moments later. Retry on a
+        // short escalating schedule, opening in the target as soon as its window
+        // registers, and only fall back to the source window after the last
+        // attempt, so the routed URL reaches the chosen Space when the spawn
+        // merely lagged and is still never silently dropped. Mirrors
+        // `scheduleRestoreVisibilityReconcile`'s coalesced-delay pattern.
+        let retryDelays: [TimeInterval] = [0.05, 0.25, 0.6, 1.2]
+        var didOpen = false
+        for (index, delay) in retryDelays.enumerated() {
+            let isLastAttempt = index == retryDelays.count - 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak slot] in
+                guard !didOpen else { return }
+                if let controller = slot?.windowController(for: spaceId) {
+                    didOpen = true
+                    open(Int64(controller.windowId))
+                } else if isLastAttempt {
+                    didOpen = true
+                    open(sourceWindowId)
+                }
             }
         }
     }
@@ -3463,6 +3480,21 @@ final class SpaceWindowSlot: ObservableObject {
             return
         }
         let wasVisible = (visibleController === controller)
+        // Was the closing window the user's on-screen window? True when it is the
+        // tracked `visibleController`, OR — covering the case the cascade was
+        // widened for — the native tab group's currently-selected window. In the
+        // slot's native tab group `visibleController` can lag AppKit's selected
+        // tab, so a real window-driven close can arrive on a controller that
+        // isn't the tracked visible one; at `willClose` time that window is still
+        // the group's selected tab, so this still classifies it as on-screen.
+        // Crucially it EXCLUDES a genuinely-hidden sibling (a background tab, or
+        // an `orderOut`'d restore sibling) closed out from under us by an
+        // extension / script `window.close()` / Chromium-internal teardown: that
+        // window is not the selected tab, so it must NOT cascade the visible
+        // window shut — it is just dropped from the map below.
+        let closingWindow = controller.window
+        let wasOnScreen = wasVisible
+            || (closingWindow != nil && closingWindow === closingWindow?.tabGroup?.selectedWindow)
         // A tab-driven hand-off only applies to the visible window closing —
         // computed (and `firstSiblingWithTabs` only consulted) in that case.
         let siblingWithTabs = (wasVisible && isTabDriven) ? firstSiblingWithTabs() : nil
@@ -3475,20 +3507,21 @@ final class SpaceWindowSlot: ObservableObject {
             // closing window's GPU surface has been drained.
             AppLogInfo("[SpaceWindowSlot] tab-driven close of \(spaceId); switching to sibling \(siblingWithTabs)")
             activate(spaceId: siblingWithTabs, leavingSnapshotOverride: leavingSnapshot)
-        } else if wasVisible || !isTabDriven {
+        } else if wasVisible || (wasOnScreen && !isTabDriven) {
             // Window-driven slot close. Two ways in:
             //  - the visible window closed (window-driven, or tab-driven with
             //    no viable sibling), or
             //  - a non-tab-driven close landed on a controller that wasn't the
-            //    tracked `visibleController`. In the slot's native tab group
-            //    `visibleController` can lag AppKit's actually-selected tab, so
-            //    a real window close would otherwise slip through both branches
-            //    and strand the other Spaces with live tabs.
+            //    tracked `visibleController` but WAS the on-screen window (the
+            //    `visibleController`-lags-the-selected-tab case above).
             // Either way the user closed the window, so tear down every
             // remaining Space in the slot, one by one, leaving no background
-            // Space holding live tabs. Legitimate background closes
-            // (deleteSpace / changeProfile / respawnWindow) evict first and
-            // never reach here (identity guard at the top of this method).
+            // Space holding live tabs. A non-tab-driven close of a genuinely
+            // hidden sibling does NOT reach here (`wasOnScreen` is false): it
+            // drops from the map without cascading the visible window.
+            // Legitimate background closes (deleteSpace / changeProfile /
+            // respawnWindow) evict first and never reach here at all (identity
+            // guard at the top of this method).
             visibleController = nil
             if windowsBySpaceId.isEmpty {
                 AppLogInfo("[SpaceWindowSlot] window-driven close of \(spaceId); no siblings")
