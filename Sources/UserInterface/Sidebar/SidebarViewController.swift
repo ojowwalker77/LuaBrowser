@@ -320,10 +320,15 @@ class SidebarViewController: NSViewController {
     /// heights include room for that row — see `SidebarHeaderView.mountSpaceSwitch`.
     private func updateHeaderHeight() {
         let addressInSidebar = !PhiPreferences.GeneralSettings.loadLayoutMode().showsNavigationAtTop
+        // The Spaces switch row is only mounted when the feature is on AND the
+        // window is not incognito (see `setupView`). Reserve its height under the
+        // exact same condition, or an incognito window would keep an empty 32pt
+        // gap below the address bar for a row that is never mounted.
         let spacesEnabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+            && !state.isIncognito
         // Base = nav row (+ address bar in sidebar layouts). The Spaces switch
-        // row adds 32 (24 row + 8 gap) only when the feature is enabled, so the
-        // header reclaims the row's height when Spaces is off.
+        // row adds 32 (24 row + 8 gap) only when the row is shown, so the header
+        // reclaims the row's height when Spaces is off or the window is incognito.
         let base: CGFloat = addressInSidebar ? 80 : 42
         let headerHeight = base + (spacesEnabled ? 32 : 0)
         headerHeightConstraint?.update(offset: headerHeight)
@@ -371,16 +376,24 @@ class SidebarViewController: NSViewController {
 
         let headerSpacer = createSpacer(height: 5)
         mainStackView.addArrangedSubview(headerSpacer)
-        
-        setupFavoriteContainer()
-        mainStackView.addArrangedSubview(pinnedTabContainerView)
-        pinnedTabContainerView.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview()
-            pinnedTabsHeightConstraint = make.height.equalTo(loadCachedFavoriteHeight()).constraint
-        }
 
-        let pinSpacer = createSpacer(height: 3)
-        mainStackView.addArrangedSubview(pinSpacer)
+        // The pinned-tab (favorites) band is a per-profile feature with no
+        // meaning in an incognito session, which has no favorites. Skip mounting
+        // it entirely — along with its trailing spacer — so the tab list and its
+        // "+ New Tab" row sit directly below the address bar instead of under an
+        // empty reserved band (matching how the Spaces strip / AI chat / memory
+        // are suppressed for incognito).
+        if !state.isIncognito {
+            setupFavoriteContainer()
+            mainStackView.addArrangedSubview(pinnedTabContainerView)
+            pinnedTabContainerView.snp.makeConstraints { make in
+                make.leading.trailing.equalToSuperview()
+                pinnedTabsHeightConstraint = make.height.equalTo(loadCachedFavoriteHeight()).constraint
+            }
+
+            let pinSpacer = createSpacer(height: 3)
+            mainStackView.addArrangedSubview(pinSpacer)
+        }
 
         // The Spaces switch is mounted at the TOP of the sidebar — inside the
         // header, below the nav row and above the address bar — rather than
@@ -810,10 +823,15 @@ class SidebarViewController: NSViewController {
         isSidebarContentActive = shouldActivate
 
         contentCancellables.removeAll()
-        pinnedTabViewController.setActive(shouldActivate)
+        // Incognito windows don't mount the pinned-tab band (see `setupView`),
+        // so leave its controller dormant and skip the favorite-height
+        // observation that drives the band's layout.
+        if !state.isIncognito {
+            pinnedTabViewController.setActive(shouldActivate)
+        }
         tabList.setActive(shouldActivate)
 
-        guard shouldActivate else { return }
+        guard shouldActivate, !state.isIncognito else { return }
 
         pinnedTabViewController.$contentHeight
             .combineLatest(state.$isDraggingTab)

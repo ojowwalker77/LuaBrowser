@@ -778,6 +778,26 @@ extension AppController {
 
     // MARK: - Spaces top-level menu
 
+    /// Whether the menu-bar "Spaces" top-level menu should be visible. Hidden
+    /// when the Spaces feature is off, and hidden when the focused window is
+    /// incognito — incognito windows expose no Spaces, matching the suppressed
+    /// sidebar strip and the off-the-record "Open Link In Space" menu.
+    private var shouldShowSpacesMenu: Bool {
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+            && !isActiveWindowIncognito()
+    }
+
+    /// Re-evaluates the menu-bar "Spaces" top-level item's visibility against
+    /// the focused window. Called when the active window changes (see
+    /// `.activeBrowserWindowDidChange`) so the menu drops out for incognito
+    /// windows and returns for normal ones.
+    @objc func refreshSpacesMenuVisibility() {
+        guard let item = NSApp.mainMenu?.items.first(where: {
+            $0.tag == AppController.spacesMenuItemTag
+        }) else { return }
+        item.isHidden = !shouldShowSpacesMenu
+    }
+
     /// Finds the existing Spaces top-level menu item by tag and refreshes its
     /// submenu, or installs a new one right after the View menu when this is
     /// the first time the main menu has been hooked (or after Chromium swapped
@@ -803,7 +823,7 @@ extension AppController {
         submenu.delegate = self
         submenu.autoenablesItems = true
         menuItem.submenu = submenu
-        menuItem.isHidden = !PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+        menuItem.isHidden = !shouldShowSpacesMenu
 
         rebuildSpacesMenu(submenu)
 

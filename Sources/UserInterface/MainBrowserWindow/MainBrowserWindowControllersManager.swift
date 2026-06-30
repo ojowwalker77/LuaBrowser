@@ -35,7 +35,15 @@ struct DanglingWindow {
 
 class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     static let shared = MainBrowserWindowControllersManager()
-    private(set) var activeWindowController: MainBrowserWindowController?
+    private(set) var activeWindowController: MainBrowserWindowController? {
+        didSet {
+            guard oldValue !== activeWindowController else { return }
+            NotificationCenter.default.post(
+                name: .activeBrowserWindowDidChange,
+                object: activeWindowController
+            )
+        }
+    }
     private var windowControllers: Set<MainBrowserWindowController> = []
     
     /// Windows created before user login, waiting to be converted to MainBrowserWindowController
@@ -358,4 +366,11 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
+}
+
+extension Notification.Name {
+    /// Posted when the focused browser window changes (or is cleared). Menu
+    /// state that depends on the active window — e.g. the menu-bar Spaces
+    /// menu, which is hidden for incognito windows — refreshes on this.
+    static let activeBrowserWindowDidChange = Notification.Name("activeBrowserWindowDidChange")
 }
