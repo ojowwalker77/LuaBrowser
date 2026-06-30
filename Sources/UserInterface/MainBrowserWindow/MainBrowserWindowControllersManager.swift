@@ -144,20 +144,34 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     @objc private func handleLoginCompleted() {
         assert(Thread.isMainThread)
         AppLogInfo("🪟 [WindowManager] Login completed - processing \(danglingWindows.count) dangling window(s)")
-        
+
+        var danglingSlots: [SpaceWindowSlot] = []
+        for danglingWindow in danglingWindows {
+            guard let slot = danglingWindow.slot,
+                  !danglingSlots.contains(where: { $0 === slot }) else {
+                continue
+            }
+            danglingSlots.append(slot)
+        }
+
         for danglingWindow in danglingWindows {
             processDanglingWindow(danglingWindow)
         }
-        
+
         // Clear dangling windows after processing
         danglingWindows.removeAll()
+        removeEmptyDanglingSlots(danglingSlots)
         AppLogInfo("🪟 [WindowManager] All dangling windows processed")
     }
     
-    /// Convert a dangling window to a proper MainBrowserWindowController and show it
+    /// Restore a dangling window, or close it if no tabs arrived before login.
     @MainActor
     private func processDanglingWindow(_ danglingWindow: DanglingWindow) {
         AppLogInfo("🪟 [WindowManager] Processing dangling window - windowId: \(danglingWindow.windowId), pending tabs: \(danglingWindow.pendingTabs.count)")
+        guard !danglingWindow.pendingTabs.isEmpty else {
+            closeEmptyDanglingWindow(danglingWindow)
+            return
+        }
         guard let account = AccountController.shared.account else {
             AppLogError("No available account")
             return
@@ -216,6 +230,26 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         windowController.restoreAndShowWindow()
         
         AppLogInfo("🪟 [WindowManager] Dangling window processed and displayed - windowId: \(danglingWindow.windowId)")
+    }
+
+    @MainActor
+    private func closeEmptyDanglingWindow(_ danglingWindow: DanglingWindow) {
+        AppLogInfo("🪟 [WindowManager] Closing empty dangling window - windowId: \(danglingWindow.windowId)")
+        if let bridge = ChromiumLauncher.sharedInstance().bridge {
+            bridge.executeCommand(
+                Int32(CommandWrapper.IDC_CLOSE_WINDOW.rawValue),
+                windowId: Int64(danglingWindow.windowId)
+            )
+        } else {
+            danglingWindow.window.close()
+        }
+    }
+
+    @MainActor
+    private func removeEmptyDanglingSlots(_ slots: [SpaceWindowSlot]) {
+        for slot in slots where slot.windowsBySpaceId.isEmpty {
+            SpaceManager.shared.removeSlot(slot)
+        }
     }
     
     func retainWindowControllerUntilWindowClosed(_ windowController: MainBrowserWindowController) {
