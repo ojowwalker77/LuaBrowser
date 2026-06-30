@@ -207,6 +207,12 @@ extension BrowserState {
 
         localStore.updateLastSeen(bookmark.guid)
         if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
+            if layoutMode.isTraditional {
+                detachBookmarkTabsForComfortableLayout(bookmarkGuids: [bookmark.guid])
+                openTwoURLsAsSplit(primaryURL: url,
+                                   secondaryURL: secondaryURL)
+                return
+            }
             if let splitId = splitBookmarkBindings[bookmark.guid],
                let group = splits.first(where: { $0.id == splitId }),
                let primaryTab = tabs.first(where: { $0.guid == group.primaryTabId }),
@@ -225,6 +231,12 @@ extension BrowserState {
 
         guard let realBookmark = bookmarkManager.bookmark(withGuid: bookmark.guid) else {
             createTab(url, customGuid: nil, focusAfterCreate: true)
+            return
+        }
+
+        if layoutMode.isTraditional {
+            detachBookmarkTabsForComfortableLayout(bookmarkGuids: [realBookmark.guid])
+            createTab(URLProcessor.processUserInput(url), customGuid: nil, focusAfterCreate: true)
             return
         }
 

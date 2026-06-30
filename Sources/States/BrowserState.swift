@@ -607,7 +607,90 @@ class BrowserState {
             return
         }
         lastLegacyLayout = traditionalLayout
+        if traditionalLayout {
+            detachBookmarkTabsForComfortableLayout()
+        }
         self.updateNormalTabs()
+    }
+
+    @discardableResult
+    func detachBookmarkTabsForComfortableLayout(bookmarkGuids targetBookmarkGuids: Set<String>? = nil) -> Bool {
+        guard !isIncognito else { return false }
+        let allBookmarkGuids = Set(
+            bookmarkManager.getAllBookmarks()
+                .filter { !$0.isFolder }
+                .map(\.guid)
+        )
+        let bookmarkGuids = targetBookmarkGuids.map { $0.intersection(allBookmarkGuids) } ?? allBookmarkGuids
+        guard !bookmarkGuids.isEmpty else { return false }
+
+        var detachedBookmarkGuids = clearPendingBookmarkSplitBindings(for: bookmarkGuids)
+        for tab in tabs {
+            guard !tab.isPinned,
+                  let localGuid = tab.guidInLocalDB,
+                  bookmarkGuids.contains(localGuid) else {
+                continue
+            }
+            migrateAIChatTab(for: tab, toNewIdentifier: nil)
+            tab.guidInLocalDB = nil
+            tab.webContentWrapper?.updateTabCustomValue("")
+            detachedBookmarkGuids.insert(localGuid)
+        }
+
+        let boundSplitBookmarkGuids = splitBookmarkBindings.keys.filter { bookmarkGuids.contains($0) }
+        for bookmarkGuid in boundSplitBookmarkGuids {
+            splitBookmarkBindings.removeValue(forKey: bookmarkGuid)
+            detachedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        guard !detachedBookmarkGuids.isEmpty else { return false }
+        for bookmarkGuid in detachedBookmarkGuids {
+            guard let bookmark = bookmarkManager.bookmark(withGuid: bookmarkGuid) else { continue }
+            clearBookmarkOpenedStateForComfortableLayout(bookmark)
+        }
+        return true
+    }
+
+    private func clearPendingBookmarkSplitBindings(for bookmarkGuids: Set<String>) -> Set<String> {
+        var clearedBookmarkGuids = Set<String>()
+
+        for pendingGuid in Array(pendingPrimarySplitTargetByGuid.keys) {
+            guard var pending = pendingPrimarySplitTargetByGuid[pendingGuid],
+                  let bookmarkGuid = pending.boundBookmarkGuid,
+                  bookmarkGuids.contains(bookmarkGuid) else {
+                continue
+            }
+            pending.boundBookmarkGuid = nil
+            pendingPrimarySplitTargetByGuid[pendingGuid] = pending
+            clearedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        for pendingGuid in Array(pendingSplitPartnerByCustomGuid.keys) {
+            guard var pending = pendingSplitPartnerByCustomGuid[pendingGuid],
+                  let bookmarkGuid = pending.boundBookmarkGuid,
+                  bookmarkGuids.contains(bookmarkGuid) else {
+                continue
+            }
+            pending.boundBookmarkGuid = nil
+            pendingSplitPartnerByCustomGuid[pendingGuid] = pending
+            clearedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        return clearedBookmarkGuids
+    }
+
+    private func clearBookmarkOpenedStateForComfortableLayout(_ bookmark: Bookmark) {
+        if bookmark.isOpened {
+            bookmark.isOpened = false
+        }
+        if bookmark.chromiumTabGuid != -1 {
+            bookmark.chromiumTabGuid = -1
+        }
+        bookmark.setWebContentWrapper(nil)
+        bookmark.clearCanonicalFaviconSource()
+        if bookmark.isActive {
+            bookmark.isActive = false
+        }
     }
 
     func updateNormalTabs() {
