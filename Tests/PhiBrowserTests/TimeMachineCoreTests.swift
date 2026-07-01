@@ -16,19 +16,36 @@ final class TimeMachineCoreTests: XCTestCase {
         temporaryDirectories.removeAll()
     }
 
-    func testPolicyMatchesOnlyExactTriggerBuild() throws {
+    func testReleasePolicyMatchesOnlyExactTriggerVersion() throws {
         let policy = TimeMachineRollbackPolicy(
             backupTriggerBuild: 600,
-            rollbackVersion: "1.6",
+            backupTriggerVersion: "2.0",
+            rollbackVersion: "1.6.0",
             rollbackBuild: 590,
             rollbackPackageURL: try XCTUnwrap(URL(string: "https://example.com/Phi-1.6-590.zip")),
             rollbackPackageSHA256: "abc123",
             includeChromiumData: true
         )
 
-        XCTAssertTrue(policy.shouldCreateBackup(forBuild: 600))
-        XCTAssertFalse(policy.shouldCreateBackup(forBuild: 599))
-        XCTAssertFalse(policy.shouldCreateBackup(forBuild: 601))
+        XCTAssertTrue(policy.shouldCreateBackup(currentVersion: "2.0", currentBuild: 601, triggerMode: .version))
+        XCTAssertFalse(policy.shouldCreateBackup(currentVersion: "1.9", currentBuild: 600, triggerMode: .version))
+        XCTAssertFalse(policy.shouldCreateBackup(currentVersion: "2.0.1", currentBuild: 600, triggerMode: .version))
+    }
+
+    func testNightlyPolicyMatchesOnlyExactTriggerBuild() throws {
+        let policy = TimeMachineRollbackPolicy(
+            backupTriggerBuild: 600,
+            backupTriggerVersion: "2.0",
+            rollbackVersion: "1.6.0",
+            rollbackBuild: 590,
+            rollbackPackageURL: try XCTUnwrap(URL(string: "https://example.com/Phi-1.6-590.zip")),
+            rollbackPackageSHA256: "abc123",
+            includeChromiumData: true
+        )
+
+        XCTAssertTrue(policy.shouldCreateBackup(currentVersion: "2.1", currentBuild: 600, triggerMode: .build))
+        XCTAssertFalse(policy.shouldCreateBackup(currentVersion: "2.0", currentBuild: 599, triggerMode: .build))
+        XCTAssertFalse(policy.shouldCreateBackup(currentVersion: "2.0", currentBuild: 601, triggerMode: .build))
     }
 
     func testDefaultRootURLIsScopedByBundleIdentifier() throws {
@@ -56,7 +73,7 @@ final class TimeMachineCoreTests: XCTestCase {
             creatingVersion: "2.0",
             creatingBuild: 600,
             backupTriggerBuild: 600,
-            rollbackVersion: "1.6",
+            rollbackVersion: "1.6.0",
             rollbackBuild: 590,
             rollbackPackageURL: try XCTUnwrap(URL(string: "https://example.com/Phi-1.6-590.zip")),
             rollbackPackageSHA256: "abc123",
@@ -69,9 +86,11 @@ final class TimeMachineCoreTests: XCTestCase {
 
         let loaded = try store.load()
         XCTAssertEqual(loaded.completedBackups, [record])
-        XCTAssertEqual(loaded.completedBackups.first?.menuTitle(timeZone: TimeZone(secondsFromGMT: 0)!), "Phi 1.6 build 590 on 2026.6.11")
+        XCTAssertEqual(loaded.completedBackups.first?.menuTitle(timeZone: TimeZone(secondsFromGMT: 0)!), "Phi 1.6.0 (590) on 2026.6.11")
         XCTAssertTrue(loaded.hasCompletedBackup(triggerBuild: 600))
         XCTAssertFalse(loaded.hasCompletedBackup(triggerBuild: 601))
+        XCTAssertTrue(loaded.hasCompletedBackup(creatingVersion: "2.0"))
+        XCTAssertFalse(loaded.hasCompletedBackup(creatingVersion: "2.0.1"))
     }
 
     func testPolicyLoaderReadsBundledPolicyJSON() throws {
@@ -80,6 +99,7 @@ final class TimeMachineCoreTests: XCTestCase {
         try """
         {
           "backupTriggerBuild": 600,
+          "backupTriggerVersion": "2.0",
           "rollbackVersion": "1.6",
           "rollbackBuild": 590,
           "rollbackPackageURL": "https://example.com/Phi-1.6-590.zip",
@@ -93,6 +113,7 @@ final class TimeMachineCoreTests: XCTestCase {
 
         let policy = try XCTUnwrap(try loader.loadPolicy())
         XCTAssertEqual(policy.backupTriggerBuild, 600)
+        XCTAssertEqual(policy.backupTriggerVersion, "2.0")
         XCTAssertEqual(policy.rollbackVersion, "1.6")
         XCTAssertEqual(policy.rollbackBuild, 590)
         XCTAssertEqual(policy.rollbackPackageSHA256, "abc123")
@@ -106,12 +127,37 @@ final class TimeMachineCoreTests: XCTestCase {
         try """
         {
           "backupTriggerBuild": 600,
+          "backupTriggerVersion": "2.0",
           "rollbackVersion": "1.6",
           "rollbackBuild": 590,
           "rollbackPackageURL": "https://example.com/Phi-1.6-590.zip",
           "rollbackPackageSHA256": "abc123",
           "includeChromiumData": true,
           "rollbackAppBundleName": "Nested/Phi Canary.app"
+        }
+        """.data(using: .utf8)!.write(to: policyURL)
+
+        let loader = TimeMachineRollbackPolicyLoader(policyURLProvider: { policyURL })
+
+        XCTAssertThrowsError(try loader.loadPolicy()) { error in
+            guard case TimeMachineRollbackPolicyLoaderError.invalidPolicy = error else {
+                return XCTFail("Expected invalid policy, got \(error).")
+            }
+        }
+    }
+
+    func testPolicyLoaderRejectsEmptyBackupTriggerVersion() throws {
+        let directory = try makeTemporaryDirectory()
+        let policyURL = directory.appendingPathComponent("TimeMachineRollbackPolicy.json")
+        try """
+        {
+          "backupTriggerBuild": 600,
+          "backupTriggerVersion": "   ",
+          "rollbackVersion": "1.6",
+          "rollbackBuild": 590,
+          "rollbackPackageURL": "https://example.com/Phi-1.6-590.zip",
+          "rollbackPackageSHA256": "abc123",
+          "includeChromiumData": true
         }
         """.data(using: .utf8)!.write(to: policyURL)
 

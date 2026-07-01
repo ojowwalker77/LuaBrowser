@@ -19,6 +19,7 @@ enum TimeMachineAppBundleName {
 
 struct TimeMachineRollbackPolicy: Codable, Equatable {
     let backupTriggerBuild: Int
+    let backupTriggerVersion: String
     let rollbackVersion: String
     let rollbackBuild: Int
     let rollbackPackageURL: URL
@@ -28,6 +29,7 @@ struct TimeMachineRollbackPolicy: Codable, Equatable {
 
     init(
         backupTriggerBuild: Int,
+        backupTriggerVersion: String,
         rollbackVersion: String,
         rollbackBuild: Int,
         rollbackPackageURL: URL,
@@ -36,6 +38,7 @@ struct TimeMachineRollbackPolicy: Codable, Equatable {
         rollbackAppBundleName: String? = nil
     ) {
         self.backupTriggerBuild = backupTriggerBuild
+        self.backupTriggerVersion = backupTriggerVersion
         self.rollbackVersion = rollbackVersion
         self.rollbackBuild = rollbackBuild
         self.rollbackPackageURL = rollbackPackageURL
@@ -44,8 +47,30 @@ struct TimeMachineRollbackPolicy: Codable, Equatable {
         self.rollbackAppBundleName = rollbackAppBundleName
     }
 
-    func shouldCreateBackup(forBuild build: Int) -> Bool {
-        build == backupTriggerBuild
+    func shouldCreateBackup(
+        currentVersion: String,
+        currentBuild: Int,
+        triggerMode: TimeMachineBackupTriggerMode = .current
+    ) -> Bool {
+        switch triggerMode {
+        case .build:
+            return currentBuild == backupTriggerBuild
+        case .version:
+            return currentVersion == backupTriggerVersion
+        }
+    }
+}
+
+enum TimeMachineBackupTriggerMode: Equatable {
+    case build
+    case version
+
+    static var current: TimeMachineBackupTriggerMode {
+        #if NIGHTLY_BUILD
+        return .build
+        #else
+        return .version
+        #endif
     }
 }
 
@@ -64,6 +89,10 @@ struct TimeMachineCatalog: Codable, Equatable {
 
     func hasCompletedBackup(triggerBuild: Int) -> Bool {
         completedBackups.contains { $0.backupTriggerBuild == triggerBuild }
+    }
+
+    func hasCompletedBackup(creatingVersion: String) -> Bool {
+        completedBackups.contains { $0.creatingVersion == creatingVersion }
     }
 }
 

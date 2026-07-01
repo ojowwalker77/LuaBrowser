@@ -56,10 +56,21 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist")))
     }
 
-    func testSnapshotSkipsWhenBuildDoesNotMatchPolicy() throws {
+    func testReleaseSnapshotSkipsWhenVersionDoesNotMatchPolicy() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture)
+        let manager = makeManager(fixture: fixture, backupTriggerMode: .version)
+
+        let record = try manager.prepareBackupIfNeeded(currentVersion: "2.0.1", currentBuild: 600)
+
+        XCTAssertNil(record)
+        XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().backups.isEmpty)
+    }
+
+    func testNightlySnapshotSkipsWhenBuildDoesNotMatchPolicy() throws {
+        let fixture = try makeFixture(includePreferences: true)
+        try writePolicy(fixture: fixture, includeChromiumData: true)
+        let manager = makeManager(fixture: fixture, backupTriggerMode: .build)
 
         let record = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 601)
 
@@ -67,10 +78,23 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().backups.isEmpty)
     }
 
-    func testSnapshotDoesNotCreateDuplicateForSameTriggerBuild() throws {
+    func testReleaseSnapshotDoesNotCreateDuplicateForSameTriggerVersion() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture)
+        let manager = makeManager(fixture: fixture, backupTriggerMode: .version)
+
+        let first = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
+        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 601)
+
+        XCTAssertNil(second)
+        let catalog = try TimeMachineCatalogStore(paths: fixture.paths).load()
+        XCTAssertEqual(catalog.completedBackups.map(\.id), [first.id])
+    }
+
+    func testNightlySnapshotDoesNotCreateDuplicateForSameTriggerBuild() throws {
+        let fixture = try makeFixture(includePreferences: true)
+        try writePolicy(fixture: fixture, includeChromiumData: true)
+        let manager = makeManager(fixture: fixture, backupTriggerMode: .build)
 
         let first = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
         let second = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600)
@@ -177,6 +201,7 @@ final class TimeMachineSnapshotTests: XCTestCase {
     ) throws {
         var policy: [String: Any] = [
             "backupTriggerBuild": 600,
+            "backupTriggerVersion": "2.0",
             "rollbackVersion": "1.6",
             "rollbackBuild": 590,
             "rollbackPackageURL": "https://example.com/Phi-1.6-590.zip",
@@ -192,12 +217,14 @@ final class TimeMachineSnapshotTests: XCTestCase {
 
     private func makeManager(
         fixture: Fixture,
+        backupTriggerMode: TimeMachineBackupTriggerMode = .current,
         uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         backupTraceReporter: @escaping TimeMachineSnapshotManager.BackupTraceReporter = { _ in }
     ) -> TimeMachineSnapshotManager {
         TimeMachineSnapshotManager(
             paths: fixture.paths,
             policyLoader: TimeMachineRollbackPolicyLoader(policyURLProvider: { fixture.policyURL }),
+            backupTriggerMode: backupTriggerMode,
             catalogStore: TimeMachineCatalogStore(paths: fixture.paths),
             applicationSupportURLProvider: { fixture.applicationSupportURL },
             phiDataURLProvider: { fixture.phiDataURL },

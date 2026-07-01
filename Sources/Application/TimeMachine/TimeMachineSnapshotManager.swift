@@ -27,6 +27,7 @@ struct TimeMachineSnapshotManager {
 
     private let paths: TimeMachinePaths
     private let policyLoader: TimeMachineRollbackPolicyLoader
+    private let backupTriggerMode: TimeMachineBackupTriggerMode
     private let catalogStore: TimeMachineCatalogStore
     private let applicationSupportURLProvider: () -> URL
     private let phiDataURLProvider: () -> URL
@@ -41,6 +42,7 @@ struct TimeMachineSnapshotManager {
     init(
         paths: TimeMachinePaths = TimeMachinePaths(),
         policyLoader: TimeMachineRollbackPolicyLoader = TimeMachineRollbackPolicyLoader(),
+        backupTriggerMode: TimeMachineBackupTriggerMode = .current,
         catalogStore: TimeMachineCatalogStore? = nil,
         applicationSupportURLProvider: @escaping () -> URL = {
             URL(fileURLWithPath: FileSystemUtils.applicationSupportDirctory(), isDirectory: true)
@@ -60,6 +62,7 @@ struct TimeMachineSnapshotManager {
     ) {
         self.paths = paths
         self.policyLoader = policyLoader
+        self.backupTriggerMode = backupTriggerMode
         self.catalogStore = catalogStore ?? TimeMachineCatalogStore(paths: paths)
         self.applicationSupportURLProvider = applicationSupportURLProvider
         self.phiDataURLProvider = phiDataURLProvider
@@ -78,14 +81,24 @@ struct TimeMachineSnapshotManager {
             return nil
         }
 
-        guard policy.shouldCreateBackup(forBuild: currentBuild) else {
-            AppLogDebug("[TimeMachine] Backup policy skipped build \(currentBuild); trigger build is \(policy.backupTriggerBuild).")
+        guard policy.shouldCreateBackup(
+            currentVersion: currentVersion,
+            currentBuild: currentBuild,
+            triggerMode: backupTriggerMode
+        ) else {
+            AppLogDebug(
+                "[TimeMachine] Backup policy skipped version \(currentVersion) build \(currentBuild); " +
+                "trigger \(backupTriggerDescription(for: policy))."
+            )
             return nil
         }
 
         let catalog = try catalogStore.load()
-        guard !catalog.hasCompletedBackup(triggerBuild: policy.backupTriggerBuild) else {
-            AppLogInfo("[TimeMachine] Backup already exists for trigger build \(policy.backupTriggerBuild); skipping duplicate snapshot.")
+        guard !hasCompletedBackup(in: catalog, for: policy) else {
+            AppLogInfo(
+                "[TimeMachine] Backup already exists for trigger \(backupTriggerDescription(for: policy)); " +
+                "skipping duplicate snapshot."
+            )
             return nil
         }
 
@@ -301,6 +314,24 @@ struct TimeMachineSnapshotManager {
 
     private func scopeDescription(_ includeChromiumData: Bool) -> String {
         includeChromiumData ? "full" : "phi-only"
+    }
+
+    private func hasCompletedBackup(in catalog: TimeMachineCatalog, for policy: TimeMachineRollbackPolicy) -> Bool {
+        switch backupTriggerMode {
+        case .build:
+            return catalog.hasCompletedBackup(triggerBuild: policy.backupTriggerBuild)
+        case .version:
+            return catalog.hasCompletedBackup(creatingVersion: policy.backupTriggerVersion)
+        }
+    }
+
+    private func backupTriggerDescription(for policy: TimeMachineRollbackPolicy) -> String {
+        switch backupTriggerMode {
+        case .build:
+            return "build \(policy.backupTriggerBuild)"
+        case .version:
+            return "version \(policy.backupTriggerVersion)"
+        }
     }
 
     private func formatDuration(since startedAt: TimeInterval) -> String {

@@ -51,6 +51,9 @@ struct TimeMachineRollbackPolicyLoader {
         guard policy.backupTriggerBuild > 0 else {
             throw TimeMachineRollbackPolicyLoaderError.invalidPolicy("backupTriggerBuild must be positive.")
         }
+        guard !policy.backupTriggerVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TimeMachineRollbackPolicyLoaderError.invalidPolicy("backupTriggerVersion must not be empty.")
+        }
         guard policy.rollbackBuild > 0 else {
             throw TimeMachineRollbackPolicyLoaderError.invalidPolicy("rollbackBuild must be positive.")
         }

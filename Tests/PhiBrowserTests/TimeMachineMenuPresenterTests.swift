@@ -38,7 +38,8 @@ final class TimeMachineMenuPresenterTests: XCTestCase {
         let fixture = try makeFixture()
         let record = try makeBackup(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000001001")!,
-            createdAt: makeDate(year: 2026, month: 6, day: 11)
+            createdAt: makeDate(year: 2026, month: 6, day: 11),
+            rollbackVersion: "1.6.0"
         )
         try TimeMachineCatalogStore(paths: fixture.paths).save(TimeMachineCatalog(backups: [record]))
         let presenter = TimeMachineMenuPresenter(
@@ -50,7 +51,31 @@ final class TimeMachineMenuPresenterTests: XCTestCase {
 
         XCTAssertEqual(entries, [
             TimeMachineMenuEntry(
-                title: "Phi 1.6 build 590 on 2026.6.11",
+                title: "Phi 1.6.0 (590) on 2026.6.11",
+                backupID: record.id,
+                isEnabled: true
+            )
+        ])
+    }
+
+    func testCompletedCanaryBackupsUseCanaryLabel() throws {
+        let fixture = try makeFixture()
+        let record = try makeBackup(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000001005")!,
+            createdAt: makeDate(year: 2026, month: 6, day: 11),
+            rollbackVersion: "Canary"
+        )
+        try TimeMachineCatalogStore(paths: fixture.paths).save(TimeMachineCatalog(backups: [record]))
+        let presenter = TimeMachineMenuPresenter(
+            catalogStore: TimeMachineCatalogStore(paths: fixture.paths),
+            timeZone: TimeZone(secondsFromGMT: 0)!
+        )
+
+        let entries = try presenter.menuEntries()
+
+        XCTAssertEqual(entries, [
+            TimeMachineMenuEntry(
+                title: "Phi Canary (590) on 2026.6.11",
                 backupID: record.id,
                 isEnabled: true
             )
@@ -93,14 +118,18 @@ final class TimeMachineMenuPresenterTests: XCTestCase {
         )
     }
 
-    private func makeBackup(id: UUID, createdAt: Date) throws -> TimeMachineBackupRecord {
+    private func makeBackup(
+        id: UUID,
+        createdAt: Date,
+        rollbackVersion: String = "1.6.0"
+    ) throws -> TimeMachineBackupRecord {
         TimeMachineBackupRecord(
             id: id,
             createdAt: createdAt,
             creatingVersion: "2.0",
             creatingBuild: 600,
             backupTriggerBuild: 600,
-            rollbackVersion: "1.6",
+            rollbackVersion: rollbackVersion,
             rollbackBuild: 590,
             rollbackPackageURL: try XCTUnwrap(URL(string: "https://example.com/Phi-1.6-590.zip")),
             rollbackPackageSHA256: "abc123",
