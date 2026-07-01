@@ -2509,6 +2509,13 @@ final class SpaceWindowSlot: ObservableObject {
             return
         }
 
+        // The target sits directly behind the still-front leaving window for the
+        // whole slide; its header Spaces strip is outside the band overlay, so it
+        // would bleed through the translucent sidebar as a ghost row. Hide it now
+        // (the band snapshot above excludes the header, so this is snapshot-safe);
+        // `orderOutIfNotTabbedWithTarget` reveals it once the target is fronted.
+        targetSidebar.setSpacesStripHidden(true)
+
         verticalSwapToken += 1
         let token = verticalSwapToken
 
@@ -3282,6 +3289,10 @@ final class SpaceWindowSlot: ObservableObject {
             if let previousWindow, !windowsShareTabGroup(previousWindow, targetWindow) {
                 previousWindow.orderOut(nil)
             }
+            // Tabbed siblings can't be ordered out in a shared fullscreen Space
+            // (it flashes a blank workspace), so they stay stacked behind the
+            // target — hide their strips instead so none ghost through.
+            applySpacesStripBleedGuard(frontWindow: targetWindow)
             return
         }
 
@@ -3308,6 +3319,26 @@ final class SpaceWindowSlot: ObservableObject {
         // the still-front leaving window, so hiding it mid-animation would break
         // the slide).
         scheduleNonTargetSlotWindowSweep()
+
+        // The entering window's strip was hidden while it slid in behind the
+        // leaving one; reveal it now that it's front, and (defensively) keep any
+        // still-on-screen sibling's strip hidden until the sweep drops it.
+        applySpacesStripBleedGuard(frontWindow: targetWindow)
+    }
+
+    /// Keeps the sidebar Spaces strip visible only on the slot's front window.
+    /// A non-front slot window that stays on screen — a tabbed sibling in a
+    /// shared fullscreen Space (never `orderOut`-able without flashing a blank
+    /// workspace), or one Chromium re-surfaced behind the target before the
+    /// sweep drops it — otherwise bleeds its strip icons through the translucent
+    /// front sidebar as a ghost row. Hiding the strip (not the window) fixes the
+    /// bleed without the fullscreen workspace flash. Idempotent; the alpha
+    /// sticks across a window re-order, so a re-surfaced sibling stays clean.
+    private func applySpacesStripBleedGuard(frontWindow: NSWindow?) {
+        for controller in windowsBySpaceId.values {
+            let isFront = frontWindow != nil && controller.window === frontWindow
+            controller.mainSplitViewController.sidebarViewController.setSpacesStripHidden(!isFront)
+        }
     }
 
     /// Orders out every window in this slot except `keepWindow` (the target that

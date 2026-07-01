@@ -781,6 +781,19 @@ class SidebarViewController: NSViewController {
         tabList.view.alphaValue = alpha
     }
 
+    /// Hides/reveals just the header Spaces strip. The strip sits outside the
+    /// push-in band and is never `orderOut`-swept as a window, so on a slot
+    /// window that stays on screen while NOT the front one — a tabbed sibling
+    /// in a shared fullscreen Space, or the entering window sitting behind the
+    /// leaving one mid-swap — its icons bleed through the translucent sidebar as
+    /// a ghost strip. `SpaceWindowSlot` keeps it visible only on the front
+    /// window (see `applySpacesStripBleedGuard`). Alpha (not `isHidden`) so the
+    /// header layout is untouched. No-op in Incognito, which mounts no strip.
+    func setSpacesStripHidden(_ hidden: Bool) {
+        guard !state.isIncognito else { return }
+        spacesStripHostingController.view.alphaValue = hidden ? 0 : 1
+    }
+
     /// Rubber-band nudge on the per-Space content band, played when a
     /// swipe-to-switch can't proceed because the active Space is already the
     /// first or last one. The band (pinned strip + tab list) shifts a short
