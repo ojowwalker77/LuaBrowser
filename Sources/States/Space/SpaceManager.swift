@@ -1835,13 +1835,14 @@ final class SpaceWindowSlot: ObservableObject {
     private var tabBarAccessoryObservationsByWindowId: [Int: NSKeyValueObservation] = [:]
 
     /// Space IDs whose imminent window close is driven by the user
-    /// closing the last tab in the active Space (⌘W on tab / tab X
-    /// button), not by closing the window itself. Populated by
-    /// `markTabDrivenClose` from `CommandDispatcher` / `Tab.close()`
-    /// just before dispatching `IDC_CLOSE_TAB` when only one tab
-    /// remains; drained by `unregisterWindow` to decide whether to
-    /// switch to a sibling Space (tab-driven) or cascade-close every
-    /// Space and terminate (window-driven, the default).
+    /// closing the last tab in the active Space via the tab-row ✕
+    /// button, not by closing the window itself. Populated by
+    /// `markTabDrivenClose` from `Tab.close()` just before dispatching
+    /// `IDC_CLOSE_TAB` when only one tab remains; drained by
+    /// `unregisterWindow` to decide whether to switch to a sibling
+    /// Space (tab-driven) or cascade-close every Space (window-driven,
+    /// the default). Note ⌘W is intentionally NOT tagged: it is treated
+    /// as window-driven so it tears the whole slot down like ⇧⌘W.
     ///
     /// Stored as spaceId → expiration deadline rather than a plain
     /// set: when the dispatched `IDC_CLOSE_TAB` is vetoed (typically
@@ -3471,11 +3472,13 @@ final class SpaceWindowSlot: ObservableObject {
 
     /// Records that `spaceId`'s next window close is going to be the
     /// result of the user closing the last tab in this Space, not
-    /// the result of closing the window itself. Called from any tab-
-    /// close entry point (`CommandDispatcher` IDC_CLOSE_TAB, the tab-
-    /// row X button via `Tab.close()`) right before dispatching the
+    /// the result of closing the window itself. Called from the tab-
+    /// row ✕ button (`Tab.close()`) right before dispatching the
     /// IDC_CLOSE_TAB command, when the active Space's tab count is
-    /// about to drop to zero.
+    /// about to drop to zero. ⌘W (`CommandDispatcher` IDC_CLOSE_TAB)
+    /// deliberately does NOT call this: closing the last tab with ⌘W
+    /// tears the whole slot down like ⇧⌘W instead of switching to a
+    /// sibling Space.
     func markTabDrivenClose(for spaceId: String) {
         pendingTabDrivenCloseDeadlines[spaceId] = Date().addingTimeInterval(Self.tabDrivenCloseTTL)
         // Capture the closing window's pixels now, while the WebContents

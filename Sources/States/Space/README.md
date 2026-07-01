@@ -6,25 +6,26 @@ Defines what happens when a Space's NSWindow closes, depending on how the close 
 
 A `SpaceWindowSlot` is the user-perceived window. It hosts one `MainBrowserWindowController` per Space ever surfaced from this slot; exactly one is visible at a time. Two close triggers map to different user intent:
 
-- **Tab-driven close** — the user just closed the last tab in the active Space (⌘W on tab, tab-row X button). Chromium auto-closes the Browser, which closes the NSWindow. The user is saying "I'm done with this Space," not "I'm done with this window."
-- **Window-driven close** — the user explicitly closed the window itself (red ✕, ⇧⌘W via the Close Window menu item's `performClose:` action, Chromium's internal `BrowserWindowCocoa::Close`). The user is saying "I'm done with this whole window."
+- **Tab-driven close** — the user closed the last tab in the active Space with the tab-row ✕ button. Chromium auto-closes the Browser, which closes the NSWindow. The user is saying "I'm done with this Space," not "I'm done with this window."
+- **Window-driven close** — the user explicitly closed the window itself (red ✕, ⇧⌘W via the Close Window menu item's `performClose:` action, ⌘W on the last tab, Chromium's internal `BrowserWindowCocoa::Close`). The user is saying "I'm done with this whole window."
+
+⌘W on the last tab is deliberately window-driven, not tab-driven: closing a Space's last tab with the keyboard tears the whole slot down like ⇧⌘W / the red ✕, rather than switching to a sibling Space. Only the tab-row ✕ button switches to a sibling.
 
 By the time `windowWillClose` fires, tab strip state is identical in both cases (Chromium has torn the tabs down already), so the slot needs an out-of-band signal to tell them apart.
 
 ## How tab-driven close is tagged
 
-Two entry points dispatch `IDC_CLOSE_TAB` for the active tab:
+Only one entry point tags a tab-driven close:
 
-- `CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)` — keyboard ⌘W.
-- `Tab.close()` — UI X button (`Sources/UserInterface/Common/Tabs/Tab.swift`).
+- `Tab.close()` — the tab-row ✕ button (`Sources/UserInterface/Common/Tabs/Tab.swift`).
 
-Both check `browserState.tabs.count <= 1` and, if true, call `slot.markTabDrivenClose(for: spaceId)`. The marker is a spaceId → expiration-deadline entry in `pendingTabDrivenCloseDeadlines` on the slot. Any close path that does NOT tag the slot is treated as window-driven by default.
+It checks `browserState.tabs.count <= 1` and, if true, calls `slot.markTabDrivenClose(for: spaceId)`. The marker is a spaceId → expiration-deadline entry in `pendingTabDrivenCloseDeadlines` on the slot. Any close path that does NOT tag the slot is treated as window-driven by default.
 
-Two robustness rules apply to the tag:
+Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliberately does **not** tag. Closing a Space's last tab with ⌘W is intended to tear the whole slot down like ⇧⌘W, so it dispatches `IDC_CLOSE_TAB` untagged and reaches `unregisterWindow` as a window-driven close. (⌘W is still swallowed by `handleCloseTab()` when the omnibox is open, which returns `true` without dispatching anything — no tag is involved either way.)
 
-1. **The CommandDispatcher tag is gated on `handleCloseTab()` returning `false`.** `handleCloseTab` swallows ⌘W when the omnibox is open and returns `true` without dispatching anything to Chromium. Tagging in that case would leave a stale marker that the user's next window-driven close would misclassify as tab-driven and route into switch-to-sibling instead of cascade-and-terminate.
+One robustness rule applies to the tag:
 
-2. **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — no `unregisterWindow` fires to drain the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified.
+- **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — no `unregisterWindow` fires to drain the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified.
 
 `unregisterWindow` reads `Date() < deadline` to decide `isTabDriven`. Expired markers are drained but not honored.
 
