@@ -87,6 +87,13 @@ struct SpacesStripView: View {
     /// When true (sidebar), the label sits left with a trailing ellipsis
     /// affordance and a spacer between them.
     var showsEllipsisAffordance: Bool = true
+    /// Resolves the window controller that hosts this strip, evaluated lazily so
+    /// it stays correct even if the controller finishes wiring up after the strip
+    /// is built. `iconPickerRequestToken` is slot-wide, so every Space-window in a
+    /// slot observes the same bump; this lets `openActiveIconPicker` honor the
+    /// request only in the window currently on screen. Nil (previews) means the
+    /// strip always treats itself as the owner. See `openActiveIconPicker`.
+    var resolveOwnerController: () -> MainBrowserWindowController? = { nil }
     @ObservedObject private var profileManager: ProfileManager = .shared
     @Environment(\.phiAppearance) private var windowAppearance: Appearance
 
@@ -175,6 +182,18 @@ struct SpacesStripView: View {
     /// the active pip in the sidebar, or the chip's icon in the tab strip — in
     /// response to the tab-area menu's "Change Icon…" request.
     private func openActiveIconPicker() {
+        // The token is slot-wide, so every Space-window's strip in this slot
+        // observes the same bump. Only the on-screen window should open the
+        // picker: a hidden Space-window that also opened it would set picker
+        // state (`iconEditSpaceId` / `isIconPickerOpen`) that never clears and
+        // resurfaces the popup when the user later switches to that Space.
+        // Ignore the request when this strip is positively identified as a
+        // window other than the slot's currently visible one.
+        if let owner = resolveOwnerController(),
+           let visible = slot.visibleController,
+           visible !== owner {
+            return
+        }
         guard let activeId = slot.activeSpaceId else { return }
         if showsEllipsisAffordance {
             iconEditSpaceId = activeId

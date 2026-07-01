@@ -124,7 +124,12 @@ class SidebarViewController: NSViewController {
 
     private lazy var spacesStripHostingController: ThemedHostingController<SpacesStripView> = {
         let hostingController = ThemedHostingController(
-            rootView: SpacesStripView(manager: SpaceManager.shared, slot: spacesStripSlot, rowHeight: SpacesStripView.sidebarHeight),
+            rootView: SpacesStripView(
+                manager: SpaceManager.shared,
+                slot: spacesStripSlot,
+                rowHeight: SpacesStripView.sidebarHeight,
+                resolveOwnerController: { [weak state] in state?.windowController }
+            ),
             themeSource: state.themeContext
         )
         if #available(macOS 13.0, *) {

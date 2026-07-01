@@ -319,7 +319,8 @@ final class TabStripBarController: NSViewController {
         let spacesPicker = SpacesStripView(
             manager: SpaceManager.shared,
             slot: slot,
-            showsEllipsisAffordance: false
+            showsEllipsisAffordance: false,
+            resolveOwnerController: { [weak browserState] in browserState?.windowController }
         )
         let spacesHostingView = SafeAreaIgnoringThemedHostingView(
             rootView: spacesPicker,
