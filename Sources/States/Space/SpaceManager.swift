@@ -1980,6 +1980,14 @@ final class SpaceWindowSlot: ObservableObject {
         PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration()
     }
 
+    /// Grace period added past `swapAnimationDuration` before a vertical swap
+    /// force-settles itself. The vertical paths finalize off `NSAnimationContext`'s
+    /// completion handler, which can be dropped when the window is pushed to
+    /// another macOS Space (or the app is occluded) mid-slide — stranding the
+    /// band snapshot on the sidebar. A settled animation always fires its real
+    /// completion within `duration`, so this margin only ever covers a lost one.
+    private static let swapFinalizeFallbackMargin: TimeInterval = 0.5
+
     private weak var manager: SpaceManager?
 
     init(manager: SpaceManager, initialSpaceId: String?) {
@@ -2543,6 +2551,7 @@ final class SpaceWindowSlot: ObservableObject {
             onSwapSettled?()
         }
         verticalSwapCancel = finalize
+        scheduleVerticalSwapFinalizeFallback(token: token, duration: duration, finalize: finalize)
 
         // Defer the entering snapshot + slide one runloop so the target
         // sidebar's strip shows the new Space name (bail if superseded).
@@ -2633,6 +2642,7 @@ final class SpaceWindowSlot: ObservableObject {
             self?.verticalSwapCancel = nil
         }
         verticalSwapCancel = finalize
+        scheduleVerticalSwapFinalizeFallback(token: token, duration: duration, finalize: finalize)
 
         // Defer one runloop so the target sidebar's strip has committed the new
         // Space name before we snapshot the entering band (bail if superseded).
@@ -2655,6 +2665,26 @@ final class SpaceWindowSlot: ObservableObject {
             placeholder.removeFromSuperview()
             targetSidebar.rampSpaceTint(fromHex: sourceColorHex, toHex: targetColorHex, duration: duration)
             overlay.runAnimation(duration: duration) { finalize() }
+        }
+    }
+
+    /// Force-settles a vertical swap if its `NSAnimationContext` completion is
+    /// never delivered. Both vertical paths finalize off that completion, so a
+    /// dropped one — as happens when the window is pushed to another macOS Space
+    /// (or the app is occluded) mid-slide — would leave `verticalSwapCancel`
+    /// armed indefinitely, freezing the band snapshot over the sidebar and
+    /// gating every later switch. `finalize` is idempotent (`didFinish`), so
+    /// this is a no-op whenever the real completion fired; the token guard keeps
+    /// a superseded slide's fallback from touching the one that replaced it.
+    private func scheduleVerticalSwapFinalizeFallback(
+        token: Int,
+        duration: TimeInterval,
+        finalize: @escaping () -> Void
+    ) {
+        let deadline = DispatchTime.now() + duration + Self.swapFinalizeFallbackMargin
+        DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
+            guard let self, self.verticalSwapToken == token else { return }
+            finalize()
         }
     }
 
