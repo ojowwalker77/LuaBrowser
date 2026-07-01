@@ -64,6 +64,40 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.isEmpty)
     }
 
+    func testSuccessfulRestoreRemovesSiblingPendingOperationsForSameRollbackVersion() throws {
+        let fixture = try makeFixture(includeChromiumData: true)
+        let matchingOperationID = UUID(uuidString: "00000000-0000-0000-0000-000000001002")!
+        let matchingOperationURL = try writePendingRestoreOperation(
+            fixture: fixture,
+            operationID: matchingOperationID,
+            rollbackVersion: "1.6",
+            rollbackBuild: 591
+        )
+        let matchingEmergencyURL = fixture.paths.emergencyOperationURL(id: matchingOperationID)
+        try writeMarker(in: matchingEmergencyURL, name: "data.txt", text: "matching-emergency")
+
+        let otherOperationID = UUID(uuidString: "00000000-0000-0000-0000-000000001003")!
+        let otherOperationURL = try writePendingRestoreOperation(
+            fixture: fixture,
+            operationID: otherOperationID,
+            rollbackVersion: "1.5",
+            rollbackBuild: 580
+        )
+        let otherEmergencyURL = fixture.paths.emergencyOperationURL(id: otherOperationID)
+        try writeMarker(in: otherEmergencyURL, name: "data.txt", text: "other-emergency")
+
+        let core = makeCore(fixture: fixture) { _ in }
+
+        try core.restore(planURL: fixture.planURL)
+
+        XCTAssertFalse(fileExists(matchingOperationURL))
+        XCTAssertFalse(fileExists(matchingEmergencyURL))
+        XCTAssertNil(try TimeMachineRestoreJournalStore(paths: fixture.paths).load(operationID: matchingOperationID))
+        XCTAssertTrue(fileExists(otherOperationURL))
+        XCTAssertTrue(fileExists(otherEmergencyURL))
+        XCTAssertNotNil(try TimeMachineRestoreJournalStore(paths: fixture.paths).load(operationID: otherOperationID))
+    }
+
     func testFailureAfterDataSwapRestoresEmergencyBackups() throws {
         let fixture = try makeFixture(includeChromiumData: true)
         var phases: [TimeMachineRestorePhase] = []
@@ -446,6 +480,53 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         )
     }
 
+    @discardableResult
+    private func writePendingRestoreOperation(
+        fixture: Fixture,
+        operationID: UUID,
+        rollbackVersion: String,
+        rollbackBuild: Int,
+        phase: TimeMachineRestorePhase = .failed
+    ) throws -> URL {
+        let operationURL = fixture.paths.pendingOperationURL(id: operationID)
+        let planURL = operationURL.appendingPathComponent("install-plan.json", isDirectory: false)
+        let packageURL = operationURL.appendingPathComponent("Package", isDirectory: true)
+        try writeMarker(in: packageURL, name: "marker.txt", text: "pending-package")
+
+        let plan = TimeMachineInstallPlan(
+            operationID: operationID,
+            hostPID: 12345,
+            bundleIdentifier: "com.phibrowser.Mac",
+            currentAppURL: fixture.currentAppURL,
+            stagedAppURL: packageURL.appendingPathComponent("Phi.app", isDirectory: true),
+            currentApplicationSupportURL: fixture.currentApplicationSupportURL,
+            snapshotApplicationSupportURL: nil,
+            currentPhiDataURL: fixture.currentPhiDataURL,
+            snapshotPhiDataURL: nil,
+            currentPreferencesURL: fixture.preferencesURL,
+            snapshotPreferencesURL: nil,
+            emergencyBackupURL: fixture.paths.emergencyOperationURL(id: operationID),
+            includeChromiumData: true,
+            rollbackVersion: rollbackVersion,
+            rollbackBuild: rollbackBuild,
+            packageSHA256: "sha"
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(plan).write(to: planURL, options: .atomic)
+
+        try TimeMachineRestoreJournalStore(paths: fixture.paths).write(
+            TimeMachineRestoreJournal(
+                operationID: operationID,
+                phase: phase,
+                updatedAt: Date(timeIntervalSince1970: 1_781_020_799),
+                planRelativePath: fixture.paths.relativePath(for: planURL),
+                helperRelativePath: "Pending/\(operationID.uuidString)/PhiTimeMachineInstaller"
+            )
+        )
+        return operationURL
+    }
+
     private func copyItemReplacing(_ sourceURL: URL, to destinationURL: URL) throws {
         try removeItemIfExists(destinationURL)
         try FileManager.default.createDirectory(
@@ -474,6 +555,11 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         let contentsURL = appURL.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contentsURL, withIntermediateDirectories: true)
         try marker.write(to: contentsURL.appendingPathComponent("build.txt"), atomically: true, encoding: .utf8)
+    }
+
+    private func writeMarker(in directoryURL: URL, name: String, text: String) throws {
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try text.write(to: directoryURL.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
 
     private func readText(_ url: URL) throws -> String {

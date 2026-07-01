@@ -38,6 +38,10 @@ struct TimeMachineRestoreJournalStore {
         try pendingJournals { $0.phase == .completed }
     }
 
+    func allPendingJournals() throws -> [TimeMachineRestoreJournal] {
+        try pendingJournals { _ in true }
+    }
+
     private func pendingJournals(
         where shouldInclude: (TimeMachineRestoreJournal) -> Bool
     ) throws -> [TimeMachineRestoreJournal] {

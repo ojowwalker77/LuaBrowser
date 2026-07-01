@@ -572,15 +572,18 @@ struct TimeMachineInstallerCore {
 struct TimeMachineCompletedRestoreCleaner {
     private let paths: TimeMachinePaths
     private let catalogStore: TimeMachineCatalogStore
+    private let journalStore: TimeMachineRestoreJournalStore
     private let fileManager: FileManager
 
     init(
         paths: TimeMachinePaths,
         catalogStore: TimeMachineCatalogStore? = nil,
+        journalStore: TimeMachineRestoreJournalStore? = nil,
         fileManager: FileManager = .default
     ) {
         self.paths = paths
         self.catalogStore = catalogStore ?? TimeMachineCatalogStore(paths: paths, fileManager: fileManager)
+        self.journalStore = journalStore ?? TimeMachineRestoreJournalStore(paths: paths, fileManager: fileManager)
         self.fileManager = fileManager
     }
 
@@ -588,6 +591,11 @@ struct TimeMachineCompletedRestoreCleaner {
         cleanupConsumedBackup(plan: plan, logger: logger)
         removeEmptyCatalogIfNeeded(logger: logger)
         removeEmptyManagedDirectoryIfNeeded(paths.snapshotsRootURL, description: "snapshots", logger: nil)
+        cleanupMatchingPendingRestoreOperations(
+            completedPlan: plan,
+            completedOperationURL: operationURL,
+            logger: logger
+        )
         removeManagedItemIfExists(
             plan.emergencyBackupURL,
             under: paths.emergencyRootURL,
@@ -659,6 +667,54 @@ struct TimeMachineCompletedRestoreCleaner {
             }
         } catch {
             logger("Failed to remove consumed backup catalog record for snapshot \(relativePath): \(error.localizedDescription)")
+        }
+    }
+
+    private func cleanupMatchingPendingRestoreOperations(
+        completedPlan: TimeMachineInstallPlan,
+        completedOperationURL: URL,
+        logger: (String) -> Void
+    ) {
+        let pendingJournals: [TimeMachineRestoreJournal]
+        do {
+            pendingJournals = try journalStore.allPendingJournals()
+        } catch {
+            logger("Failed to inspect sibling pending restore operations: \(error.localizedDescription)")
+            return
+        }
+
+        for journal in pendingJournals {
+            let operationURL = paths.pendingOperationURL(id: journal.operationID)
+            guard operationURL.standardizedFileURL.path != completedOperationURL.standardizedFileURL.path else {
+                continue
+            }
+
+            let planURL = paths.url(forRelativePath: journal.planRelativePath)
+            let pendingPlan: TimeMachineInstallPlan
+            do {
+                pendingPlan = try TimeMachineInstallerCore.loadPlan(at: planURL, fileManager: fileManager)
+            } catch {
+                logger("Failed to inspect sibling pending restore \(journal.operationID.uuidString): \(error.localizedDescription)")
+                continue
+            }
+
+            guard pendingPlan.bundleIdentifier == completedPlan.bundleIdentifier,
+                  pendingPlan.rollbackVersion == completedPlan.rollbackVersion else {
+                continue
+            }
+
+            removeManagedItemIfExists(
+                pendingPlan.emergencyBackupURL,
+                under: paths.emergencyRootURL,
+                description: "sibling pending emergency backup",
+                logger: logger
+            )
+            removeManagedItemIfExists(
+                operationURL,
+                under: paths.pendingRootURL,
+                description: "sibling pending operation",
+                logger: logger
+            )
         }
     }
 
