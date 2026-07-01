@@ -3242,15 +3242,139 @@ final class SpaceWindowSlot: ObservableObject {
     /// blank fullscreen workspace (see `slotHasFullScreenWindow`), so there we
     /// keep relying on tab selection.
     private func orderOutIfNotTabbedWithTarget(_ previousWindow: NSWindow?, targetWindow: NSWindow?) {
-        guard let previousWindow else { return }
-        if windowsShareTabGroup(previousWindow, targetWindow) {
-            hideSlotTabBars()
-            if !slotHasFullScreenWindow {
+        hideSlotTabBars()
+
+        // In a shared macOS fullscreen Space, ordering a sibling tab out flashes
+        // a blank workspace, so keep relying on native tab selection there — but
+        // an ungrouped hand-off window (not part of the group) still needs the
+        // explicit hide it always got.
+        guard !slotHasFullScreenWindow else {
+            if let previousWindow, !windowsShareTabGroup(previousWindow, targetWindow) {
                 previousWindow.orderOut(nil)
             }
             return
         }
-        previousWindow.orderOut(nil)
+
+        // Selecting the target's native tab does NOT reliably hide the slot's
+        // other windows: they stay stacked behind it and, because the Space
+        // sidebar is translucent, bleed through as a ghost Space-strip + shadow.
+        // A hard `orderOut` of every non-target slot window is what reliably
+        // drops them (the same finding `reconcileRestoreVisibility` relies on).
+        // It detaches them from the native tab group; `syncSlotTabGroup`
+        // regroups on the next switch.
+        sweepNonTargetSlotWindows(keeping: targetWindow, alsoHide: previousWindow)
+
+        // Drop any leaked snapshot overlay stranded on a slot window by a
+        // superseded / instant-present switch (the live push-in's overlay is
+        // spared) — it would otherwise ghost through the translucent sidebar.
+        stripLeakedSwapOverlays()
+
+        // Chromium re-surfaces a background Space window a runloop+ after the
+        // swap settles — its restored tabs finishing load call
+        // `BrowserWindow::Show()` — landing behind the target where the one-shot
+        // sweep above can't see it yet (confirmed: a sibling flips visible=true
+        // one runloop after the switch). Re-assert across a short coalesced
+        // ladder, skipping while a swap animates (the push-in overlay draws on
+        // the still-front leaving window, so hiding it mid-animation would break
+        // the slide).
+        scheduleNonTargetSlotWindowSweep()
+    }
+
+    /// Orders out every window in this slot except `keepWindow` (the target that
+    /// should remain visible). `extra` covers an ungrouped hand-off window that
+    /// may not be in `windowsBySpaceId`. Only touches windows that are actually
+    /// on screen, so a settled slot does no work.
+    private func sweepNonTargetSlotWindows(keeping keepWindow: NSWindow?, alsoHide extra: NSWindow?) {
+        if let extra, extra !== keepWindow, extra.isVisible {
+            extra.orderOut(nil)
+        }
+        for controller in windowsBySpaceId.values {
+            guard let window = controller.window,
+                  window !== keepWindow,
+                  window.isVisible else { continue }
+            window.orderOut(nil)
+        }
+    }
+
+    /// Re-asserts the slot's one-window invariant over a few coalesced delays
+    /// after a switch. Two things break it after the swap "settles":
+    ///  - Chromium re-surfaces a background Space window a runloop+ later (its
+    ///    restored tabs finishing load call `BrowserWindow::Show()`), stacking
+    ///    it behind the target.
+    ///  - A superseded / instant-present switch can strand a `SidebarSwapOverlay`
+    ///    (the leaving-band snapshot) on a slot window; with the sidebar
+    ///    translucent, either one bleeds through as the ghost strip + shadow.
+    /// Each pass — once no swap is animating — strips any stray overlay and
+    /// forces exactly the active Space's window on screen (see
+    /// `enforceSlotSingleWindowInvariant`). Each switch supersedes the prior
+    /// ladder (`sweepToken`); passes bail in fullscreen.
+    private var sweepToken = 0
+    private func scheduleNonTargetSlotWindowSweep() {
+        sweepToken += 1
+        let token = sweepToken
+        for delay in [0.05, 0.15, 0.4, 1.0, 2.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.sweepToken == token else { return }
+                // Strip leaked overlays every pass — safe even mid-animation
+                // since the one live overlay (`activeSidebarOverlay`) is spared.
+                self.stripLeakedSwapOverlays()
+                // Re-order windows only when idle.
+                self.enforceSlotSingleWindowInvariant()
+            }
+        }
+    }
+
+    /// Removes any `SidebarSwapOverlay` still parented in a slot window that is
+    /// NOT the currently-animating one. Such an overlay is a leftover snapshot
+    /// from a superseded / instant-present switch; the translucent sidebar makes
+    /// it ghost through. Safe to run at any time — the live overlay is spared.
+    private func stripLeakedSwapOverlays() {
+        for controller in windowsBySpaceId.values {
+            if let root = controller.window?.contentView {
+                removeStraySwapOverlays(in: root)
+            }
+        }
+    }
+
+    /// Forces the slot back to "only the active Space's window is on screen, no
+    /// leftover swap overlay". No-op while a swap animates (the push-in draws on
+    /// the still-front leaving window, and its overlay is legitimately live) or
+    /// in a shared fullscreen Space (ordering a tab out flashes a blank
+    /// workspace). Keyed on `activeSpaceId` — the slot's source of truth — not
+    /// `visibleController`, which rapid switching can leave transiently stale.
+    private func enforceSlotSingleWindowInvariant() {
+        guard !isSwitchAnimationInFlight, !slotHasFullScreenWindow else { return }
+        guard let activeId = activeSpaceId,
+              let activeController = windowsBySpaceId[activeId],
+              let activeWindow = activeController.window else { return }
+
+        var hidCount = 0
+        for (spaceId, controller) in windowsBySpaceId where spaceId != activeId {
+            guard let window = controller.window, window.isVisible else { continue }
+            window.orderOut(nil)
+            hidCount += 1
+        }
+        // Re-front the active window if anything was hidden or it somehow fell
+        // off screen; the guard keeps a settled slot from stealing focus.
+        if hidCount > 0 || !activeWindow.isVisible {
+            makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
+        }
+        visibleController = activeController
+    }
+
+    /// Removes any `SidebarSwapOverlay` in a window's view tree except the one
+    /// live overlay (`activeSidebarOverlay`) belonging to an in-flight push-in,
+    /// so a leaked overlay can be cleared without disturbing a running slide.
+    private func removeStraySwapOverlays(in view: NSView) {
+        for subview in view.subviews {
+            if let overlay = subview as? SidebarSwapOverlay {
+                if overlay !== activeSidebarOverlay {
+                    overlay.removeFromSuperview()
+                }
+            } else {
+                removeStraySwapOverlays(in: subview)
+            }
+        }
     }
 
     /// Used by restore-time callers that need to keep a sibling Space window
