@@ -126,20 +126,12 @@ private enum NativeWindowTabBarSuppressor {
 }
 
 private extension NSWindow {
-    // `_setTabBarAccessoryViewController:` is AppKit's dedicated installer for
-    // the native window-tab bar, so on a slot-managed window it must never
-    // succeed. We deliberately do NOT gate on the accessory already containing
-    // an `NSTabBar`: AppKit installs an empty accessory first and adds the
-    // `NSTabBar` subview a runloop later, so a `containsNativeTabBar` check
-    // would wave that empty accessory through and let the bar (and its titlebar
-    // separator shadow) composite for a frame during a Space switch. Refusing
-    // every non-nil accessory closes that race; `hideNativeTabBarDescendants`
-    // stays as a defensive pass for when the bar subview is already present.
     @objc func phi_spaceTabBar_setTabBarAccessoryViewController(
         _ controller: NSTitlebarAccessoryViewController?
     ) {
         guard NativeWindowTabBarSuppressor.isManagedSlotWindow(self),
-              let controller else {
+              let controller,
+              NativeWindowTabBarSuppressor.containsNativeTabBar(in: controller.view) else {
             phi_spaceTabBar_setTabBarAccessoryViewController(controller)
             return
         }
@@ -3234,13 +3226,28 @@ final class SpaceWindowSlot: ObservableObject {
         removeNativeTabBarAccessories(from: window)
     }
 
-    /// AppKit hides the non-selected window in a tab group for us. Keep the
-    /// manual `orderOut` fallback only for windows that are not yet grouped,
-    /// preserving current behavior for cold/failed grouping paths.
+    /// Hides the previously-visible window once the target is fronted. AppKit is
+    /// supposed to drop a tab group's non-selected window for us, but selecting
+    /// the target tab alone does NOT reliably hide the leaving window: it stays
+    /// stacked directly behind the target and, because the Space sidebar is
+    /// translucent, bleeds through as a ghost Space-strip + shadow during and
+    /// after a switch. A hard `orderOut` is what reliably drops it — the same
+    /// finding `reconcileRestoreVisibility` relies on. It detaches the window
+    /// from the native tab group; `registerWindow`/`syncSlotTabGroup` regroup
+    /// windows as they resurface, and the ungrouped branch below keeps hiding
+    /// the leaving window in the meantime.
+    ///
+    /// Skipped while the slot owns a macOS fullscreen window: ordering a tab
+    /// out from a group that shares a fullscreen Space makes macOS flash a
+    /// blank fullscreen workspace (see `slotHasFullScreenWindow`), so there we
+    /// keep relying on tab selection.
     private func orderOutIfNotTabbedWithTarget(_ previousWindow: NSWindow?, targetWindow: NSWindow?) {
         guard let previousWindow else { return }
         if windowsShareTabGroup(previousWindow, targetWindow) {
             hideSlotTabBars()
+            if !slotHasFullScreenWindow {
+                previousWindow.orderOut(nil)
+            }
             return
         }
         previousWindow.orderOut(nil)
