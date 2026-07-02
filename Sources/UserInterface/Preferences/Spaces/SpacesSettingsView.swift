@@ -563,7 +563,7 @@ struct SpacesSettingsView: View {
             space.name
         )
         alert.informativeText = NSLocalizedString(
-            "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
             comment: "Body of the delete-Space confirmation"
         )
         alert.alertStyle = .warning
