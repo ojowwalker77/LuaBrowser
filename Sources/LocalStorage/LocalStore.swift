@@ -498,9 +498,16 @@ extension LocalStore {
         let fetchPinnedTabs = {
             self.getAllPinnedTabs(for: profileID)
         }
-        
-        subject.send(fetchPinnedTabs())
-        
+
+        // Dedup must compare value snapshots, not the fetched objects: a
+        // refetch returns the same registered instances refreshed in place by
+        // the saving context, so an object-based `removeDuplicates` compared
+        // every object against itself and swallowed field edits — pinned
+        // URL/title edits never reached the per-space subscribers.
+        let initialTabs = fetchPinnedTabs()
+        var lastSnapshot = initialTabs.map(PinnedTabSnapshot.init)
+        subject.send(initialTabs)
+
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
             .publisher(for: .NSManagedObjectContextDidSave)
@@ -514,24 +521,39 @@ extension LocalStore {
             .receive(on: DispatchQueue.main)
             .sink { _ in
                 let updatedTabs = fetchPinnedTabs()
+                let snapshot = updatedTabs.map(PinnedTabSnapshot.init)
+                guard snapshot != lastSnapshot else { return }
+                lastSnapshot = snapshot
                 subject.send(updatedTabs)
             }
-        
+
         return subject
-            .removeDuplicates { oldTabs, newTabs in
-                guard oldTabs.count == newTabs.count else { return false }
-                return zip(oldTabs, newTabs).allSatisfy { old, new in
-                    old.guid == new.guid && 
-                    old.title == new.title && 
-                    old.index == new.index &&
-                    old.lastSeen == new.lastSeen &&
-                    old.updatedDate == new.updatedDate
-                }
-            }
             .handleEvents(receiveCancel: {
                 cancellable.cancel()
             })
             .eraseToAnyPublisher()
+    }
+}
+
+/// Value snapshot of a pinned-tab row used by `pinnedTabsPublisher` for
+/// change detection across saves.
+private struct PinnedTabSnapshot: Equatable {
+    let guid: String
+    let title: String
+    let url: URL
+    let index: Int
+    let lastSeen: Date?
+    let updatedDate: Date
+    let splitPartnerGuid: String?
+
+    init(_ model: TabDataModel) {
+        guid = model.guid
+        title = model.title
+        url = model.url
+        index = model.index
+        lastSeen = model.lastSeen
+        updatedDate = model.updatedDate
+        splitPartnerGuid = model.splitPartnerGuid
     }
 }
 

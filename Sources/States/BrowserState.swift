@@ -431,6 +431,7 @@ class BrowserState {
         let persistedURL = localTab.pinnedUrl ?? localTab.url
         if existing.pinnedUrl != persistedURL {
             existing.pinnedUrl = persistedURL
+            navigateOpenPinnedTab(existing, toEditedURL: persistedURL)
         }
         
         if existing.storedTitle != localTab.storedTitle {
@@ -463,7 +464,25 @@ class BrowserState {
             existing.url = persistedURL
         }
     }
-    
+
+    /// A pinned-tab URL edit lands here in every space of the profile except
+    /// the editing one (whose live tab `applyPinnedTabEdit` already
+    /// navigates). If this space has the tab open, retarget its web content
+    /// too; custom_value must be cleared around the navigation or
+    /// `CrossDomainNewTabNavigationThrottle` bounces the cross-domain load.
+    private func navigateOpenPinnedTab(_ tab: Tab, toEditedURL url: String?) {
+        guard let url, tab.isOpenned, let wrapper = tab.webContentWrapper else { return }
+        if tab.url != url {
+            tab.url = url
+        }
+        wrapper.updateTabCustomValue("")
+        wrapper.navigate(toURL: url)
+        guard let pinnedGuid = tab.guidInLocalDB else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            wrapper.updateTabCustomValue(pinnedGuid)
+        }
+    }
+
     @MainActor
     func pinnedTabEditingURL(for guid: String, fallbackURL: String?) -> String {
         if let localTab = localStore.getTab(by: guid) {
