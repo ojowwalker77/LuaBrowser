@@ -54,6 +54,7 @@ struct TimeMachineRestoreCoordinator {
     private let applicationSupportURLProvider: () -> URL
     private let phiDataURLProvider: () -> URL
     private let preferencesURLProvider: () -> URL
+    private let sentinelApplicationSupportURLProvider: () -> URL
     private let operationIDProvider: () -> UUID
     private let hostPIDProvider: () -> Int32
     private let uptimeProvider: () -> TimeInterval
@@ -83,6 +84,7 @@ struct TimeMachineRestoreCoordinator {
         preferencesURLProvider: @escaping () -> URL = {
             URL(fileURLWithPath: FileSystemUtils.plistPath(), isDirectory: false)
         },
+        sentinelApplicationSupportURLProvider: (() -> URL)? = nil,
         operationIDProvider: @escaping () -> UUID = UUID.init,
         hostPIDProvider: @escaping () -> Int32 = { ProcessInfo.processInfo.processIdentifier },
         uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
@@ -107,6 +109,11 @@ struct TimeMachineRestoreCoordinator {
         self.applicationSupportURLProvider = applicationSupportURLProvider
         self.phiDataURLProvider = phiDataURLProvider
         self.preferencesURLProvider = preferencesURLProvider
+        self.sentinelApplicationSupportURLProvider = sentinelApplicationSupportURLProvider ?? {
+            TimeMachineSentinelStorage.applicationSupportURL(
+                forBrowserBundleIdentifier: paths.bundleIdentifier
+            )
+        }
         self.operationIDProvider = operationIDProvider
         self.hostPIDProvider = hostPIDProvider
         self.uptimeProvider = uptimeProvider
@@ -330,6 +337,12 @@ struct TimeMachineRestoreCoordinator {
         let snapshotPreferencesURL = snapshotURL
             .appendingPathComponent("Preferences", isDirectory: true)
             .appendingPathComponent("\(paths.bundleIdentifier).plist", isDirectory: false)
+        let sentinelBundleIdentifier = TimeMachineSentinelStorage.expectedBundleIdentifier(
+            forBrowserBundleIdentifier: paths.bundleIdentifier
+        )
+        let snapshotSentinelApplicationSupportURL = snapshotURL
+            .appendingPathComponent("ApplicationSupport", isDirectory: true)
+            .appendingPathComponent(sentinelBundleIdentifier, isDirectory: true)
         let requiredSnapshotURL = backup.includeChromiumData
             ? snapshotApplicationSupportURL
             : snapshotPhiDataURL
@@ -340,7 +353,7 @@ struct TimeMachineRestoreCoordinator {
         AppLogInfo(
             "[TimeMachine] Restore snapshot resolved at \(snapshotURL.path); " +
             "applicationSupport=\(snapshotApplicationSupportURL?.path ?? "nil") phi=\(snapshotPhiDataURL.path) " +
-            "preferences=\(snapshotPreferencesURL.path)"
+            "preferences=\(snapshotPreferencesURL.path) sentinel=\(snapshotSentinelApplicationSupportURL.path)"
         )
 
         return TimeMachineInstallPlan(
@@ -361,7 +374,9 @@ struct TimeMachineRestoreCoordinator {
             includeChromiumData: backup.includeChromiumData,
             rollbackVersion: backup.rollbackVersion,
             rollbackBuild: backup.rollbackBuild,
-            packageSHA256: backup.rollbackPackageSHA256
+            packageSHA256: backup.rollbackPackageSHA256,
+            currentSentinelApplicationSupportURL: sentinelApplicationSupportURLProvider(),
+            snapshotSentinelApplicationSupportURL: existingURL(snapshotSentinelApplicationSupportURL)
         )
     }
 

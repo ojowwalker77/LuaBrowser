@@ -98,3 +98,27 @@ struct TimeMachinePaths {
         rootURL.appendingPathComponent(relativePath)
     }
 }
+
+enum TimeMachineSentinelStorage {
+    static func applicationSupportURL(forBrowserBundleIdentifier bundleIdentifier: String) -> URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0]
+        .appendingPathComponent(
+            expectedBundleIdentifier(forBrowserBundleIdentifier: bundleIdentifier),
+            isDirectory: true
+        )
+    }
+
+    static func expectedBundleIdentifier(forBrowserBundleIdentifier bundleIdentifier: String) -> String {
+        let lowercased = bundleIdentifier.lowercased()
+        if lowercased.contains(".canary.") || lowercased.contains("canary") {
+            return "com.phibrowser.canary.Sentinel"
+        }
+        if lowercased.contains(".dev.") {
+            return "com.phibrowser.dev.Sentinel"
+        }
+        return "com.phibrowser.Sentinel"
+    }
+}

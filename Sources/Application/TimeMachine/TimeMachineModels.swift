@@ -171,6 +171,7 @@ struct TimeMachineSnapshotManifest: Codable, Equatable, Identifiable {
     let applicationSupportRelativePath: String?
     let phiDataRelativePath: String?
     let preferencesRelativePath: String?
+    let sentinelApplicationSupportRelativePath: String?
     let rollbackAppBundleName: String?
 
     init(
@@ -187,6 +188,7 @@ struct TimeMachineSnapshotManifest: Codable, Equatable, Identifiable {
         applicationSupportRelativePath: String?,
         phiDataRelativePath: String?,
         preferencesRelativePath: String?,
+        sentinelApplicationSupportRelativePath: String? = nil,
         rollbackAppBundleName: String? = nil
     ) {
         self.id = id
@@ -202,6 +204,7 @@ struct TimeMachineSnapshotManifest: Codable, Equatable, Identifiable {
         self.applicationSupportRelativePath = applicationSupportRelativePath
         self.phiDataRelativePath = phiDataRelativePath
         self.preferencesRelativePath = preferencesRelativePath
+        self.sentinelApplicationSupportRelativePath = sentinelApplicationSupportRelativePath
         self.rollbackAppBundleName = rollbackAppBundleName
     }
 }
@@ -225,6 +228,8 @@ struct TimeMachineInstallPlan: Codable, Equatable {
     let rollbackVersion: String
     let rollbackBuild: Int
     let packageSHA256: String
+    let currentSentinelApplicationSupportURL: URL?
+    let snapshotSentinelApplicationSupportURL: URL?
 
     init(
         operationID: UUID,
@@ -244,7 +249,9 @@ struct TimeMachineInstallPlan: Codable, Equatable {
         includeChromiumData: Bool,
         rollbackVersion: String,
         rollbackBuild: Int,
-        packageSHA256: String
+        packageSHA256: String,
+        currentSentinelApplicationSupportURL: URL? = nil,
+        snapshotSentinelApplicationSupportURL: URL? = nil
     ) {
         self.operationID = operationID
         self.backupID = backupID
@@ -264,6 +271,8 @@ struct TimeMachineInstallPlan: Codable, Equatable {
         self.rollbackVersion = rollbackVersion
         self.rollbackBuild = rollbackBuild
         self.packageSHA256 = packageSHA256
+        self.currentSentinelApplicationSupportURL = currentSentinelApplicationSupportURL
+        self.snapshotSentinelApplicationSupportURL = snapshotSentinelApplicationSupportURL
     }
 }
 

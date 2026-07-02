@@ -1215,7 +1215,7 @@
     "Phi Sentinel service is unavailable. Check whether it started normally." : {
       "comment" : "IM Channels - Custom bot service unavailable message\nIM Channels - Official bot service unavailable message"
     },
-    "Phi will quit and restore %@. The current app and selected user data will be replaced." : {
+    "Phi will quit and restore %@. The app and all current Phi data will be rolled back to the time this backup was created." : {
       "comment" : "Help menu - Time Machine restore confirmation body"
     },
     "Pick a target Space and enter a host like “github.com”." : {
