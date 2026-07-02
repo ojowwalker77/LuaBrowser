@@ -139,7 +139,6 @@ final class SidebarHeaderViewTests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 120),
                       "Main window did not appear")
         app.activate()
-        app.typeKey(.escape, modifierFlags: [])
 
         if layoutMode != .comfortable {
             try ensureSidebarExpanded()
@@ -202,8 +201,6 @@ final class SidebarHeaderViewTests: XCTestCase {
 
     @MainActor
     private func toggleSidebarFromViewMenu() throws {
-        app.typeKey(.escape, modifierFlags: [])
-
         let viewMenu = app.menuBars.menuBarItems[Self.viewMenuTitle]
         guard viewMenu.waitForExistence(timeout: 10) else {
             attachDiagnostics(label: "no View menu")
@@ -215,7 +212,6 @@ final class SidebarHeaderViewTests: XCTestCase {
         let toggleSidebar = app.menuBars.menuItems[Self.toggleSidebarMenuTitle]
         guard toggleSidebar.waitForExistence(timeout: 5) else {
             attachDiagnostics(label: "no Toggle Sidebar item")
-            app.typeKey(.escape, modifierFlags: [])
             XCTFail("Toggle Sidebar menu item unavailable")
             return
         }

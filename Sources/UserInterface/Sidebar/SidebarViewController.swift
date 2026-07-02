@@ -9,7 +9,7 @@ import SwiftUI
 import Combine
 
 class SidebarViewController: NSViewController {
-    private static let defaultFavoriteHeight: CGFloat = 10
+    private static let defaultFavoriteHeight: CGFloat = 0
     private static let pinnedHeightPersistenceThreshold: CGFloat = 20
     private static let pinnedHeightCacheKey = "Sidebar.pinnedTabsContainerHeight.v1"
 

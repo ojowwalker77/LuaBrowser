@@ -233,7 +233,7 @@ class PinnedTabViewController: NSViewController {
     /// affected items so the icons follow the rendered pane order.
     private var lastSplitItemPairs: [String: String] = [:]
 
-    @Published var contentHeight: CGFloat = 10
+    @Published var contentHeight: CGFloat = 0
     
     init(state: BrowserState?, hostVC: NSViewController? = nil) {
         self.browserState = state
@@ -456,8 +456,8 @@ class PinnedTabViewController: NSViewController {
             $0.isSelected = false
             $0.view.isHidden = false
         }
-        if contentHeight != 10 {
-            contentHeight = 10
+        if contentHeight != 0 {
+            contentHeight = 0
         }
     }
 
