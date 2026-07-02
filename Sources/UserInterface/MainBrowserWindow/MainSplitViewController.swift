@@ -108,6 +108,14 @@ class MainSplitViewController: NSViewController {
         updateLayoutForHorizontalTabs()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+
+        #if DEBUG
+        applySidebarHeaderWidthOverrideForUITestsIfNeeded()
+        #endif
+    }
+
     /// A window created minimized never runs `viewWillAppear` for this tree,
     /// and deminiaturizing doesn't re-trigger it — so layout and the web
     /// content mount never happen, leaving the restored window blank. Re-run
@@ -241,6 +249,37 @@ class MainSplitViewController: NSViewController {
         }
         state.sidebarCollapsed = collapsed
     }
+
+    #if DEBUG
+    private func applySidebarHeaderWidthOverrideForUITestsIfNeeded() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-uitest"),
+              let widthFlagIndex = arguments.firstIndex(of: "-sidebarHeaderWidth"),
+              arguments.indices.contains(widthFlagIndex + 1),
+              let requestedWidth = Double(arguments[widthFlagIndex + 1]),
+              !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional else {
+            return
+        }
+
+        let width = CGFloat(requestedWidth)
+        [0.0, 0.2, 0.8, 1.5, 3.0, 5.0].forEach { delay in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.applySidebarHeaderWidthOverrideForUITests(width: width)
+            }
+        }
+    }
+
+    private func applySidebarHeaderWidthOverrideForUITests(width: CGFloat) {
+        guard !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional else {
+            return
+        }
+
+        syncSidebar(width: width, collapsed: false)
+        view.layoutSubtreeIfNeeded()
+        splitViewController.splitView.layoutSubtreeIfNeeded()
+        updateSidebarWidth()
+    }
+    #endif
 
     private func setupTitlebarAwareLayout() {
         if let window = view.window, window.styleMask.contains(.fullSizeContentView) {

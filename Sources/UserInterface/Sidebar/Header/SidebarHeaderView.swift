@@ -9,6 +9,16 @@ import Combine
 import SwiftUI
 
 class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
+    private enum AccessibilityID {
+        static let sidebarButton = "sidebarHeader.sidebarButton"
+        static let searchTabsButton = "sidebarHeader.searchTabsButton"
+        static let upgradeButton = "sidebarHeader.upgradeButton"
+        static let backButton = "sidebarHeader.backButton"
+        static let forwardButton = "sidebarHeader.forwardButton"
+        static let refreshButton = "sidebarHeader.refreshButton"
+        static let stopButton = "sidebarHeader.stopButton"
+    }
+
     private lazy var cancellables = Set<AnyCancellable>()
     private var sidebarButtonLeftConstraint: Constraint?
     private var upgradeButtonLeftConstraint: Constraint?
@@ -178,6 +188,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         let initialLayoutMode = browserState?.layoutMode ?? .performance
         let showInSidebar = isSidebarLayout(initialLayoutMode)
 
+        configureAccessibilityIdentifiers()
+
         addSubview(sidebarButton)
         addSubview(searchTabsButton)
         addSubview(upgradeButton)
@@ -215,6 +227,22 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         }
 
         updateLayoutVisibility(layoutMode: initialLayoutMode)
+    }
+
+    private func configureAccessibilityIdentifiers() {
+        configureButtonAccessibility(sidebarButton, identifier: AccessibilityID.sidebarButton)
+        configureButtonAccessibility(searchTabsButton, identifier: AccessibilityID.searchTabsButton)
+        configureButtonAccessibility(upgradeButton, identifier: AccessibilityID.upgradeButton)
+        configureButtonAccessibility(backButton, identifier: AccessibilityID.backButton)
+        configureButtonAccessibility(forwardButton, identifier: AccessibilityID.forwardButton)
+        configureButtonAccessibility(refreshButton, identifier: AccessibilityID.refreshButton)
+        configureButtonAccessibility(stopButton, identifier: AccessibilityID.stopButton)
+    }
+
+    private func configureButtonAccessibility(_ button: HoverableButtonNSView, identifier: String) {
+        button.setAccessibilityElement(true)
+        button.setAccessibilityRole(.button)
+        button.setAccessibilityIdentifier(identifier)
     }
 
     /// Mounts the Spaces-switch row between the nav row and the address bar so
@@ -468,7 +496,33 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                 self?.showUpgradeButton(version: displayVersion)
             }
             .store(in: &cancellables)
+
+        #if DEBUG
+        applyUITestUpdateOverrideIfNeeded()
+        #endif
     }
+
+    #if DEBUG
+    private func applyUITestUpdateOverrideIfNeeded() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-uitest"),
+              let versionFlagIndex = arguments.firstIndex(of: "-sidebarHeaderUpdateVersion"),
+              arguments.indices.contains(versionFlagIndex + 1) else {
+            return
+        }
+
+        let version = arguments[versionFlagIndex + 1]
+        guard !version.isEmpty else {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.currentWidth = self.frame.width
+            self.showUpgradeButton(version: version)
+        }
+    }
+    #endif
     
     private func handleWidthChange(_ newWidth: CGFloat) {
         currentWidth = newWidth
