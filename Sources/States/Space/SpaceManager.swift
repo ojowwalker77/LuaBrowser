@@ -1801,6 +1801,15 @@ final class SpaceWindowSlot: ObservableObject {
     /// gap between request and callback.
     private var pendingSpawnSpaceIdByWindowId: [Int: String] = [:]
 
+    /// spaceIds this slot has a spawn in flight for. Unlike
+    /// `pendingSpawnSpaceIdByWindowId` (keyed by a windowId that only exists
+    /// AFTER `createBrowser` returns), this is set BEFORE the async
+    /// `ensureProfileLoaded` + `createBrowser`, so it can gate a repeat
+    /// activation of the same Space during that gap — the window when a second
+    /// pip click would otherwise queue a duplicate spawn (see `activate`'s
+    /// spawn path). Drained in `registerWindow` (success) and every spawn bail.
+    private var pendingSpawnSpaceIds: Set<String> = []
+
     /// windowId → NSRect to apply to that window before it surfaces.
     /// Set when `activate` spawns a new window so the new Space's NSWindow
     /// appears in the same place the previously visible one was — giving the
@@ -2148,6 +2157,21 @@ final class SpaceWindowSlot: ObservableObject {
         }
 
         // Spawn path — no live window in this slot for this Space yet.
+        //
+        // Guard against a second activation of the SAME Space while its first
+        // spawn is still in flight. The first cross-profile activation of a
+        // session awaits an async `ensureProfileLoaded` (~100–300ms); during
+        // that gap `activeSpaceId` is already flipped to the target (so the
+        // animation gate above passes) and `windowsBySpaceId[spaceId]` is still
+        // nil (so the existing-window branch above misses), leaving a repeat
+        // pip click free to queue a SECOND spawn. Both completions would call
+        // `createBrowser`, and `registerWindow` would overwrite the first
+        // window's map entry — orphaning a live window the slot can no longer
+        // hide or close. Bail here; the in-flight spawn will surface the Space.
+        if pendingSpawnSpaceIds.contains(spaceId) {
+            AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)): spawn already in flight, ignoring repeat")
+            return
+        }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             AppLogWarn("[SpaceWindowSlot] activate cannot spawn: bridge unavailable")
             return
@@ -2200,10 +2224,12 @@ final class SpaceWindowSlot: ObservableObject {
             // traps right here — bail gracefully instead.
             guard let dict else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned nil")
+                self.pendingSpawnSpaceIds.remove(spaceId)
                 return
             }
             guard let windowIdNumber = dict["windowId"] as? NSNumber else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned no windowId")
+                self.pendingSpawnSpaceIds.remove(spaceId)
                 return
             }
             let id = windowIdNumber.intValue
@@ -2326,6 +2352,10 @@ final class SpaceWindowSlot: ObservableObject {
                 }
             }
         }
+        // Mark the spawn in flight across the (possibly async) profile load and
+        // window creation, so a repeat activation of this Space is gated above.
+        // Drained by `registerWindow` on success and by every bail below.
+        pendingSpawnSpaceIds.insert(spaceId)
         // Lazy-load the Space's profile before spawning. Completion fires
         // synchronously when the profile is already in memory (the common
         // case), so this is free for warm switches. First cross-profile
@@ -2333,7 +2363,7 @@ final class SpaceWindowSlot: ObservableObject {
         // deferred orderOut inside `spawn` keeps the previous window on
         // screen until the new window paints, hiding that latency.
         if let pid = targetProfileId, !pid.isEmpty {
-            bridge.ensureProfileLoaded(pid) { success in
+            bridge.ensureProfileLoaded(pid) { [weak self] success in
                 guard success else {
                     // Spawning anyway would hand the Space a window on
                     // whatever profile Chromium substitutes — another
@@ -2341,6 +2371,7 @@ final class SpaceWindowSlot: ObservableObject {
                     // refuses unresolved profiles too (returns nil); bail
                     // here so the previous window simply stays on screen.
                     AppLogWarn("[SpaceWindowSlot] ensureProfileLoaded failed for \(pid); not spawning")
+                    self?.pendingSpawnSpaceIds.remove(spaceId)
                     return
                 }
                 spawn()
@@ -3682,7 +3713,27 @@ final class SpaceWindowSlot: ObservableObject {
     ///  - Applies any persisted per-Space theme override so the new window
     ///    adopts it on first paint.
     func registerWindow(_ controller: MainBrowserWindowController, for spaceId: String) {
+        // Defense in depth against a double-spawn for one (slot, Space): if a
+        // live, DIFFERENT controller is already registered here, don't silently
+        // overwrite it — that orphans a window the slot's sweeps and cascade
+        // (which iterate `windowsBySpaceId`) can no longer reach. The
+        // `pendingSpawnSpaceIds` gate in `activate` is the primary guard; this
+        // catches any other path that manages to double-register. Tear down the
+        // orphan's observers now (mirroring `evictWindow`) so its stale
+        // didBecomeKey can't adopt this replacement, then retire its window via
+        // the same deferred-close path a profile-change respawn uses (drained
+        // near the end of this method).
+        if let existing = windowsBySpaceId[spaceId], existing !== controller {
+            AppLogWarn("[SpaceWindowSlot] registerWindow(\(spaceId)): replacing already-registered window \(existing.windowId) with \(controller.windowId)")
+            if let token = keyObservationsByWindowId.removeValue(forKey: existing.windowId) {
+                NotificationCenter.default.removeObserver(token)
+            }
+            tabBarAccessoryObservationsByWindowId.removeValue(forKey: existing.windowId)?.invalidate()
+            pendingCloseOnReplacementBySpaceId[spaceId] = existing
+        }
         windowsBySpaceId[spaceId] = controller
+        // The spawn for this Space has landed — clear the in-flight gate.
+        pendingSpawnSpaceIds.remove(spaceId)
         // Drain any spawn-intent entry for this windowId. On the async
         // callback path `claimPendingSpawn` consumed it already; on the
         // synchronous path `absorbCurrentSpawn` wrote it moments ago and
@@ -3927,6 +3978,7 @@ final class SpaceWindowSlot: ObservableObject {
                 AppLogInfo("[SpaceWindowSlot] window-driven close of \(spaceId); cascading \(windowsBySpaceId.count) sibling(s) via Chromium")
                 isCascadingSlotClose = true
                 cascadeCloseRemainingWindows()
+                scheduleCascadeVetoRecovery()
             }
         }
         if windowsBySpaceId.isEmpty {
@@ -3969,6 +4021,57 @@ final class SpaceWindowSlot: ObservableObject {
                 Int32(CommandWrapper.IDC_CLOSE_WINDOW.rawValue),
                 windowId: Int64(controller.windowId))
         }
+    }
+
+    /// Grace period after arming a window-driven cascade before it is treated
+    /// as vetoed. Each `IDC_CLOSE_WINDOW` roundtrip (Chromium close → browser
+    /// teardown → `windowWillClose` → `unregisterWindow`) is well under 100ms,
+    /// so a genuine cascade — even of several siblings — empties the slot far
+    /// inside this window; anything still standing at the deadline was blocked
+    /// by a `beforeunload` prompt the user cancelled. Matches the
+    /// `tabDrivenCloseTTL` reasoning for the tab-level version of this veto.
+    private static let cascadeVetoRecoveryDelay: TimeInterval = 2.0
+
+    /// Recovers a slot whose window-driven teardown was vetoed. The cascade
+    /// issues `IDC_CLOSE_WINDOW` for every remaining Space window; each honors
+    /// `beforeunload`, so a background Space with an unsaved-changes prompt the
+    /// user cancels never re-enters `unregisterWindow`. That drop is the ONLY
+    /// thing that clears `isCascadingSlotClose`, so a veto leaves the flag stuck
+    /// for the slot's life: `handleWindowDidBecomeKey` early-returns (the
+    /// surviving window is never adopted as visible), `keySlot` goes stale, and
+    /// with `visibleController` nil the slot vanishes from
+    /// `currentSpaceWindowMap` — its Spaces become unroutable and drop out of
+    /// the "Open Link In Space" menu. If the cascade hasn't emptied the slot by
+    /// the deadline, treat it as vetoed and re-adopt a surviving window.
+    private func scheduleCascadeVetoRecovery() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.cascadeVetoRecoveryDelay) { [weak self] in
+            guard let self, self.isCascadingSlotClose,
+                  !self.windowsBySpaceId.isEmpty else { return }
+            self.recoverFromVetoedCascade()
+        }
+    }
+
+    private func recoverFromVetoedCascade() {
+        isCascadingSlotClose = false
+        // Prefer the window the user is looking at (the one whose beforeunload
+        // prompt they answered is key), then any on-screen Space window, then
+        // any surviving Space at all.
+        guard let survivor = windowsBySpaceId.first(where: { $0.value.window?.isKeyWindow == true })
+                ?? windowsBySpaceId.first(where: { $0.value.window?.isVisible == true })
+                ?? windowsBySpaceId.first else { return }
+        AppLogInfo("[SpaceWindowSlot] cascade close vetoed; recovering on surviving Space \(survivor.key)")
+        activeSpaceId = survivor.key
+        // `visibleController`'s didSet re-pushes the Space→window routing map,
+        // undoing the drop-out the stuck flag caused.
+        visibleController = survivor.value
+        makeKeyAndOrderFrontHidingSlotTabBar(survivor.value.window)
+        manager?.persistActiveSpaceId(survivor.key)
+        manager?.persistSlotsSnapshot()
+        manager?.notifySlotBecameKey(self)
+        // A multi-veto (several dirty Spaces kept) can leave more than one
+        // window on screen; collapse the rest behind the adopted one over the
+        // standard sweep ladder.
+        scheduleNonTargetSlotWindowSweep()
     }
 
     /// Removes the controller registered for `spaceId` from this slot
