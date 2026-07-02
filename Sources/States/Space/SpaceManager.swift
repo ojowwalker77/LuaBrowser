@@ -4314,6 +4314,15 @@ final class SpaceWindowSlot: ObservableObject {
                         sourceColorHex: sourceColorHex,
                         targetColorHex: targetColorHex
                     )
+                    // The band slide draws on the already-front target and
+                    // swaps no windows, so unlike every other switch path
+                    // nothing here would sweep the leaving window or re-apply
+                    // the strip bleed guard — the target's Spaces strip, kept
+                    // at alpha 0 while it was a background sibling, would stay
+                    // invisible (seen when Search Tabs or the NTP tab switcher
+                    // surfaces a sibling Space's window). Mirror the spawn
+                    // path: slide, then order out + reveal.
+                    orderOutIfNotTabbedWithTarget(previous.window, targetWindow: controller.window)
                 } else {
                     performSwap(
                         from: previous,
