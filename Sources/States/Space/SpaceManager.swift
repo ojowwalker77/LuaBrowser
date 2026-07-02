@@ -2075,8 +2075,14 @@ final class SpaceWindowSlot: ObservableObject {
                     // Hold this position against Chromium's late re-apply of the
                     // window's stale creation bounds after it surfaces. A one-shot
                     // re-assert is too early; the pin reverts that re-apply
-                    // whenever it lands. See `pinnedFrame`.
-                    pinnedFrame = inheritedFrame
+                    // whenever it lands. See `pinnedFrame`. Not armed in
+                    // fullscreen: the inherited frame is the screen-sized rect
+                    // there, no didMove fires in fullscreen to consume the pin,
+                    // and a stale pin would then "revert" AppKit's windowed-frame
+                    // restore on fullscreen exit, leaving the window screen-sized.
+                    if !slotHasFullScreenWindow {
+                        pinnedFrame = inheritedFrame
+                    }
                 }
                 // Align the target's sidebar shape to the previously visible
                 // Space *before* it surfaces so the user reads a single
@@ -2537,6 +2543,17 @@ final class SpaceWindowSlot: ObservableObject {
             guard !didFinish else { return }
             didFinish = true
             if let self {
+                // The leaving window can have entered native fullscreen DURING
+                // the slide (it stays front for the whole animation, so it owns
+                // the green-button click) — after `activate`'s pre-swap group
+                // rebuild already ran. The target may then still be detached,
+                // and fronting it would surface a stray window over the
+                // fullscreen Space. Rebuild the group first, exactly like the
+                // pre-swap fullscreen path, so the front below is a tab
+                // selection inside the same fullscreen Space.
+                if self.slotHasFullScreenWindow {
+                    self.syncSlotTabGroup(selecting: previousWindow)
+                }
                 self.makeKeyAndOrderFrontHidingSlotTabBar(targetWindow)
             } else {
                 targetWindow.makeKeyAndOrderFront(nil)
@@ -3184,9 +3201,17 @@ final class SpaceWindowSlot: ObservableObject {
     /// its slot is in fullscreen. Applied across the whole slot because its
     /// windows share one fullscreen Space (hidden siblings are re-grouped into
     /// it by `syncSlotTabGroup` on the next switch); restoring on exit returns
-    /// the normal sibling-follow behavior.
+    /// the normal sibling-follow behavior. Corrections for transitions that
+    /// settle differently than the will-hooks promised come in through
+    /// `reconcileFullScreenWithWindowState`.
     func windowFullScreenStateChanged(isFullScreen: Bool) {
         self.isFullScreen = isFullScreen
+        // A Space switch's frame pin must not survive a fullscreen transition:
+        // armed inside fullscreen it holds the screen-sized rect, no didMove
+        // ever fires in fullscreen to consume it, and AppKit's programmatic
+        // frame restore on exit looks exactly like the "stale re-apply" the
+        // pin exists to revert — snapping the window back to full-screen size.
+        pinnedFrame = nil
         for controller in windowsBySpaceId.values {
             guard let window = controller.window else { continue }
             if isFullScreen {
@@ -3200,6 +3225,44 @@ final class SpaceWindowSlot: ObservableObject {
         // hooks can fire before AppKit flips the styleMask, so the snapshot
         // reads `isFullScreen` (tracked here) rather than a live styleMask.
         manager?.persistSlotsSnapshot()
+        if isFullScreen {
+            // Will-enter is a promise, not a fact: AppKit can fail or cancel
+            // the enter transition without ever firing will-exit (Chromium's
+            // own fullscreen controller handles the same case). Re-derive from
+            // the styleMask once the transition has settled — a no-op when the
+            // enter completed or the user has already exited again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.fullScreenEnterVerifyDelay) { [weak self] in
+                self?.reconcileFullScreenWithWindowState()
+            }
+        }
+    }
+
+    /// How long after a will-enter fullscreen notification the slot verifies
+    /// the transition actually landed. AppKit's enter animation settles well
+    /// under a second; the margin covers slow machines and displays. A failed
+    /// or cancelled enter fires NO will-exit, so without this check the flag —
+    /// and everything keyed off it — would stay fullscreen forever.
+    private static let fullScreenEnterVerifyDelay: TimeInterval = 3.0
+
+    /// Re-derives `isFullScreen` from the slot windows' live styleMask and, on
+    /// a mismatch, routes the correction through `windowFullScreenStateChanged`
+    /// — the flag's single writer — so `.moveToActiveSpace` and the restore
+    /// snapshot are corrected with it. Only called at transition SETTLE points
+    /// (did-enter/did-exit, after a window close, the failed-enter verify):
+    /// mid-transition the mask and the will-hooks legitimately disagree, so
+    /// this must not run from arbitrary code.
+    ///
+    /// Heals the two paths that change fullscreen state without a will-exit:
+    ///  - closing a fullscreen window (a tab-driven hand-off previously left
+    ///    the flag stuck true — siblings kept `.moveToActiveSpace` stripped
+    ///    and the snapshot force-restored fullscreen next launch);
+    ///  - a failed/cancelled enter transition.
+    /// Derived from the surviving windows rather than assumed false because
+    /// AppKit can promote a tabbed sibling INTO a dying window's fullscreen
+    /// Space — the flag staying true is then correct.
+    func reconcileFullScreenWithWindowState() {
+        guard isFullScreen != slotHasFullScreenWindow else { return }
+        windowFullScreenStateChanged(isFullScreen: slotHasFullScreenWindow)
     }
 
     /// Marks this slot for fullscreen re-entry after a cold-launch restore. Set
@@ -3284,9 +3347,14 @@ final class SpaceWindowSlot: ObservableObject {
         // In a shared macOS fullscreen Space, ordering a sibling tab out flashes
         // a blank workspace, so keep relying on native tab selection there — but
         // an ungrouped hand-off window (not part of the group) still needs the
-        // explicit hide it always got.
+        // explicit hide it always got. Never orderOut a window that is ITSELF
+        // fullscreen, though: the leaving window can have entered fullscreen
+        // after the swap started (the vertical push-in defers this call to its
+        // completion), and ordering it out blanks the fullscreen Space it owns.
         guard !slotHasFullScreenWindow else {
-            if let previousWindow, !windowsShareTabGroup(previousWindow, targetWindow) {
+            if let previousWindow,
+               !windowsShareTabGroup(previousWindow, targetWindow),
+               !previousWindow.styleMask.contains(.fullScreen) {
                 previousWindow.orderOut(nil)
             }
             // Tabbed siblings can't be ordered out in a shared fullscreen Space
@@ -3495,9 +3563,24 @@ final class SpaceWindowSlot: ObservableObject {
         // settled slot does no work. A hard `orderOut` — not tab selection — is
         // what reliably hides them, at the cost of detaching them from the
         // native tab group (rebuilt by `syncSlotTabGroup` on the next switch).
+        //
+        // EXCEPT for a tabbed sibling in a shared fullscreen Space: this
+        // routine also runs on every Dock-icon reopen
+        // (`reconcileSlotVisibilityAfterReopen`), and ordering a tab out of a
+        // group that shares a fullscreen Space makes macOS flash a blank
+        // fullscreen workspace — the same finding that makes
+        // `enforceSlotSingleWindowInvariant` bail and
+        // `orderOutIfNotTabbedWithTarget` fall back to tab selection. Tabbed
+        // siblings stay stacked behind the re-selected active tab and the
+        // strip bleed guard hides their ghost rows; a DETACHED sibling (never
+        // part of the fullscreen Space) still gets the hard hide.
+        let inSharedFullScreen = slotHasFullScreenWindow
         var hidCount = 0
         for (siblingSpaceId, controller) in windowsBySpaceId where siblingSpaceId != activeId {
             guard let window = controller.window, window.isVisible else { continue }
+            if inSharedFullScreen, windowsShareTabGroup(window, activeWindow) {
+                continue
+            }
             window.orderOut(nil)
             hidCount += 1
         }
@@ -3507,6 +3590,9 @@ final class SpaceWindowSlot: ObservableObject {
         // steal key focus.
         if hidCount > 0 || activeWindow.tabGroup?.selectedWindow !== activeWindow {
             makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
+        }
+        if inSharedFullScreen {
+            applySpacesStripBleedGuard(frontWindow: activeWindow)
         }
         updateWindowsMenuExclusion()
         // The active window is now surfaced; re-enter fullscreen on it if this
@@ -3767,6 +3853,19 @@ final class SpaceWindowSlot: ObservableObject {
             NotificationCenter.default.removeObserver(token)
         }
         tabBarAccessoryObservationsByWindowId.removeValue(forKey: controller.windowId)?.invalidate()
+        // Closing a window fires no will-exit fullscreen notification, so a
+        // fullscreen window that closes (e.g. a tab-driven close handing off
+        // to a sibling below) would leave `isFullScreen` stuck true — siblings
+        // keep `.moveToActiveSpace` stripped and the snapshot keeps
+        // force-restoring fullscreen next launch. Deferred one turn: AppKit
+        // may instead promote a tabbed sibling INTO the dying window's
+        // fullscreen Space (the flag staying true is then correct), and that
+        // promotion lands after willClose.
+        if isFullScreen {
+            DispatchQueue.main.async { [weak self] in
+                self?.reconcileFullScreenWithWindowState()
+            }
+        }
         // A window the controlled slot teardown is closing. It is already out
         // of the map (above); don't re-run a hand-off/cascade — the driver
         // (`cascadeCloseRemainingWindows`) already issued closes for the rest.
@@ -4086,7 +4185,11 @@ final class SpaceWindowSlot: ObservableObject {
                 if let inheritedFrame = resolveInheritedFrame(from: previous),
                    let targetWindow = controller.window {
                     targetWindow.setFrame(inheritedFrame, display: false)
-                    pinnedFrame = inheritedFrame
+                    // Not armed in fullscreen — same reasoning as the matching
+                    // guard in `activate`'s swap path.
+                    if !slotHasFullScreenWindow {
+                        pinnedFrame = inheritedFrame
+                    }
                 }
                 let direction = swapDirection(
                     previousSpaceId: previousSpaceId,
