@@ -155,11 +155,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
         XCTAssertEqual(plan.packageSHA256, "selected-sha")
         XCTAssertEqual(plan.snapshotApplicationSupportURL, fixture.snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac", isDirectory: true))
         XCTAssertEqual(plan.snapshotPreferencesURL, fixture.snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist", isDirectory: false))
-        XCTAssertEqual(plan.currentSentinelApplicationSupportURL, fixture.currentSentinelApplicationSupportURL)
-        XCTAssertEqual(
-            plan.snapshotSentinelApplicationSupportURL,
-            fixture.snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Sentinel", isDirectory: true)
-        )
 
         let helperURL = fixture.paths.pendingOperationURL(id: fixture.operationID)
             .appendingPathComponent(TimeMachineRestoreCoordinator.helperFilename)
@@ -283,14 +278,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             plan.snapshotPreferencesURL,
             fixture.snapshotURL.appendingPathComponent("Preferences/com.phibrowser.canary.Mac.plist", isDirectory: false)
         )
-        XCTAssertEqual(
-            plan.currentSentinelApplicationSupportURL,
-            fixture.currentSentinelApplicationSupportURL
-        )
-        XCTAssertEqual(
-            plan.snapshotSentinelApplicationSupportURL,
-            fixture.snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.canary.Sentinel", isDirectory: true)
-        )
     }
 
     func testCanaryRestorePlanInfersAppBundleNameForLegacyBackupRecord() async throws {
@@ -325,7 +312,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
         let applicationSupportURL: URL
         let phiDataURL: URL
         let preferencesURL: URL
-        let currentSentinelApplicationSupportURL: URL
         let snapshotURL: URL
         let backup: TimeMachineBackupRecord
     }
@@ -351,27 +337,14 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             "Current/Application Support/\(bundleIdentifier)",
             isDirectory: true
         )
-        let sentinelBundleIdentifier = TimeMachineSentinelStorage.expectedBundleIdentifier(
-            forBrowserBundleIdentifier: bundleIdentifier
-        )
-        let currentSentinelApplicationSupportURL = rootURL.appendingPathComponent(
-            "Current/Application Support/\(sentinelBundleIdentifier)",
-            isDirectory: true
-        )
         let phiDataURL = applicationSupportURL.appendingPathComponent("Phi", isDirectory: true)
         let preferencesURL = rootURL.appendingPathComponent(
             "Current/Preferences/\(bundleIdentifier).plist",
             isDirectory: false
         )
         try FileManager.default.createDirectory(at: phiDataURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: currentSentinelApplicationSupportURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: preferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "prefs".write(to: preferencesURL, atomically: true, encoding: .utf8)
-        try "current-sentinel".write(
-            to: currentSentinelApplicationSupportURL.appendingPathComponent("sentinel.txt"),
-            atomically: true,
-            encoding: .utf8
-        )
 
         let snapshotURL = paths.snapshotURL(id: UUID(uuidString: "00000000-0000-0000-0000-000000000901")!)
         try FileManager.default.createDirectory(
@@ -379,17 +352,8 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try FileManager.default.createDirectory(
-            at: snapshotURL.appendingPathComponent("ApplicationSupport/\(sentinelBundleIdentifier)", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(
             at: snapshotURL.appendingPathComponent("Preferences", isDirectory: true),
             withIntermediateDirectories: true
-        )
-        try "snapshot-sentinel".write(
-            to: snapshotURL.appendingPathComponent("ApplicationSupport/\(sentinelBundleIdentifier)/sentinel.txt", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
         )
         try "prefs".write(
             to: snapshotURL.appendingPathComponent("Preferences/\(bundleIdentifier).plist", isDirectory: false),
@@ -422,7 +386,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             applicationSupportURL: applicationSupportURL,
             phiDataURL: phiDataURL,
             preferencesURL: preferencesURL,
-            currentSentinelApplicationSupportURL: currentSentinelApplicationSupportURL,
             snapshotURL: snapshotURL,
             backup: backup
         )
@@ -447,7 +410,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             applicationSupportURLProvider: { fixture.applicationSupportURL },
             phiDataURLProvider: { fixture.phiDataURL },
             preferencesURLProvider: { fixture.preferencesURL },
-            sentinelApplicationSupportURLProvider: { fixture.currentSentinelApplicationSupportURL },
             operationIDProvider: { fixture.operationID },
             hostPIDProvider: { 12345 },
             uptimeProvider: uptimeProvider,

@@ -41,7 +41,6 @@ struct TimeMachineInstallerCore {
     private static let applicationSupportStageName = "ApplicationSupport"
     private static let phiStageName = "Phi"
     private static let preferencesStageName = "Preferences"
-    private static let sentinelApplicationSupportStageName = "SentinelApplicationSupport"
     private static let appBackupDirectoryName = "App"
     private static let dataBackupDirectoryName = "Data"
     private static let installerLogFilename = "installer.log"
@@ -215,8 +214,6 @@ struct TimeMachineInstallerCore {
             try fileCloner.copyItem(at: snapshotPhiDataURL, to: context.stagedPhiDataURL)
         }
 
-        try stageSentinelApplicationSupportIfNeeded(context: context)
-
         if let snapshotPreferencesURL = context.plan.snapshotPreferencesURL {
             try requireExistingItem(snapshotPreferencesURL)
             log("Staging preferences from \(snapshotPreferencesURL.path) to \(context.stagedPreferencesURL.path).", context: context)
@@ -247,7 +244,6 @@ struct TimeMachineInstallerCore {
             backupURL: context.preferencesBackupURL,
             context: context
         )
-        try backupSentinelApplicationSupportIfNeeded(context: context)
     }
 
     private func swapData(context: RestoreContext) throws {
@@ -261,8 +257,6 @@ struct TimeMachineInstallerCore {
         } else {
             try installStagedItem(context.stagedPhiDataURL, to: context.plan.currentPhiDataURL, context: context)
         }
-
-        try installSentinelApplicationSupportIfNeeded(context: context)
 
         if fileManager.fileExists(atPath: context.stagedPreferencesURL.path) {
             try installStagedItem(context.stagedPreferencesURL, to: context.plan.currentPreferencesURL, context: context)
@@ -329,71 +323,10 @@ struct TimeMachineInstallerCore {
             )
         }
 
-        try revertSentinelApplicationSupportIfNeeded(context: context)
         try restoreBackupItemIfNeeded(
             backupURL: context.preferencesBackupURL,
             targetURL: context.plan.currentPreferencesURL,
             stagingURL: context.preferencesRestoreStagingURL,
-            context: context
-        )
-    }
-
-    private func stageSentinelApplicationSupportIfNeeded(context: RestoreContext) throws {
-        guard let snapshotSentinelApplicationSupportURL = context.plan.snapshotSentinelApplicationSupportURL else {
-            log("No Sentinel data snapshot was included in the plan.", context: context)
-            return
-        }
-        try requireExistingItem(snapshotSentinelApplicationSupportURL)
-        log(
-            "Staging Sentinel data from \(snapshotSentinelApplicationSupportURL.path) to " +
-            "\(context.stagedSentinelApplicationSupportURL.path).",
-            context: context
-        )
-        try fileCloner.copyItem(
-            at: snapshotSentinelApplicationSupportURL,
-            to: context.stagedSentinelApplicationSupportURL
-        )
-    }
-
-    private func backupSentinelApplicationSupportIfNeeded(context: RestoreContext) throws {
-        guard context.plan.snapshotSentinelApplicationSupportURL != nil else {
-            return
-        }
-        guard let currentSentinelApplicationSupportURL = context.plan.currentSentinelApplicationSupportURL else {
-            throw TimeMachineInstallerCoreError.missingRequiredSnapshot(context.stagedSentinelApplicationSupportURL)
-        }
-        try backupItemIfNeeded(
-            sourceURL: currentSentinelApplicationSupportURL,
-            backupURL: context.sentinelApplicationSupportBackupURL,
-            context: context
-        )
-    }
-
-    private func installSentinelApplicationSupportIfNeeded(context: RestoreContext) throws {
-        guard fileManager.fileExists(atPath: context.stagedSentinelApplicationSupportURL.path) else {
-            return
-        }
-        guard let currentSentinelApplicationSupportURL = context.plan.currentSentinelApplicationSupportURL else {
-            throw TimeMachineInstallerCoreError.missingRequiredSnapshot(context.stagedSentinelApplicationSupportURL)
-        }
-        try installStagedItem(
-            context.stagedSentinelApplicationSupportURL,
-            to: currentSentinelApplicationSupportURL,
-            context: context
-        )
-    }
-
-    private func revertSentinelApplicationSupportIfNeeded(context: RestoreContext) throws {
-        guard context.plan.snapshotSentinelApplicationSupportURL != nil else {
-            return
-        }
-        guard let currentSentinelApplicationSupportURL = context.plan.currentSentinelApplicationSupportURL else {
-            throw TimeMachineInstallerCoreError.missingRequiredSnapshot(context.stagedSentinelApplicationSupportURL)
-        }
-        try restoreBackupItemIfNeeded(
-            backupURL: context.sentinelApplicationSupportBackupURL,
-            targetURL: currentSentinelApplicationSupportURL,
-            stagingURL: context.sentinelApplicationSupportRestoreStagingURL,
             context: context
         )
     }
@@ -516,7 +449,14 @@ struct TimeMachineInstallerCore {
     }
 
     private static func expectedSentinelBundleIdentifier(forBrowserBundleIdentifier bundleIdentifier: String) -> String {
-        TimeMachineSentinelStorage.expectedBundleIdentifier(forBrowserBundleIdentifier: bundleIdentifier)
+        let lowercased = bundleIdentifier.lowercased()
+        if lowercased.contains(".canary.") || lowercased.contains("canary") {
+            return "com.phibrowser.canary.Sentinel"
+        }
+        if lowercased.contains(".dev.") {
+            return "com.phibrowser.dev.Sentinel"
+        }
+        return "com.phibrowser.Sentinel"
     }
 
     private static func openApp(_ appURL: URL) throws {
@@ -583,13 +523,6 @@ struct TimeMachineInstallerCore {
             dataStagingURL.appendingPathComponent(TimeMachineInstallerCore.preferencesStageName, isDirectory: false)
         }
 
-        var stagedSentinelApplicationSupportURL: URL {
-            dataStagingURL.appendingPathComponent(
-                TimeMachineInstallerCore.sentinelApplicationSupportStageName,
-                isDirectory: true
-            )
-        }
-
         var appBackupURL: URL {
             plan.emergencyBackupURL.appendingPathComponent(TimeMachineInstallerCore.appBackupDirectoryName, isDirectory: true)
         }
@@ -614,13 +547,6 @@ struct TimeMachineInstallerCore {
             dataBackupURL.appendingPathComponent(TimeMachineInstallerCore.preferencesStageName, isDirectory: false)
         }
 
-        var sentinelApplicationSupportBackupURL: URL {
-            dataBackupURL.appendingPathComponent(
-                TimeMachineInstallerCore.sentinelApplicationSupportStageName,
-                isDirectory: true
-            )
-        }
-
         var restoreStagingURL: URL {
             operationURL.appendingPathComponent("RestoreStaging", isDirectory: true)
         }
@@ -639,13 +565,6 @@ struct TimeMachineInstallerCore {
 
         var preferencesRestoreStagingURL: URL {
             restoreStagingURL.appendingPathComponent(TimeMachineInstallerCore.preferencesStageName, isDirectory: false)
-        }
-
-        var sentinelApplicationSupportRestoreStagingURL: URL {
-            restoreStagingURL.appendingPathComponent(
-                TimeMachineInstallerCore.sentinelApplicationSupportStageName,
-                isDirectory: true
-            )
         }
     }
 }

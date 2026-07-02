@@ -32,7 +32,6 @@ struct TimeMachineSnapshotManager {
     private let applicationSupportURLProvider: () -> URL
     private let phiDataURLProvider: () -> URL
     private let preferencesURLProvider: () -> URL
-    private let sentinelApplicationSupportURLProvider: () -> URL
     private let dateProvider: () -> Date
     private let uptimeProvider: () -> TimeInterval
     private let idProvider: () -> UUID
@@ -54,7 +53,6 @@ struct TimeMachineSnapshotManager {
         preferencesURLProvider: @escaping () -> URL = {
             URL(fileURLWithPath: FileSystemUtils.plistPath(), isDirectory: false)
         },
-        sentinelApplicationSupportURLProvider: (() -> URL)? = nil,
         dateProvider: @escaping () -> Date = Date.init,
         uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         idProvider: @escaping () -> UUID = UUID.init,
@@ -69,11 +67,6 @@ struct TimeMachineSnapshotManager {
         self.applicationSupportURLProvider = applicationSupportURLProvider
         self.phiDataURLProvider = phiDataURLProvider
         self.preferencesURLProvider = preferencesURLProvider
-        self.sentinelApplicationSupportURLProvider = sentinelApplicationSupportURLProvider ?? {
-            TimeMachineSentinelStorage.applicationSupportURL(
-                forBrowserBundleIdentifier: paths.bundleIdentifier
-            )
-        }
         self.dateProvider = dateProvider
         self.uptimeProvider = uptimeProvider
         self.idProvider = idProvider
@@ -265,10 +258,6 @@ struct TimeMachineSnapshotManager {
             copiedPhiDataPath = paths.relativePath(for: finalDestinationURL)
         }
 
-        let copiedSentinelApplicationSupportPath = try copySentinelApplicationSupportIfPresent(
-            to: stagingURL,
-            snapshotURL: snapshotURL
-        )
         let copiedPreferencesPath = try copyPreferencesIfPresent(to: stagingURL, snapshotURL: snapshotURL)
 
         return TimeMachineSnapshotManifest(
@@ -285,31 +274,8 @@ struct TimeMachineSnapshotManager {
             applicationSupportRelativePath: copiedApplicationSupportPath,
             phiDataRelativePath: copiedPhiDataPath,
             preferencesRelativePath: copiedPreferencesPath,
-            sentinelApplicationSupportRelativePath: copiedSentinelApplicationSupportPath,
             rollbackAppBundleName: policy.rollbackAppBundleName
         )
-    }
-
-    private func copySentinelApplicationSupportIfPresent(to stagingURL: URL, snapshotURL: URL) throws -> String? {
-        let sourceURL = sentinelApplicationSupportURLProvider()
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            AppLogInfo(
-                "[TimeMachine] Sentinel application support directory not found at \(sourceURL.path); " +
-                "backup will continue without Sentinel data."
-            )
-            return nil
-        }
-
-        let destinationURL = stagingURL
-            .appendingPathComponent("ApplicationSupport", isDirectory: true)
-            .appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-        let finalDestinationURL = snapshotURL
-            .appendingPathComponent("ApplicationSupport", isDirectory: true)
-            .appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-        AppLogInfo("[TimeMachine] Copying Sentinel data from \(sourceURL.path) to \(destinationURL.path).")
-        try fileCloner.copyItem(at: sourceURL, to: destinationURL)
-        AppLogInfo("[TimeMachine] Sentinel data copied for backup.")
-        return paths.relativePath(for: finalDestinationURL)
     }
 
     private func copyPreferencesIfPresent(to stagingURL: URL, snapshotURL: URL) throws -> String? {

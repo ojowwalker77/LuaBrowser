@@ -26,7 +26,6 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let snapshotURL = fixture.paths.url(forRelativePath: record.snapshotRelativePath)
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac/Phi/local.txt")))
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac/Default/chrome.txt")))
-        XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Sentinel/sentinel.txt")))
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist")))
         XCTAssertFalse(fileExists(fixture.paths.snapshotStagingURL(id: record.id)))
         let manifest = try readManifest(from: snapshotURL)
@@ -37,10 +36,6 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertEqual(
             manifest.preferencesRelativePath,
             "\(record.snapshotRelativePath)/Preferences/com.phibrowser.Mac.plist"
-        )
-        XCTAssertEqual(
-            manifest.sentinelApplicationSupportRelativePath,
-            "\(record.snapshotRelativePath)/ApplicationSupport/com.phibrowser.Sentinel"
         )
         XCTAssertFalse(manifest.applicationSupportRelativePath?.contains(".staging") ?? true)
 
@@ -58,7 +53,6 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let snapshotURL = fixture.paths.url(forRelativePath: record.snapshotRelativePath)
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac/Phi/local.txt")))
         XCTAssertFalse(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac/Default/chrome.txt")))
-        XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Sentinel/sentinel.txt")))
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist")))
     }
 
@@ -168,7 +162,6 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let applicationSupportURL: URL
         let phiDataURL: URL
         let preferencesURL: URL
-        let sentinelApplicationSupportURL: URL
     }
 
     private func makeFixture(includePreferences: Bool) throws -> Fixture {
@@ -179,22 +172,12 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let phiDataURL = appSupportURL.appendingPathComponent("Phi", isDirectory: true)
         let chromiumURL = appSupportURL.appendingPathComponent("Default", isDirectory: true)
         let preferencesURL = sourceRoot.appendingPathComponent("Preferences/com.phibrowser.Mac.plist", isDirectory: false)
-        let sentinelApplicationSupportURL = sourceRoot.appendingPathComponent(
-            "Application Support/com.phibrowser.Sentinel",
-            isDirectory: true
-        )
         let policyURL = rootURL.appendingPathComponent("TimeMachineRollbackPolicy.json", isDirectory: false)
 
         try FileManager.default.createDirectory(at: phiDataURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: chromiumURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sentinelApplicationSupportURL, withIntermediateDirectories: true)
         try "phi".write(to: phiDataURL.appendingPathComponent("local.txt"), atomically: true, encoding: .utf8)
         try "chromium".write(to: chromiumURL.appendingPathComponent("chrome.txt"), atomically: true, encoding: .utf8)
-        try "sentinel".write(
-            to: sentinelApplicationSupportURL.appendingPathComponent("sentinel.txt"),
-            atomically: true,
-            encoding: .utf8
-        )
 
         if includePreferences {
             try FileManager.default.createDirectory(at: preferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -207,8 +190,7 @@ final class TimeMachineSnapshotTests: XCTestCase {
             policyURL: policyURL,
             applicationSupportURL: appSupportURL,
             phiDataURL: phiDataURL,
-            preferencesURL: preferencesURL,
-            sentinelApplicationSupportURL: sentinelApplicationSupportURL
+            preferencesURL: preferencesURL
         )
     }
 
@@ -247,7 +229,6 @@ final class TimeMachineSnapshotTests: XCTestCase {
             applicationSupportURLProvider: { fixture.applicationSupportURL },
             phiDataURLProvider: { fixture.phiDataURL },
             preferencesURLProvider: { fixture.preferencesURL },
-            sentinelApplicationSupportURLProvider: { fixture.sentinelApplicationSupportURL },
             dateProvider: { Date(timeIntervalSince1970: 1_781_020_800) },
             uptimeProvider: uptimeProvider,
             idProvider: { UUID(uuidString: "00000000-0000-0000-0000-000000000700")! },

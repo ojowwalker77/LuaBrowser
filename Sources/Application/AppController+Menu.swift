@@ -587,7 +587,7 @@ extension AppController {
             let alert = NSAlert()
             alert.messageText = NSLocalizedString("Restore Time Machine Backup?", comment: "Help menu - Time Machine restore confirmation title")
             let messageTemplate = NSLocalizedString(
-                "Phi will quit and restore %@. The app and all current Phi data will be rolled back to the time this backup was created.",
+                "Phi will quit and restore %@. The current app and selected user data will be replaced.",
                 comment: "Help menu - Time Machine restore confirmation body"
             )
             alert.informativeText = String(format: messageTemplate, backupTitle)

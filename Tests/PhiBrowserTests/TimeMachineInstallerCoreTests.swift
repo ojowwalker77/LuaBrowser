@@ -64,19 +64,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.isEmpty)
     }
 
-    func testSuccessfulRestoreReplacesSentinelApplicationSupport() throws {
-        let fixture = try makeFixture(includeChromiumData: false, includeSentinelData: true)
-        let core = makeCore(fixture: fixture) { _ in }
-
-        try core.restore(planURL: fixture.planURL)
-
-        XCTAssertEqual(
-            try readText(fixture.currentSentinelApplicationSupportURL.appendingPathComponent("sentinel.txt")),
-            "rollback-sentinel"
-        )
-        XCTAssertFalse(fileExists(fixture.currentSentinelApplicationSupportURL.appendingPathComponent("CurrentOnly.txt")))
-    }
-
     func testSuccessfulRestoreRemovesSiblingPendingOperationsForSameRollbackVersion() throws {
         let fixture = try makeFixture(includeChromiumData: true)
         let matchingOperationID = UUID(uuidString: "00000000-0000-0000-0000-000000001002")!
@@ -131,29 +118,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
 
         let journal = try XCTUnwrap(try TimeMachineRestoreJournalStore(paths: fixture.paths).load(operationID: fixture.operationID))
         XCTAssertEqual(journal.phase, .reverted)
-    }
-
-    func testFailureAfterDataSwapRestoresSentinelEmergencyBackup() throws {
-        let fixture = try makeFixture(includeChromiumData: false, includeSentinelData: true)
-        var phases: [TimeMachineRestorePhase] = []
-        let core = makeCore(fixture: fixture) { phase in
-            phases.append(phase)
-            if phase == .dataSwapped {
-                throw CocoaError(.fileWriteUnknown)
-            }
-        }
-
-        XCTAssertThrowsError(try core.restore(planURL: fixture.planURL))
-
-        XCTAssertEqual(phases, [.dataStaged, .dataBackedUp, .dataSwapStarted, .dataSwapped, .reverted])
-        XCTAssertEqual(
-            try readText(fixture.currentSentinelApplicationSupportURL.appendingPathComponent("sentinel.txt")),
-            "current-sentinel"
-        )
-        XCTAssertEqual(
-            try readText(fixture.currentSentinelApplicationSupportURL.appendingPathComponent("CurrentOnly.txt")),
-            "current-only-sentinel"
-        )
     }
 
     func testFailureInsideDataSwapRestoresEmergencyBackups() throws {
@@ -282,19 +246,13 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         let currentApplicationSupportURL: URL
         let currentPhiDataURL: URL
         let preferencesURL: URL
-        let currentSentinelApplicationSupportURL: URL
         let snapshotURL: URL
         let snapshotApplicationSupportURL: URL
         let snapshotPhiDataURL: URL
         let snapshotPreferencesURL: URL
-        let snapshotSentinelApplicationSupportURL: URL
     }
 
-    private func makeFixture(
-        includeChromiumData: Bool,
-        includeSentinelData: Bool = false,
-        invalidPreferencesParent: Bool = false
-    ) throws -> Fixture {
+    private func makeFixture(includeChromiumData: Bool, invalidPreferencesParent: Bool = false) throws -> Fixture {
         let rootURL = try makeTemporaryDirectory()
         let paths = TimeMachinePaths(
             rootURL: rootURL.appendingPathComponent("TimeMachine", isDirectory: true),
@@ -311,10 +269,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
 
         let currentApplicationSupportURL = rootURL.appendingPathComponent("Library/Application Support/com.phibrowser.Mac", isDirectory: true)
         let currentPhiDataURL = currentApplicationSupportURL.appendingPathComponent("Phi", isDirectory: true)
-        let currentSentinelApplicationSupportURL = rootURL.appendingPathComponent(
-            "Library/Application Support/com.phibrowser.Sentinel",
-            isDirectory: true
-        )
         let libraryURL = rootURL.appendingPathComponent("Library", isDirectory: true)
         let preferencesDirectoryURL = libraryURL.appendingPathComponent("Preferences", isDirectory: true)
         let preferencesURL = preferencesDirectoryURL.appendingPathComponent("com.phibrowser.Mac.plist", isDirectory: false)
@@ -338,19 +292,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        if includeSentinelData {
-            try FileManager.default.createDirectory(at: currentSentinelApplicationSupportURL, withIntermediateDirectories: true)
-            try "current-sentinel".write(
-                to: currentSentinelApplicationSupportURL.appendingPathComponent("sentinel.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
-            try "current-only-sentinel".write(
-                to: currentSentinelApplicationSupportURL.appendingPathComponent("CurrentOnly.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
-        }
         if invalidPreferencesParent {
             try FileManager.default.createDirectory(at: libraryURL, withIntermediateDirectories: true)
             try "not-a-directory".write(to: preferencesDirectoryURL, atomically: true, encoding: .utf8)
@@ -364,10 +305,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         let snapshotApplicationSupportURL = snapshotURL.appendingPathComponent("ApplicationSupport/com.phibrowser.Mac", isDirectory: true)
         let snapshotPhiDataURL = snapshotApplicationSupportURL.appendingPathComponent("Phi", isDirectory: true)
         let snapshotPreferencesURL = snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist", isDirectory: false)
-        let snapshotSentinelApplicationSupportURL = snapshotURL.appendingPathComponent(
-            "ApplicationSupport/com.phibrowser.Sentinel",
-            isDirectory: true
-        )
         try FileManager.default.createDirectory(at: snapshotPhiDataURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
             at: snapshotApplicationSupportURL.appendingPathComponent("Default", isDirectory: true),
@@ -385,14 +322,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         )
         try FileManager.default.createDirectory(at: snapshotPreferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "rollback-prefs".write(to: snapshotPreferencesURL, atomically: true, encoding: .utf8)
-        if includeSentinelData {
-            try FileManager.default.createDirectory(at: snapshotSentinelApplicationSupportURL, withIntermediateDirectories: true)
-            try "rollback-sentinel".write(
-                to: snapshotSentinelApplicationSupportURL.appendingPathComponent("sentinel.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
-        }
 
         let plan = TimeMachineInstallPlan(
             operationID: operationID,
@@ -412,9 +341,7 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             includeChromiumData: includeChromiumData,
             rollbackVersion: "1.6",
             rollbackBuild: 590,
-            packageSHA256: "sha",
-            currentSentinelApplicationSupportURL: includeSentinelData ? currentSentinelApplicationSupportURL : nil,
-            snapshotSentinelApplicationSupportURL: includeSentinelData ? snapshotSentinelApplicationSupportURL : nil
+            packageSHA256: "sha"
         )
         let planURL = operationURL.appendingPathComponent("install-plan.json", isDirectory: false)
         let encoder = JSONEncoder()
@@ -457,12 +384,10 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             currentApplicationSupportURL: currentApplicationSupportURL,
             currentPhiDataURL: currentPhiDataURL,
             preferencesURL: preferencesURL,
-            currentSentinelApplicationSupportURL: currentSentinelApplicationSupportURL,
             snapshotURL: snapshotURL,
             snapshotApplicationSupportURL: snapshotApplicationSupportURL,
             snapshotPhiDataURL: snapshotPhiDataURL,
-            snapshotPreferencesURL: snapshotPreferencesURL,
-            snapshotSentinelApplicationSupportURL: snapshotSentinelApplicationSupportURL
+            snapshotPreferencesURL: snapshotPreferencesURL
         )
     }
 
@@ -507,12 +432,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             fixture.snapshotPreferencesURL,
             to: dataStagingURL.appendingPathComponent("Preferences", isDirectory: false)
         )
-        if fileExists(fixture.snapshotSentinelApplicationSupportURL) {
-            try copyItemReplacing(
-                fixture.snapshotSentinelApplicationSupportURL,
-                to: dataStagingURL.appendingPathComponent("SentinelApplicationSupport", isDirectory: true)
-            )
-        }
     }
 
     private func backupDataForRecovery(fixture: Fixture) throws {
@@ -526,12 +445,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             fixture.preferencesURL,
             to: dataBackupURL.appendingPathComponent("Preferences", isDirectory: false)
         )
-        if fileExists(fixture.currentSentinelApplicationSupportURL) {
-            try copyItemReplacing(
-                fixture.currentSentinelApplicationSupportURL,
-                to: dataBackupURL.appendingPathComponent("SentinelApplicationSupport", isDirectory: true)
-            )
-        }
     }
 
     private func prepareAppSwapStartedCrashState(fixture: Fixture) throws {
@@ -547,12 +460,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             fixture.preferencesURL,
             to: dataBackupURL.appendingPathComponent("Preferences", isDirectory: false)
         )
-        if fileExists(fixture.currentSentinelApplicationSupportURL) {
-            try copyItemReplacing(
-                fixture.currentSentinelApplicationSupportURL,
-                to: dataBackupURL.appendingPathComponent("SentinelApplicationSupport", isDirectory: true)
-            )
-        }
         try copyItemReplacing(
             fixture.currentAppURL,
             to: appBackupURL.appendingPathComponent(fixture.currentAppURL.lastPathComponent, isDirectory: true)
@@ -560,12 +467,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
 
         try copyItemReplacing(fixture.snapshotApplicationSupportURL, to: fixture.currentApplicationSupportURL)
         try copyItemReplacing(fixture.snapshotPreferencesURL, to: fixture.preferencesURL)
-        if fileExists(fixture.snapshotSentinelApplicationSupportURL) {
-            try copyItemReplacing(
-                fixture.snapshotSentinelApplicationSupportURL,
-                to: fixture.currentSentinelApplicationSupportURL
-            )
-        }
         try moveItemReplacing(fixture.stagedAppURL, to: fixture.currentAppURL)
 
         try TimeMachineRestoreJournalStore(paths: fixture.paths).write(
