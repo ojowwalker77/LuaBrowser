@@ -758,9 +758,10 @@ class PinnedTabViewController: NSViewController {
         return tab.guidInLocalDB == draggedPinnedGuid
     }
 
-    private func updateEmptyViewVisibility(isDraggingTab: Bool = false) {
+    private func updateEmptyViewVisibility(isDraggingTab: Bool? = nil) {
         let isEmpty = pinnedTabs.isEmpty && pinnedExtensionItems.isEmpty
-        let showEmptyView = isEmpty && isDraggingTab
+        let draggingTab = isDraggingTab ?? browserState?.isDraggingTab ?? false
+        let showEmptyView = isEmpty && draggingTab
         emptyView.isHidden = !showEmptyView
         collectionView.isHidden = showEmptyView
     }
@@ -977,7 +978,7 @@ extension PinnedTabViewController {
             pinnedTabs = latestTabs
         }
         applySnapshot(animatingDifferences: true)
-        updateEmptyViewVisibility()
+        updateEmptyViewVisibility(isDraggingTab: false)
 
         // Unhide all items to ensure the dragged item reappears and the UI is clean.
         for item in collectionView.visibleItems() {
