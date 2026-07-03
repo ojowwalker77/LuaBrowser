@@ -109,10 +109,11 @@ struct SpacesStripView: View {
     @State private var stripDraggingId: String?
     @State private var stripOrderedIds: [String] = []
 
-    /// The pip currently under the cursor, driving its hover tooltip (Space name,
-    /// bound profile, and keyboard shortcut). Only one pip is hovered at a time.
-    /// Set `hoverCardDelay` after the cursor lands on a pip (see `spacePip`), so
-    /// a cursor just passing across the strip doesn't flash cards.
+    /// The pip currently under the cursor — or the active Space while the
+    /// horizontal chip is hovered — driving its hover tooltip (Space name,
+    /// bound profile, and keyboard shortcut). Only one pip is hovered at a
+    /// time. Set `hoverCardDelay` after the cursor lands (see `hoverBegan`),
+    /// so a cursor just passing across the strip doesn't flash cards.
     @State private var hoveredSpaceId: String?
 
     /// The pip whose hover card is scheduled but not yet shown, plus the work
@@ -127,12 +128,27 @@ struct SpacesStripView: View {
     /// "Change Icon…" entry. Only one picker is open at a time.
     @State private var iconEditSpaceId: String?
 
+    /// Externally owned tooltip controller for the horizontal chip, injected by
+    /// TabStripBarController so the chip's AppKit hosting view can dismiss the
+    /// card synchronously before popping the switcher menu — the menu's modal
+    /// tracking loop stops the main queue, so a deferred SwiftUI-driven
+    /// dismissal would land only after the menu closes. Nil in the sidebar,
+    /// which uses the view-owned controller below.
+    var chipTooltipController: SpaceHoverTooltipController?
+
     /// Owns the click-through floating panel that renders a pip's hover card.
     /// A transient `.popover` consumed the next click (its own dismissal), so the
     /// pip's switch never fired; this passthrough panel lets the click fall
     /// straight through to the pip. Mirrors TabStrip's drag-image panel — the
     /// codebase's existing `ignoresMouseEvents` floating-window pattern.
-    @StateObject private var tooltipController = SpaceHoverTooltipController()
+    @StateObject private var ownedTooltipController = SpaceHoverTooltipController()
+
+    /// The controller actually driving this strip's hover card: the injected
+    /// chip controller in the horizontal layout, the view-owned one in the
+    /// sidebar.
+    private var tooltipController: SpaceHoverTooltipController {
+        chipTooltipController ?? ownedTooltipController
+    }
 
     /// The Space whose icon + name are currently shown. Lags `slot.activeSpaceId`
     /// by one animated step so the label can scroll the outgoing Space out and
@@ -218,18 +234,67 @@ struct SpacesStripView: View {
     }
 
     /// Compact affordance for the horizontal tab strip: just the active Space's
-    /// icon, acting as a menu button. Hovering or left-clicking it drops the
-    /// Space-switcher menu (one item per Space, plus "New Space"); right-clicking
-    /// it shows the tab strip's context menu (the active-Space controls). Both are
-    /// AppKit NSMenus attached to the chip's hosting view in TabStripBarController
-    /// — the switcher on hover/left-click, the context menu on right-click — so
-    /// the chip intentionally has no SwiftUI `.contextMenu` or popover of its own.
+    /// icon. Hovering it shows the same hover card as the sidebar pips (Space
+    /// name, bound profile, switch shortcut); left-clicking it drops the
+    /// Space-switcher menu (one item per Space, plus "New Space");
+    /// right-clicking it shows the tab strip's context menu (the active-Space
+    /// controls). Both menus are AppKit NSMenus attached to the chip's hosting
+    /// view in TabStripBarController — the switcher on left-click, the context
+    /// menu on right-click — so the chip intentionally has no SwiftUI
+    /// `.contextMenu` or popover of its own. The hover card rides the injected
+    /// `chipTooltipController`, which the hosting view dismisses synchronously
+    /// (and click-suppresses) before popping the switcher.
     private var compactChip: some View {
-        // No `.help` tooltip: the chip drops the Space switcher on hover, so a
-        // "Spaces" help bubble would just appear on top of the menu it opened.
         // The label is kept for VoiceOver only — it doesn't render a badge.
         activeLabel
             .accessibilityLabel(NSLocalizedString("Spaces", comment: "Accessibility label for the Spaces picker affordance"))
+            .onHover { hovering in
+                guard let activeId = slot.activeSpaceId else { return }
+                if hovering {
+                    hoverBegan(activeId)
+                } else {
+                    hoverEnded(activeId)
+                }
+            }
+            .background(chipTooltipAnchor)
+            .onAppear { wireTooltipPointerWatchdog() }
+            .onChange(of: slot.activeSpaceId) { newId in
+                // The chip's card is keyed to the ACTIVE Space, which can
+                // change under a resting cursor (⌃-number, menu-bar switch, a
+                // swipe over the chip, active-Space delete). The hover state
+                // and any presented card still belong to the OLD Space — and
+                // nothing else can reach them: the anchor only dismisses its
+                // CURRENT spaceId, the hover-exit resolves the NEW active id,
+                // and the pointer watchdog needs the cursor to leave the chip.
+                // Drop both here. No linger: the card's content is stale the
+                // moment the switch lands.
+                if let pending = pendingHoverSpaceId, pending != newId {
+                    pendingHoverWork?.cancel()
+                    pendingHoverWork = nil
+                    pendingHoverSpaceId = nil
+                }
+                if let hovered = hoveredSpaceId, hovered != newId {
+                    hoveredSpaceId = nil
+                }
+                tooltipController.dismissIfOwnerMissing(liveSpaceIds: newId.map { [$0] } ?? [])
+            }
+    }
+
+    /// Bridges the chip's hover state to its hover card — the active Space's
+    /// card, gated like a pip's (click suppression) plus the chip's own
+    /// icon-picker popover, which anchors to the same icon and would fight the
+    /// card.
+    @ViewBuilder
+    private var chipTooltipAnchor: some View {
+        if let space = spaceModel(slot.activeSpaceId) {
+            SpaceTooltipAnchor(
+                isPresented: hoveredSpaceId == space.spaceId && !isIconPickerOpen
+                    && slot.hoverCardSuppressedSpaceId != space.spaceId,
+                spaceId: space.spaceId,
+                card: AnyView(hoverCard(for: space)),
+                controller: tooltipController
+            )
+        }
     }
 
     /// The active Space's icon, shown in the horizontal tab strip.
@@ -358,13 +423,7 @@ struct SpacesStripView: View {
         ))
         .onAppear {
             stripOrderedIds = manager.spaces.map(\.spaceId)
-            // The pointer watchdog reports when the cursor genuinely left the
-            // hovered pip even if SwiftUI's `.onHover` dropped its exit. Clear
-            // the hover state so the card stays down instead of re-presenting.
-            let hovered = $hoveredSpaceId
-            tooltipController.onPointerLeftOwner = { id in
-                if hovered.wrappedValue == id { hovered.wrappedValue = nil }
-            }
+            wireTooltipPointerWatchdog()
         }
         .onChange(of: manager.spaces.map(\.spaceId)) { ids in
             // A deleted Space's pip leaves the ForEach with no mouse-exit, so
@@ -464,62 +523,9 @@ struct SpacesStripView: View {
         .accessibilityLabel(space.name)
         .onHover { hovering in
             if hovering {
-                // A pointer genuinely moving onto a DIFFERENT pip voids any
-                // click suppression — it only means "while the cursor stays on
-                // the clicked pip". An enter on the clicked pip itself lifts a
-                // STALE suppression too: past the hand-off window it can only
-                // be the user coming back, and without this a pointer that
-                // left the pip with no delivered exit (moved away
-                // mid-animation, or `.onHover` dropped it) would strand the
-                // suppression and swallow this pip's next hover card.
-                if let suppressed = slot.hoverCardSuppressedSpaceId,
-                   suppressed != space.spaceId || slot.isHoverCardSuppressionStale {
-                    slot.hoverCardSuppressedSpaceId = nil
-                }
-                pendingHoverWork?.cancel()
-                if tooltipController.isWarm {
-                    // A card is already up — or just went down as the cursor
-                    // hands off between pips — so re-present instantly,
-                    // matching system tooltips' already-warm behavior.
-                    pendingHoverSpaceId = nil
-                    pendingHoverWork = nil
-                    hoveredSpaceId = space.spaceId
-                } else {
-                    // Show the card only after the cursor settles on the pip.
-                    // If the scheduled work fires after `.onHover` dropped its
-                    // exit (the cursor is long gone), the controller's pointer
-                    // watchdog tears the stray card down within a tick.
-                    let work = DispatchWorkItem {
-                        pendingHoverSpaceId = nil
-                        pendingHoverWork = nil
-                        hoveredSpaceId = space.spaceId
-                    }
-                    pendingHoverSpaceId = space.spaceId
-                    pendingHoverWork = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverCardDelay, execute: work)
-                }
+                hoverBegan(space.spaceId)
             } else {
-                // Only the visible window's strip may lift the click
-                // suppression: the leaving window's strip also receives a
-                // hover-exit when it orders out at the end of the swap, and
-                // clearing here would re-arm the card the click just
-                // dismissed. Same owner-vs-visible identification as
-                // `openActiveIconPicker`; nil owner (previews) counts as
-                // visible.
-                if slot.hoverCardSuppressedSpaceId == space.spaceId {
-                    let owner = resolveOwnerController()
-                    if owner == nil || owner === slot.visibleController {
-                        slot.hoverCardSuppressedSpaceId = nil
-                    }
-                }
-                if pendingHoverSpaceId == space.spaceId {
-                    pendingHoverWork?.cancel()
-                    pendingHoverWork = nil
-                    pendingHoverSpaceId = nil
-                }
-                if hoveredSpaceId == space.spaceId {
-                    hoveredSpaceId = nil
-                }
+                hoverEnded(space.spaceId)
             }
         }
         .background(
@@ -551,6 +557,80 @@ struct SpacesStripView: View {
     private func isHoverCardPresented(for space: SpaceModel) -> Bool {
         hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil && !slot.isCreatingSpace
             && slot.hoverCardSuppressedSpaceId != space.spaceId
+    }
+
+    /// Wires the controller's pointer-watchdog callback to this strip's hover
+    /// state: when the watchdog tears a card down (the cursor left with no
+    /// delivered `.onHover` exit), the hover state must drop too, or the next
+    /// SwiftUI pass would immediately re-present the card the cursor already
+    /// left. Called from both variants' `onAppear` — the sidebar strip and the
+    /// horizontal chip each own their controller instance.
+    private func wireTooltipPointerWatchdog() {
+        let hovered = $hoveredSpaceId
+        tooltipController.onPointerLeftOwner = { id in
+            if hovered.wrappedValue == id { hovered.wrappedValue = nil }
+        }
+    }
+
+    /// Shared hover-enter handling for the sidebar pips and the horizontal
+    /// chip (which acts as a pip for the active Space). A pointer genuinely
+    /// moving onto a DIFFERENT pip voids any click suppression — it only means
+    /// "while the cursor stays on the clicked pip". An enter on the clicked
+    /// pip itself lifts a STALE suppression too: past the hand-off window it
+    /// can only be the user coming back, and without this a pointer that left
+    /// the pip with no delivered exit (moved away mid-animation, or `.onHover`
+    /// dropped it) would strand the suppression and swallow this pip's next
+    /// hover card.
+    private func hoverBegan(_ spaceId: String) {
+        if let suppressed = slot.hoverCardSuppressedSpaceId,
+           suppressed != spaceId || slot.isHoverCardSuppressionStale {
+            slot.hoverCardSuppressedSpaceId = nil
+        }
+        pendingHoverWork?.cancel()
+        if tooltipController.isWarm {
+            // A card is already up — or just went down as the cursor hands off
+            // between pips — so re-present instantly, matching system
+            // tooltips' already-warm behavior.
+            pendingHoverSpaceId = nil
+            pendingHoverWork = nil
+            hoveredSpaceId = spaceId
+        } else {
+            // Show the card only after the cursor settles on the pip. If the
+            // scheduled work fires after `.onHover` dropped its exit (the
+            // cursor is long gone), the controller's pointer watchdog tears
+            // the stray card down within a tick.
+            let work = DispatchWorkItem {
+                pendingHoverSpaceId = nil
+                pendingHoverWork = nil
+                hoveredSpaceId = spaceId
+            }
+            pendingHoverSpaceId = spaceId
+            pendingHoverWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverCardDelay, execute: work)
+        }
+    }
+
+    /// Shared hover-exit handling. Only the visible window's strip may lift
+    /// the click suppression: the leaving window's strip also receives a
+    /// hover-exit when it orders out at the end of the swap, and clearing
+    /// there would re-arm the card the click just dismissed. Same
+    /// owner-vs-visible identification as `openActiveIconPicker`; nil owner
+    /// (previews) counts as visible.
+    private func hoverEnded(_ spaceId: String) {
+        if slot.hoverCardSuppressedSpaceId == spaceId {
+            let owner = resolveOwnerController()
+            if owner == nil || owner === slot.visibleController {
+                slot.hoverCardSuppressedSpaceId = nil
+            }
+        }
+        if pendingHoverSpaceId == spaceId {
+            pendingHoverWork?.cancel()
+            pendingHoverWork = nil
+            pendingHoverSpaceId = nil
+        }
+        if hoveredSpaceId == spaceId {
+            hoveredSpaceId = nil
+        }
     }
 
     /// Presents the icon/emoji picker anchored to a pip when its right-click
@@ -1449,6 +1529,21 @@ final class SpaceHoverTooltipController: ObservableObject {
         panel.orderFront(nil)
         startPointerWatchdog()
         if isNewPresentation || autoCloseTimer == nil { startAutoCloseTimer() }
+    }
+
+    /// Hides the card NOW — no linger, and no warmth left behind (a click-hide
+    /// is not a pip hand-off). For the horizontal chip's AppKit hosting view,
+    /// which must clear the card synchronously before popping the switcher
+    /// menu: the menu's modal tracking loop stops the main queue, so the
+    /// deferred linger hide (and any SwiftUI-driven dismissal) would land only
+    /// after the menu closes.
+    func dismissImmediately() {
+        ownerId = nil
+        lastHiddenAt = nil
+        stopPointerWatchdog()
+        stopAutoCloseTimer()
+        cancelScheduledHide()
+        panel?.orderOut(nil)
     }
 
     /// Hides the card (after `hideLinger`) iff `spaceId` is the one currently

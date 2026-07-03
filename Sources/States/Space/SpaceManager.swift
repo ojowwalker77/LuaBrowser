@@ -1754,16 +1754,21 @@ final class SpaceWindowSlot: ObservableObject {
     /// linger over the form (see `SpacesStripView.isHoverCardPresented`).
     @Published var isCreatingSpace: Bool = false
 
-    /// The pip the user just clicked to switch Spaces. The click dismisses its
-    /// hover card, and the card must stay down while the pointer rests on that
-    /// pip — including in the TARGET Space window's strip, a different view
-    /// instance whose fresh hover would otherwise re-present the card right
-    /// after the swap (a disappear-then-reappear blink). Lives on the slot
-    /// because it must survive that window hand-off. Cleared when the pointer
-    /// leaves the pip in the visible window's strip, moves onto another pip,
-    /// or re-enters the clicked pip past the hand-off window (see
-    /// `SpacesStripView` and `isHoverCardSuppressionStale`). Arm via
-    /// `suppressHoverCard(spaceId:)` so the timestamp is recorded.
+    /// The Space the user just deliberately switched to by clicking or picking
+    /// it. The interaction dismisses its hover card, and the card must stay
+    /// down while the pointer rests on that pip — including in the TARGET
+    /// Space window's strip, a different view instance whose fresh hover would
+    /// otherwise re-present the card right after the swap (a
+    /// disappear-then-reappear blink). Lives on the slot because it must
+    /// survive that window hand-off. Armed via `suppressHoverCard(spaceId:)`
+    /// (so the timestamp is recorded) by every deliberate-switch affordance: a
+    /// sidebar pip click, the horizontal chip's click (just before its
+    /// switcher menu pops), and any switcher-menu pick — the chip's menu, the
+    /// menu-bar Spaces menu, and the sidebar's "…" overflow menu, which all
+    /// share `activateSpaceFromMenu`. Cleared when the pointer leaves the pip
+    /// in the visible window's strip, moves onto another pip, or re-enters the
+    /// clicked pip past the hand-off window (see `SpacesStripView` and
+    /// `isHoverCardSuppressionStale`).
     @Published var hoverCardSuppressedSpaceId: String?
 
     /// When the suppression was armed, driving `isHoverCardSuppressionStale`.
