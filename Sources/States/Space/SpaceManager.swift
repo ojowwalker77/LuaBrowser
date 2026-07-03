@@ -1802,6 +1802,93 @@ final class SpaceWindowSlot: ObservableObject {
         hoverCardSuppressedAt = Date()
     }
 
+    /// True while the pointer is over the Spaces strip's row, revealing the
+    /// strip's trailing add button. Lives on the slot because a Space switch
+    /// swaps in a different window's strip — a fresh view instance whose local
+    /// hover state would start false and blink the "+" off and back on while
+    /// the pointer never left the row. `.onHover` alone cannot maintain this
+    /// flag: the leaving window's strip receives a spurious hover-exit when it
+    /// orders out at the end of the swap (the pointer never moved), while a
+    /// genuine mid-swap move-off is delivered only to that same strip — or
+    /// dropped outright. So exits are verified against the real pointer
+    /// (`stripRowContainsPointer()`), and the watchdog below clears the flag
+    /// once the pointer has actually left the row.
+    @Published var isStripRowHovered: Bool = false {
+        didSet {
+            guard oldValue != isStripRowHovered else { return }
+            if isStripRowHovered {
+                startStripRowPointerWatchdog()
+            } else {
+                stopStripRowPointerWatchdog()
+            }
+        }
+    }
+
+    /// Whether the real pointer (`NSEvent.mouseLocation`) is inside the
+    /// visible window's strip row right now — the authoritative signal
+    /// `.onHover` is not (see `SpaceHoverTooltipController.pointerWatchdog`
+    /// for the same technique). The row view is resolved from
+    /// `visibleController` on EVERY call (same UI-chain the vertical swap's
+    /// band snapshot uses) rather than registered once by whichever strip
+    /// last joined a window: hover events come from the visible strip's own
+    /// tracking area, so the geometry they are verified against must come
+    /// from that same window — a hidden sibling's rect goes stale the moment
+    /// the visible sidebar is resized or the window is moved (slot windows
+    /// are only re-aligned at swap time) and would veto genuine hovers.
+    /// Nil when no row is resolvable (incognito, previews, early bring-up):
+    /// no authority, callers fall back to trusting the delivered event. The
+    /// hair of outward inset keeps sub-pixel jitter at the row's edge from
+    /// reading as "left".
+    func stripRowContainsPointer() -> Bool? {
+        guard let view = visibleController?.mainSplitViewController.sidebarViewController.spacesStripRowView,
+              let window = view.window else { return nil }
+        let rectInWindow = view.convert(view.bounds, to: nil)
+        let screenRect = window.convertToScreen(rectInWindow).insetBy(dx: -2, dy: -2)
+        return screenRect.contains(NSEvent.mouseLocation)
+    }
+
+    /// Clears `isStripRowHovered` once the pointer actually leaves the row,
+    /// independent of `.onHover` exit delivery: mid-swap the only strip
+    /// tracking the row belongs to the leaving window (whose exits cannot be
+    /// told apart from the spurious order-out one by event alone), and a fast
+    /// leave can drop the exit entirely. Runs only while the flag is true;
+    /// same 0.1s/`.common` cadence as the tooltip pointer watchdog. The flip
+    /// animates via the strip's `.animation(_:value:)` on the add button.
+    private var stripRowPointerWatchdog: Timer?
+
+    /// Consecutive watchdog ticks that found the pointer outside the row.
+    /// The row's screen rect lies for a beat while a spawned sibling window
+    /// surfaces (observed: the rect sits ~17.5pt lower until
+    /// `makeKeyAndOrderFrontHidingSlotTabBar`'s tab-bar hide settles the
+    /// layout), so a single outside reading must never clear the flag — only
+    /// a sustained one may.
+    private var stripRowOutsideTickCount = 0
+    private static let stripRowOutsideTicksToClear = 3
+
+    private func startStripRowPointerWatchdog() {
+        guard stripRowPointerWatchdog == nil else { return }
+        stripRowOutsideTickCount = 0
+        // `.common` mode so it keeps firing through scroll/resize tracking loops.
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.stripRowContainsPointer() == false else {
+                self.stripRowOutsideTickCount = 0
+                return
+            }
+            self.stripRowOutsideTickCount += 1
+            guard self.stripRowOutsideTickCount >= Self.stripRowOutsideTicksToClear else { return }
+            self.isStripRowHovered = false
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        stripRowPointerWatchdog = timer
+    }
+
+    private func stopStripRowPointerWatchdog() {
+        stripRowPointerWatchdog?.invalidate()
+        stripRowPointerWatchdog = nil
+        stripRowOutsideTickCount = 0
+    }
+
     /// AppKit tab-group identity for every Chromium NSWindow hosted by this
     /// slot. This keeps all Space windows for one user-perceived window in
     /// the same native tab group, so AppKit owns frame/fullscreen desktop
@@ -4501,6 +4588,7 @@ final class SpaceWindowSlot: ObservableObject {
             observation.invalidate()
         }
         tabBarAccessoryObservationsByWindowId.removeAll()
+        stopStripRowPointerWatchdog()
     }
 
     deinit {

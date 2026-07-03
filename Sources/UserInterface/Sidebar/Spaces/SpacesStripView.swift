@@ -411,6 +411,11 @@ struct SpacesStripView: View {
                 addButton
             }
             .frame(width: geo.size.width, height: rowHeight, alignment: .leading)
+            // The whole row is the add button's hover region, so the "+" is
+            // already visible by the time the cursor could reach its
+            // far-right slot.
+            .contentShape(Rectangle())
+            .onHover { stripRowHoverChanged($0) }
         }
         .frame(height: rowHeight)
         // Reset a drag that ends off every pip (Spacer / add button / "…" /
@@ -633,6 +638,36 @@ struct SpacesStripView: View {
         }
     }
 
+    /// Row-level hover driving the add button's reveal. Kept on the slot — not
+    /// view state — so the "+" survives a Space switch: the target window's
+    /// strip is a fresh view instance whose local state would start hidden and
+    /// blink the button off and back on while the pointer never left the row.
+    ///
+    /// Exits are graded by how much their verdict can be trusted:
+    /// - pointer verifiably still in the row → ignore (the order-out exit of a
+    ///   swap's leaving window; the pointer never moved);
+    /// - "outside"/no-authority from the VISIBLE window's strip → clear now
+    ///   (a genuine move-off; its layout is settled). Nil owner (previews)
+    ///   counts as visible;
+    /// - "outside" from a leaving window's strip → defer to the slot's pointer
+    ///   watchdog. During a spawn hand-off that exit lands while the row rect
+    ///   is a mid-surfacing transient (~17.5pt low), and trusting it stranded
+    ///   the "+" hidden under a stationary pointer; the watchdog re-checks
+    ///   against settled geometry and also covers dropped exits.
+    /// The flip animates via the add button's `.animation(_:value:)`.
+    private func stripRowHoverChanged(_ hovering: Bool) {
+        if hovering {
+            guard !slot.isStripRowHovered else { return }
+            slot.isStripRowHovered = true
+            return
+        }
+        if slot.stripRowContainsPointer() == true { return }
+        let owner = resolveOwnerController()
+        guard owner == nil || owner === slot.visibleController else { return }
+        guard slot.isStripRowHovered else { return }
+        slot.isStripRowHovered = false
+    }
+
     /// Presents the icon/emoji picker anchored to a pip when its right-click
     /// "Change Icon…" entry has targeted that Space.
     private func iconEditBinding(for space: SpaceModel) -> Binding<Bool> {
@@ -687,6 +722,9 @@ struct SpacesStripView: View {
 
     /// Trailing affordance that opens the create-Space flow, seeding the new
     /// Space with the active Space's profile so it lands in the same context.
+    /// Shown only while the pointer is over the strip's row — hidden via
+    /// opacity rather than removed, so it keeps the slot `visiblePipCount`
+    /// reserves for it and the pips never reflow on hover.
     private var addButton: some View {
         Button {
             CreateSpacePanel.requestCreation(initialProfileId: activeSpace?.profileId)
@@ -702,6 +740,11 @@ struct SpacesStripView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        .opacity(slot.isStripRowHovered ? 1 : 0)
+        .disabled(!slot.isStripRowHovered)
+        .allowsHitTesting(slot.isStripRowHovered)
+        .accessibilityHidden(!slot.isStripRowHovered)
+        .animation(.easeInOut(duration: 0.15), value: slot.isStripRowHovered)
 //        .offset(x: -2)
         .onHover { isAddButtonHovered = $0 }
         .help(NSLocalizedString("New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))

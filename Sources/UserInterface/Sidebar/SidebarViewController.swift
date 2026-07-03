@@ -138,7 +138,13 @@ class SidebarViewController: NSViewController {
         hostingController.view.translatesAutoresizingMaskIntoConstraints = false
         return hostingController
     }()
-    
+
+    /// The Spaces strip row's AppKit view, resolved live by the slot's
+    /// pointer-vs-row test (`SpaceWindowSlot.stripRowContainsPointer()`) so
+    /// the geometry always comes from the window actually consulted. Set at
+    /// mount; stays nil for incognito windows, which never mount the strip.
+    private(set) weak var spacesStripRowView: NSView?
+
     /// Hosting controller for the sidebar message card view.
     private lazy var messageCardHostingController: ThemedHostingController<NotificationMessageCardView> = {
         let hostingController = ThemedHostingController(
@@ -437,6 +443,7 @@ class SidebarViewController: NSViewController {
         if !state.isIncognito {
             addChild(spacesStripHostingController)
             headerView.mountSpaceSwitch(spacesStripHostingController.view)
+            spacesStripRowView = spacesStripHostingController.view
         }
 
         mainStackView.addArrangedSubview(tabList.view)
