@@ -1754,6 +1754,49 @@ final class SpaceWindowSlot: ObservableObject {
     /// linger over the form (see `SpacesStripView.isHoverCardPresented`).
     @Published var isCreatingSpace: Bool = false
 
+    /// The pip the user just clicked to switch Spaces. The click dismisses its
+    /// hover card, and the card must stay down while the pointer rests on that
+    /// pip — including in the TARGET Space window's strip, a different view
+    /// instance whose fresh hover would otherwise re-present the card right
+    /// after the swap (a disappear-then-reappear blink). Lives on the slot
+    /// because it must survive that window hand-off. Cleared when the pointer
+    /// leaves the pip in the visible window's strip, moves onto another pip,
+    /// or re-enters the clicked pip past the hand-off window (see
+    /// `SpacesStripView` and `isHoverCardSuppressionStale`). Arm via
+    /// `suppressHoverCard(spaceId:)` so the timestamp is recorded.
+    @Published var hoverCardSuppressedSpaceId: String?
+
+    /// When the suppression was armed, driving `isHoverCardSuppressionStale`.
+    private var hoverCardSuppressedAt: Date?
+
+    /// How long after the click an enter on the clicked pip can still be the
+    /// window hand-off's own re-enter rather than the user coming back. The
+    /// target strip's hover tracking comes up with the swap animation
+    /// (0.3–0.4s); the margin past that is kept tight because a real
+    /// move-out during the animation is ignored by the exit guard (its exit
+    /// comes from the leaving window's strip), so this window is also how
+    /// long a quick return to the pip can be wrongly swallowed.
+    private static let hoverCardSuppressionHandOffWindow: TimeInterval = 0.6
+
+    /// True once the suppression is old enough that a fresh enter on the
+    /// clicked pip must be a genuine re-hover, not the swap hand-off. The
+    /// strip lifts the suppression on such an enter — without this, a pointer
+    /// that left the pip with no delivered hover-exit (moved away
+    /// mid-animation before the target strip ever tracked it, or `.onHover`
+    /// dropped the exit) would strand the suppression and silently swallow
+    /// that pip's next hover card.
+    var isHoverCardSuppressionStale: Bool {
+        guard hoverCardSuppressedSpaceId != nil, let hoverCardSuppressedAt else { return false }
+        return Date().timeIntervalSince(hoverCardSuppressedAt) > Self.hoverCardSuppressionHandOffWindow
+    }
+
+    /// Arms the click suppression for `spaceId` and records when, so a later
+    /// enter on that pip can tell the swap's hand-off from a genuine re-hover.
+    func suppressHoverCard(spaceId: String) {
+        hoverCardSuppressedSpaceId = spaceId
+        hoverCardSuppressedAt = Date()
+    }
+
     /// AppKit tab-group identity for every Chromium NSWindow hosted by this
     /// slot. This keeps all Space windows for one user-perceived window in
     /// the same native tab group, so AppKit owns frame/fullscreen desktop
