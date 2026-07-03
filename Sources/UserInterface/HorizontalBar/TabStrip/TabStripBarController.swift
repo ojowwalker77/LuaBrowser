@@ -393,7 +393,11 @@ final class TabStripBarController: NSViewController {
     private func applySpacesPickerVisibility() {
         guard let spacesView = spacesPickerHostingView,
               let rightButtons = rightButtonsHostingView else { return }
-        let enabled = spacesPickerEligible
+        // With a single Space there is nothing to switch to, so the chip is
+        // pure noise next to the traffic lights — hide it until a second Space
+        // exists. The swipe gesture keeps its eligibility-only guard so the
+        // rubber-band end feedback still plays.
+        let enabled = spacesPickerEligible && SpaceManager.shared.spaces.count > 1
         guard lastSpacesPickerEnabled != enabled else { return }
         lastSpacesPickerEnabled = enabled
 
@@ -426,12 +430,22 @@ final class TabStripBarController: NSViewController {
         }
     }
 
-    /// Re-applies the picker visibility whenever the master Spaces flag flips.
-    /// The toggle writes `UserDefaults.standard`, so the change arrives via
-    /// `didChangeNotification`; the visibility applier no-ops unless the
-    /// resolved state actually changed.
+    /// Re-applies the picker visibility whenever the master Spaces flag flips
+    /// or the Space count crosses the single-Space threshold. The toggle writes
+    /// `UserDefaults.standard`, so the change arrives via `didChangeNotification`;
+    /// Space creation/deletion arrives via the manager's published list. The
+    /// visibility applier no-ops unless the resolved state actually changed.
     private func observeSpacesFeatureFlag() {
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applySpacesPickerVisibility()
+            }
+            .store(in: &cancellables)
+
+        SpaceManager.shared.$spaces
+            .map(\.count)
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.applySpacesPickerVisibility()
