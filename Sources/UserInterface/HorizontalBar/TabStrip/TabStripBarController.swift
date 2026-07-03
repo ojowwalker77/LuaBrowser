@@ -51,6 +51,15 @@ private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, Titleb
     /// immediately reopen it. Cleared once the cursor genuinely leaves the chip.
     private var suppressHoverOpen = false
 
+    /// The delayed hover-open in flight, cancelled if the cursor leaves the chip
+    /// (or clicks it) before `hoverOpenDelay` elapses — so a cursor merely
+    /// passing over the chip doesn't drop the switcher.
+    private var pendingHoverOpen: DispatchWorkItem?
+
+    /// How long the cursor must rest on the chip before the switcher drops,
+    /// matching the sidebar pips' hover-card delay.
+    private static let hoverOpenDelay: TimeInterval = 0.5
+
     /// How long the dropped Space switcher stays open before auto-dismissing,
     /// mirroring the sidebar hover card's cap so a forgotten menu can't linger.
     private static let menuAutoCloseAfter: TimeInterval = 10
@@ -84,24 +93,45 @@ private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, Titleb
     }
 
     /// Hovering the chip drops the Space switcher, mirroring the popover the chip
-    /// used to open on hover — now rendered as a menu.
+    /// used to open on hover — now rendered as a menu. The drop waits
+    /// `hoverOpenDelay` so a cursor just passing through doesn't open it.
     override func mouseEntered(with event: NSEvent) {
         guard !suppressHoverOpen else { return }
-        dropPrimaryMenu()
+        cancelPendingHoverOpen()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingHoverOpen = nil
+            // Re-check at fire time: a click may have latched the suppress flag,
+            // or a swallowed `mouseExited` may have left the cursor elsewhere.
+            guard !self.suppressHoverOpen, self.cursorIsInsideChip() else { return }
+            self.dropPrimaryMenu()
+        }
+        pendingHoverOpen = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverOpenDelay, execute: work)
     }
 
     override func mouseExited(with event: NSEvent) {
+        cancelPendingHoverOpen()
         suppressHoverOpen = false
     }
 
     /// Left-clicking the chip drops the same Space switcher. The chip's SwiftUI
     /// content has no click gesture, so this `mouseDown` is reached for the click.
     override func mouseDown(with event: NSEvent) {
+        // The click opens the menu itself; a hover-open still pending would
+        // fire the moment the menu's modal tracking loop ends (the main queue
+        // isn't drained during it) and immediately reopen the menu.
+        cancelPendingHoverOpen()
         if primaryMenu != nil {
             dropPrimaryMenu()
         } else {
             super.mouseDown(with: event)
         }
+    }
+
+    private func cancelPendingHoverOpen() {
+        pendingHoverOpen?.cancel()
+        pendingHoverOpen = nil
     }
 
     /// Pops `primaryMenu` from the chip's bottom-leading corner, matching the old

@@ -111,7 +111,18 @@ struct SpacesStripView: View {
 
     /// The pip currently under the cursor, driving its hover tooltip (Space name,
     /// bound profile, and keyboard shortcut). Only one pip is hovered at a time.
+    /// Set `hoverCardDelay` after the cursor lands on a pip (see `spacePip`), so
+    /// a cursor just passing across the strip doesn't flash cards.
     @State private var hoveredSpaceId: String?
+
+    /// The delayed hover-card presentation in flight: the pip it will show and
+    /// its cancellable work item. A pip cancels it on exit only if the pending
+    /// pip is its own — enter/exit callbacks between neighboring pips can
+    /// arrive in either order, and an unconditional cancel would let pip A's
+    /// exit kill the show pip B just scheduled.
+    @State private var pendingHoverSpaceId: String?
+    @State private var hoverCardTask: DispatchWorkItem?
+    private static let hoverCardDelay: TimeInterval = 0.5
 
     /// The pip whose icon/emoji picker is open, presented from its right-click
     /// "Change Icon…" entry. Only one picker is open at a time.
@@ -365,6 +376,11 @@ struct SpacesStripView: View {
             // the drag guard so it self-heals regardless of drag state and never
             // depends on SpaceTooltipAnchor.dismantleNSView firing.
             if let hovered = hoveredSpaceId, !ids.contains(hovered) { hoveredSpaceId = nil }
+            if let pending = pendingHoverSpaceId, !ids.contains(pending) {
+                hoverCardTask?.cancel()
+                hoverCardTask = nil
+                pendingHoverSpaceId = nil
+            }
             if let editing = iconEditSpaceId, !ids.contains(editing) { iconEditSpaceId = nil }
             tooltipController.dismissIfOwnerMissing(liveSpaceIds: ids)
             // Leave an in-flight drag's local rearrangement alone; the drop's
@@ -440,9 +456,25 @@ struct SpacesStripView: View {
         .accessibilityLabel(space.name)
         .onHover { hovering in
             if hovering {
-                hoveredSpaceId = space.spaceId
-            } else if hoveredSpaceId == space.spaceId {
-                hoveredSpaceId = nil
+                // A new hover supersedes any pending show — one cursor, one card.
+                hoverCardTask?.cancel()
+                let task = DispatchWorkItem {
+                    pendingHoverSpaceId = nil
+                    hoverCardTask = nil
+                    hoveredSpaceId = space.spaceId
+                }
+                pendingHoverSpaceId = space.spaceId
+                hoverCardTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverCardDelay, execute: task)
+            } else {
+                if pendingHoverSpaceId == space.spaceId {
+                    hoverCardTask?.cancel()
+                    hoverCardTask = nil
+                    pendingHoverSpaceId = nil
+                }
+                if hoveredSpaceId == space.spaceId {
+                    hoveredSpaceId = nil
+                }
             }
         }
         .background(
