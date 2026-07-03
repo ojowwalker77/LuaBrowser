@@ -11,7 +11,7 @@ struct TabMultiSelection: Equatable {
     private(set) var guids: Set<Int>
 
     /// Single feature gate for temporary multi-selection availability.
-    static let isEnabled = false
+    static let isEnabled = true
 
     static let empty = TabMultiSelection(guids: [])
 
@@ -25,6 +25,14 @@ struct TabMultiSelection: Equatable {
         } else {
             guids.insert(guid)
         }
+    }
+
+    mutating func insert(_ guid: Int) {
+        guids.insert(guid)
+    }
+
+    mutating func remove(_ guid: Int) {
+        guids.remove(guid)
     }
 
     /// Drops any guids not present in `valid`, e.g. after their tabs close.

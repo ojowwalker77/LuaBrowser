@@ -9,6 +9,16 @@ import Combine
 import SwiftUI
 
 class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
+    private enum AccessibilityID {
+        static let sidebarButton = "sidebarHeader.sidebarButton"
+        static let searchTabsButton = "sidebarHeader.searchTabsButton"
+        static let upgradeButton = "sidebarHeader.upgradeButton"
+        static let backButton = "sidebarHeader.backButton"
+        static let forwardButton = "sidebarHeader.forwardButton"
+        static let refreshButton = "sidebarHeader.refreshButton"
+        static let stopButton = "sidebarHeader.stopButton"
+    }
+
     private lazy var cancellables = Set<AnyCancellable>()
     private var sidebarButtonLeftConstraint: Constraint?
     private var upgradeButtonLeftConstraint: Constraint?
@@ -17,11 +27,20 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     private let legacySidebarButtonTopOffset: CGFloat = 15.5
     private let addressViewHeight: CGFloat = 32
     private var sidebarButtonLeftOffset: CGFloat = 78
+    private let defaultSidebarButtonTrailingInset: CGFloat = 5
+    private let balancedSidebarButtonTrailingInset: CGFloat = 9
     private var layoutSettleCancellable: AnyCancellable?
     /// Currently available app update version.
     private var availableUpdateVersion: String?
     private var currentWidth: CGFloat = 0
-    
+
+    /// The mounted Spaces-switch row (owned by the sidebar view controller);
+    /// the header positions it and toggles its visibility with the feature flag.
+    private weak var spaceSwitchView: NSView?
+    /// Last-applied switch visibility, so the toggle observer only remakes
+    /// constraints when the master Spaces flag actually flips.
+    private var spaceSwitchVisible: Bool?
+
     private var isFloating: Bool = false
     
     private lazy var sidebarButton: HoverableButtonNSView = {
@@ -136,7 +155,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         let stack = NSStackView(views: [backButton, forwardButton, refreshButton, stopButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 2
+        stack.spacing = 1
         return stack
     }()
     
@@ -169,6 +188,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         let initialLayoutMode = browserState?.layoutMode ?? .performance
         let showInSidebar = isSidebarLayout(initialLayoutMode)
 
+        configureAccessibilityIdentifiers()
+
         addSubview(sidebarButton)
         addSubview(searchTabsButton)
         addSubview(upgradeButton)
@@ -195,7 +216,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         stackView.snp.makeConstraints { make in
             make.centerY.equalTo(sidebarButton)
             make.height.equalTo(24)
-            make.right.equalToSuperview().inset(6)
+            make.right.equalToSuperview().inset(9)
         }
         
         addSubview(addressView)
@@ -206,6 +227,69 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         }
 
         updateLayoutVisibility(layoutMode: initialLayoutMode)
+    }
+
+    private func configureAccessibilityIdentifiers() {
+        configureButtonAccessibility(sidebarButton, identifier: AccessibilityID.sidebarButton)
+        configureButtonAccessibility(searchTabsButton, identifier: AccessibilityID.searchTabsButton)
+        configureButtonAccessibility(upgradeButton, identifier: AccessibilityID.upgradeButton)
+        configureButtonAccessibility(backButton, identifier: AccessibilityID.backButton)
+        configureButtonAccessibility(forwardButton, identifier: AccessibilityID.forwardButton)
+        configureButtonAccessibility(refreshButton, identifier: AccessibilityID.refreshButton)
+        configureButtonAccessibility(stopButton, identifier: AccessibilityID.stopButton)
+    }
+
+    private func configureButtonAccessibility(_ button: HoverableButtonNSView, identifier: String) {
+        button.setAccessibilityElement(true)
+        button.setAccessibilityRole(.button)
+        button.setAccessibilityIdentifier(identifier)
+    }
+
+    /// Mounts the Spaces-switch row between the nav row and the address bar so
+    /// it reads as the top-most per-Space control. The view is owned by the
+    /// sidebar view controller (a child hosting controller); the header only
+    /// positions it and re-points the address bar to sit beneath it.
+    func mountSpaceSwitch(_ view: NSView) {
+        addSubview(view)
+        spaceSwitchView = view
+        updateSpaceSwitchVisibility()
+    }
+
+    /// Shows or hides the Spaces-switch row to match the master Spaces feature
+    /// flag, reclaiming the row's height (and re-pinning the address bar to the
+    /// nav row) when the feature is off. Called on mount and whenever the toggle
+    /// flips so the header never reserves space for a control the user can't use.
+    func updateSpaceSwitchVisibility() {
+        guard let view = spaceSwitchView else { return }
+        let enabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+        guard spaceSwitchVisible != enabled else { return }
+        spaceSwitchVisible = enabled
+
+        view.isHidden = !enabled
+        if enabled {
+            view.snp.remakeConstraints { make in
+                make.leading.trailing.equalToSuperview()
+                make.top.equalTo(stackView.snp.bottom).offset(8)
+                make.height.equalTo(SpacesStripView.sidebarHeight)
+            }
+            addressView.snp.remakeConstraints { make in
+                make.left.right.equalToSuperview()
+                make.top.equalTo(view.snp.bottom).offset(12)
+                addressViewHeightConstraint = make.height.equalTo(addressViewHeight).constraint
+            }
+        } else {
+            view.snp.remakeConstraints { make in
+                make.leading.trailing.equalToSuperview()
+                make.top.equalTo(stackView.snp.bottom)
+                make.height.equalTo(0)
+            }
+            addressView.snp.remakeConstraints { make in
+                make.left.right.equalToSuperview()
+                make.top.equalTo(stackView.snp.bottom).offset(12)
+                addressViewHeightConstraint = make.height.equalTo(addressViewHeight).constraint
+            }
+        }
+        updateLayoutVisibility(layoutMode: browserState?.layoutMode ?? .performance)
     }
 
     private func isSidebarLayout(_ layoutMode: LayoutMode) -> Bool {
@@ -247,7 +331,10 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             } else {
                 // Legacy layout: sidebarButton aligned right
                 AppLogDebug("[SidebarHeader] updateLayoutVisibility apply legacy constraints")
-                make.right.equalToSuperview().inset(5)
+                let trailingInset = layoutMode == .balanced
+                    ? balancedSidebarButtonTrailingInset
+                    : defaultSidebarButtonTrailingInset
+                make.right.equalToSuperview().inset(trailingInset)
             }
         }
 
@@ -409,7 +496,33 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                 self?.showUpgradeButton(version: displayVersion)
             }
             .store(in: &cancellables)
+
+        #if DEBUG
+        applyUITestUpdateOverrideIfNeeded()
+        #endif
     }
+
+    #if DEBUG
+    private func applyUITestUpdateOverrideIfNeeded() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-uitest"),
+              let versionFlagIndex = arguments.firstIndex(of: "-sidebarHeaderUpdateVersion"),
+              arguments.indices.contains(versionFlagIndex + 1) else {
+            return
+        }
+
+        let version = arguments[versionFlagIndex + 1]
+        guard !version.isEmpty else {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.currentWidth = self.frame.width
+            self.showUpgradeButton(version: version)
+        }
+    }
+    #endif
     
     private func handleWidthChange(_ newWidth: CGFloat) {
         currentWidth = newWidth

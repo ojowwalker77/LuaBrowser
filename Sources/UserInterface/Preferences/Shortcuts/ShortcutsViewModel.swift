@@ -9,8 +9,15 @@ class ShortcutsViewModel: ObservableObject {
     @Published var sections: [(category: String, items: [ShortcutItem])] = []
     @Published var editingCommand: CommandWrapper?
     @Published var hiddenGroups: Set<Shortcuts.Group> = [.help, .bookmarks]
+    private var cancellables = Set<AnyCancellable>()
     
     init() {
+        SpaceManager.shared.$spaces
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.rebuildSections()
+            }
+            .store(in: &cancellables)
         rebuildSections()
     }
     
@@ -20,18 +27,20 @@ class ShortcutsViewModel: ObservableObject {
         Shortcuts.Group.allCases
             .filter { !hiddenGroups.contains($0) }
             .forEach { group in
-                let items = group.commands.map { command in
+                let items = group.commands.compactMap { command -> ShortcutItem? in
+                    guard shouldShow(command) else { return nil }
                     let key = Shortcuts.key(for: command)
                     let conflictingCommands = findConflictingCommands(for: command, currentKey: key)
                     
                     return ShortcutItem(
                         id: command,
                         command: command,
-                        name: command.displayName,
+                        name: displayName(for: command),
                         shortcutKey: key,
                         shortcutDisplay: key?.displayString ?? NSLocalizedString("Add New", comment: "Shortcuts settings - Placeholder text when no shortcut is assigned"),
                         isOverridden: Shortcuts.isOverridden(command),
-                        conflictingCommands: conflictingCommands
+                        conflictingCommandNames: conflictingCommands.map { displayName(for: $0) },
+                        searchKeywords: searchKeywords(for: command)
                     )
                 }
                 
@@ -50,12 +59,45 @@ class ShortcutsViewModel: ObservableObject {
         
         Shortcuts.DefaultShortcuts.keys.forEach { otherCommand in
             guard otherCommand != command else { return }
+            guard shouldShow(otherCommand) else { return }
             if let otherKey = Shortcuts.key(for: otherCommand),
                otherKey == currentKey {
                 conflicts.append(otherCommand)
             }
         }
         return conflicts
+    }
+
+    private func shouldShow(_ command: CommandWrapper) -> Bool {
+        guard let index = command.spaceSelectionIndex else {
+            return true
+        }
+        return index < SpaceManager.shared.spaces.count
+    }
+
+    private func displayName(for command: CommandWrapper) -> String {
+        if let index = command.spaceSelectionIndex {
+            let spaces = SpaceManager.shared.spaces
+            if spaces.indices.contains(index) {
+                return String(
+                    format: NSLocalizedString("Go to Space \"%@\"", comment: "Shortcuts settings - Command title to activate the Space at this position"),
+                    spaces[index].name
+                )
+            }
+        }
+        return command.displayName
+    }
+
+    private func searchKeywords(for command: CommandWrapper) -> [String] {
+        var keywords = command.searchKeywords
+        if let index = command.spaceSelectionIndex {
+            let spaces = SpaceManager.shared.spaces
+            if spaces.indices.contains(index) {
+                keywords.append(spaces[index].name)
+                keywords.append("space \(index + 1)")
+            }
+        }
+        return Array(Set(keywords.map { $0.lowercased() }))
     }
     
     func setCustomShortcut(for command: CommandWrapper, keyChord: KeyChord) {
@@ -100,10 +142,11 @@ struct ShortcutItem: Identifiable {
     let shortcutKey: ShortcutsKey?
     let shortcutDisplay: String
     let isOverridden: Bool
-    let conflictingCommands: [CommandWrapper]
+    let conflictingCommandNames: [String]
+    let searchKeywords: [String]
     
     var hasConflict: Bool {
-        !conflictingCommands.isEmpty
+        !conflictingCommandNames.isEmpty
     }
 }
 

@@ -54,6 +54,15 @@ final class TabAreaContextMenuHelper: NSObject {
         )
         layoutItem.submenu = buildLayoutSubmenu()
         menu.addItem(layoutItem)
+
+        // Active-Space controls, mirroring the Spaces menu / Space right-click.
+        // Only surface them while the Spaces feature is enabled and the window
+        // is not incognito — incognito windows expose no Spaces.
+        if PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
+           browserState?.isIncognito != true {
+            menu.addItem(.separator())
+            AppController.shared?.appendActiveSpaceMenuItems(to: menu)
+        }
     }
 
     @objc private func newTab() {

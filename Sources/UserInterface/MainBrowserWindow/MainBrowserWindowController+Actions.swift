@@ -255,7 +255,7 @@ extension MainBrowserWindowController {
                 let guid = UUID().uuidString
                 state.localStore.createDirectory(
                     title: folderName, profileId: state.profileId,
-                    parentId: nil, guid: guid
+                    parentId: nil, guid: guid, spaceId: state.spaceId
                 )
                 return guid
             },
@@ -485,15 +485,24 @@ extension MainBrowserWindowController: NSMenuItemValidation {
     }
     
     
-    func showFeedbackWindow() {
+    func showFeedbackWindow(crashContextTab: Tab? = nil) {
         let identifier = NSUserInterfaceItemIdentifier("Phi Feedback Window")
         // Check if about window already exists
         if let existingWindow = NSApp.windows.first(where: { $0.identifier == identifier }) {
+            // The feedback window is app-global; rebind it to the window now
+            // reopening it so the report's window-scoped context (Chromium system
+            // logs, focusingTab fallback) follows the current window, then refresh
+            // the crash context (else it keeps the previously-shown tab's url/title).
+            if let fvc = existingWindow.contentViewController as? FeedbackViewController {
+                fvc.rebindHost(self)
+                fvc.setCrashContextTab(crashContextTab)
+            }
             existingWindow.makeKeyAndOrderFront(nil)
             return
         }
-        
+
         let vc = FeedbackViewController(host: self)
+        vc.setCrashContextTab(crashContextTab)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
             styleMask: [.titled, .closable],
@@ -508,10 +517,36 @@ extension MainBrowserWindowController: NSMenuItemValidation {
         window.makeKeyAndOrderFront(nil)
     }
     
+    /// Stable key for associating the long-lived import view controller with its
+    /// window, so a re-invocation can retarget it (see `objc_setAssociatedObject`).
+    private static var importVCAssociationKey: UInt8 = 0
+
     func showImportDataWindow() {
         let identifier = NSUserInterfaceItemIdentifier("Phi Import Data Window")
-        // Check if import window already exists
+        // The import window is a singleton. Re-invoking import from another Space
+        // retargets the existing window to the current context — unless an import
+        // is already running, in which case it is only brought forward so the
+        // in-flight import keeps its destination — rather than opening a second
+        // window, which would let two imports race over shared bookmark staging.
         if let existingWindow = NSApp.windows.first(where: { $0.identifier == identifier }) {
+            if let vc = objc_getAssociatedObject(existingWindow, &MainBrowserWindowController.importVCAssociationKey) as? ImportFromOtherBrowserViewController {
+                // Reopening a CLOSED singleton reuses the same VC; clear the previous
+                // import's stale selection/status so it starts fresh. A MINIATURIZED
+                // window also reports isVisible == false but is a restore, not a reopen,
+                // so preserve its in-progress work and just deminiaturize it below.
+                // (resetForReuse also no-ops internally while an import is in flight.)
+                if !existingWindow.isVisible && !existingWindow.isMiniaturized {
+                    vc.resetForReuse()
+                }
+                vc.rebindTarget(
+                    profileId: browserState.profileId,
+                    spaceId: browserState.spaceId,
+                    windowId: browserState.windowId
+                )
+            }
+            if existingWindow.isMiniaturized {
+                existingWindow.deminiaturize(nil)
+            }
             existingWindow.makeKeyAndOrderFront(nil)
             return
         }
@@ -519,6 +554,7 @@ extension MainBrowserWindowController: NSMenuItemValidation {
         let vc = ImportFromOtherBrowserViewController(
             displayMode: .normal,
             targetProfileId: browserState.profileId,
+            targetSpaceId: browserState.spaceId,
             targetWindowId: browserState.windowId
         )
         vc.onCompletion = { [weak vc] in
@@ -539,33 +575,8 @@ extension MainBrowserWindowController: NSMenuItemValidation {
         window.contentViewController = vc
         window.makeKeyAndOrderFront(nil)
 
-        // Keep vc alive while window is open (window.contentViewController changes during navigation)
-        objc_setAssociatedObject(window, "importVC", vc, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-
-        // Data type selection flow for standalone import window
-        var dataTypeVCs: [BrowserType: ImportDataTypeViewController] = [:]
-
-        vc.onBrowserSelected = { [weak vc, weak window] browser, chromeDir in
-            guard let vc, let window else { return }
-            let dtvc = dataTypeVCs[browser] ?? ImportDataTypeViewController(browserType: browser, displayMode: .normal)
-            dataTypeVCs[browser] = dtvc
-            dtvc.onReturn = { [weak vc, weak window] hasSelection in
-                guard let vc, let window else { return }
-                if hasSelection {
-                    vc.markBrowserConfigured(browser)
-                } else {
-                    vc.unmarkBrowserConfigured(browser)
-                    dataTypeVCs.removeValue(forKey: browser)
-                }
-                // Collect data types and pass to VC
-                var dataTypesPerBrowser: [BrowserType: [String]] = [:]
-                for (b, dtvc) in dataTypeVCs {
-                    dataTypesPerBrowser[b] = dtvc.selectedDataTypeStrings()
-                }
-                vc.dataTypesPerBrowser = dataTypesPerBrowser.isEmpty ? nil : dataTypesPerBrowser
-                window.contentViewController = vc
-            }
-            window.contentViewController = dtvc
-        }
+        // Keep vc alive and discoverable for the window's lifetime: the singleton
+        // re-invocation path looks it up via this associated object to rebindTarget.
+        objc_setAssociatedObject(window, &MainBrowserWindowController.importVCAssociationKey, vc, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 }

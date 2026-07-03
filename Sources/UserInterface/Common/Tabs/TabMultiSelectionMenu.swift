@@ -32,6 +32,16 @@ enum TabMultiSelectionMenu {
             keyEquivalent: "")
         items.append(copyLinksItem)
 
+        if browserState.multiSelectionSplitPair != nil {
+            let openAsSplitItem = NSMenuItem(
+                title: NSLocalizedString(
+                    "Open as Split",
+                    comment: "Tab multi-selection context menu - split exactly two selected tabs into paired panes"),
+                action: #selector(TabMultiSelectionMenuController.openSelectedAsSplit),
+                keyEquivalent: "")
+            items.append(openAsSplitItem)
+        }
+
         items.append(.separator())
 
         let addToBookmarkItem = NSMenuItem(
@@ -175,6 +185,7 @@ final class TabMultiSelectionMenuController: NSObject {
 
     @objc func duplicateSelected() { browserState?.duplicateMultiSelectedTabs() }
     @objc func copyLinks() { browserState?.copyLinksOfMultiSelectedTabs() }
+    @objc func openSelectedAsSplit() { browserState?.openMultiSelectedTabsAsSplit() }
     @objc func closeSelected() { browserState?.closeMultiSelectedTabs() }
     @objc func closeOtherSelected() { browserState?.closeTabsOutsideMultiSelection() }
     @objc func addToBookmarkBar() { browserState?.bookmarkMultiSelectedTabs(into: nil) }
@@ -187,7 +198,7 @@ final class TabMultiSelectionMenuController: NSObject {
               let window = MainBrowserWindowControllersManager.shared.activeWindowController?.window else { return }
         // Snapshot the selection now; the modal dialog clears it before the
         // completion handler runs.
-        let tabs = browserState.orderedMultiSelectedTabs
+        let tabs = browserState.orderedMultiSelectedTabsIncludingSplitPartners
         EditPinnedTabPresenter.presentModal(mode: .newFolder, from: window) { result in
             guard let name = result.title, !name.isEmpty else { return }
             browserState.bookmarkTabs(tabs, intoNewFolderNamed: name)

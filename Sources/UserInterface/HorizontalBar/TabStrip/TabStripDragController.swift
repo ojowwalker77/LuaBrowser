@@ -122,7 +122,10 @@ final class TabStripDragController {
         sourceZone: TabContainerType,
         mouseLocation: CGPoint,
         tabFrame: CGRect,
-        siblingSourceIndex: Int? = nil
+        siblingSourceIndex: Int? = nil,
+        sourceExcludedIndices: Set<Int>? = nil,
+        draggingTabIds: [Int]? = nil,
+        draggingVisualSlotCount: Int? = nil
     ) {
         // Capture the source geometry before any layout changes.
         context = TabDragContext(
@@ -131,7 +134,10 @@ final class TabStripDragController {
             sourceIndex: sourceIndex,
             initialMouseLocation: mouseLocation,
             initialTabFrame: tabFrame,
-            siblingSourceIndex: siblingSourceIndex
+            siblingSourceIndex: siblingSourceIndex,
+            sourceExcludedIndices: sourceExcludedIndices,
+            draggingTabIds: draggingTabIds,
+            draggingVisualSlotCount: draggingVisualSlotCount
         )
 
         // Hide the source tab before the gap is shown.
@@ -571,28 +577,24 @@ final class TabStripDragController {
         // original zone so the whole pair lifts together.
         switch context.sourceContainerType {
         case .pinned:
-            pinnedExcludedIndices.insert(context.sourceIndex)
-            if let sibling = context.siblingSourceIndex {
-                pinnedExcludedIndices.insert(sibling)
-            }
+            pinnedExcludedIndices.formUnion(sourceExclusionSet(for: context))
         case .normal:
-            normalExcludedIndices.insert(context.sourceIndex)
-            if let sibling = context.siblingSourceIndex {
-                normalExcludedIndices.insert(sibling)
-            }
+            normalExcludedIndices.formUnion(sourceExclusionSet(for: context))
         }
 
-        // Show the insertion gap in the target zone. One slot even for a
-        // split pair: the pair rests as one merged cell and re-merges into
-        // one slot on drop, so a two-slot gap made every other tab shrink
-        // at grab and snap back at drop.
+        // Show the insertion gap in the target zone. The width is based on
+        // visible drag units: a split pair remains one merged slot, while a
+        // regular multi-selection block reserves one slot per visible proxy.
         switch context.targetContainerType {
         case .pinned:
             pinnedGapIndex = context.targetIndex
         case .normal:
             normalGapIndex = context.targetIndex
             if let metrics = delegate?.dragControllerRequestMetrics() {
-                normalGapWidth = calculateAverageTabWidth(from: metrics.normalTabFrames)
+                normalGapWidth = Self.dragGapWidth(
+                    perSlotWidth: calculateAverageTabWidth(from: metrics.normalTabFrames),
+                    visualSlotCount: context.draggingVisualSlotCount
+                )
             }
         }
 
@@ -613,6 +615,13 @@ final class TabStripDragController {
         }
         let totalWidth = validFrames.reduce(0) { $0 + $1.width }
         return totalWidth / CGFloat(validFrames.count)
+    }
+
+    static func dragGapWidth(perSlotWidth: CGFloat, visualSlotCount: Int) -> CGFloat {
+        let slotCount = max(1, visualSlotCount)
+        let interSlotGap = TabStripMetrics.Tab.spacing * 2 + 1.0
+        return perSlotWidth * CGFloat(slotCount)
+            + interSlotGap * CGFloat(slotCount - 1)
     }
 
     /// Resolves the destination zone and insertion index for the pointer.
@@ -646,7 +655,9 @@ final class TabStripDragController {
             // cursor-based when the proxy frame isn't available yet
             // (e.g. cross-zone transition's first tick before
             // targetContainerType updates to .normal).
-            let edgeExcluded = context.sourceContainerType == .normal ? context.sourceIndex : nil
+            let edgeExcluded: Set<Int> = context.sourceContainerType == .normal
+                ? sourceExclusionSet(for: context)
+                : []
             let cursorExcluded: Set<Int> = context.sourceContainerType == .normal
                 ? sourceExclusionSet(for: context)
                 : []
@@ -664,7 +675,7 @@ final class TabStripDragController {
                     xFrame: xFrame,
                     tabFrames: metrics.normalTabFrames,
                     chipFrames: metrics.chipFrames,
-                    excludedIndex: edgeExcluded,
+                    excludedIndices: edgeExcluded,
                     previousIndex: context.targetIndex
                 )
             } else {
@@ -720,7 +731,7 @@ final class TabStripDragController {
         xFrame: CGRect,
         tabFrames: [CGRect],
         chipFrames: [TabStripChipFrame],
-        excludedIndex: Int?,
+        excludedIndices: Set<Int>,
         previousIndex: Int
     ) -> Int {
         // An entry is one hit-test target — either a visible tab or
@@ -760,7 +771,7 @@ final class TabStripDragController {
                 i = chip.lastMemberIndex + 1
                 continue
             }
-            if let exclude = excludedIndex, i == exclude {
+            if excludedIndices.contains(i) {
                 i += 1
                 continue
             }
@@ -874,11 +885,7 @@ final class TabStripDragController {
     /// Source-zone exclusion set: the dragged tab and (for split pairs) its
     /// partner so the gap-index math ignores both placeholders.
     private func sourceExclusionSet(for context: TabDragContext) -> Set<Int> {
-        var set: Set<Int> = [context.sourceIndex]
-        if let sibling = context.siblingSourceIndex {
-            set.insert(sibling)
-        }
-        return set
+        context.sourceExcludedIndices
     }
 
     /// If the raw insertion index would land strictly between the two members

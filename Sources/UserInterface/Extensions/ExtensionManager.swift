@@ -72,6 +72,12 @@ class ExtensionManager: ObservableObject {
         if prunedIcons.count != dynamicIcons.count {
             dynamicIcons = prunedIcons
         }
+
+        // Existing-user backfill: the sole default profile's enabled extensions
+        // are now known; adopt iCloud Passwords as the new-profile default when
+        // the preference was never recorded. Gated + self-healing inside.
+        ProfileManager.shared.backfillICloudPasswordsPrefIfNeeded(
+            installedExtensionIds: mapped.map(\.id))
     }
 
     func refreshExtensions() {

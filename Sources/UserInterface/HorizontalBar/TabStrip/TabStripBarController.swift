@@ -4,8 +4,17 @@
 // found in the LICENSE file.
 
 import Cocoa
+import Combine
 import SnapKit
 import SwiftUI
+
+/// Right-clicks open the strip context menu; scroll gestures feed the
+/// swipe-to-switch-Space handler (`TabStripBarView.scrollWheel`) and play
+/// no part in window drag/zoom, so claiming them from titlebar space costs
+/// nothing. Everything else falls through to the system titlebar.
+private func shouldConsumeTitlebarEvent(_ event: NSEvent?) -> Bool {
+    event?.type == .rightMouseDown || event?.type == .scrollWheel
+}
 
 /// NSHostingView variant that ignores safe area insets.
 private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Content>, TitlebarAwareHitTestable {
@@ -14,20 +23,157 @@ private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Co
     }
 
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+        // Right-buttons host wraps interactive SwiftUI controls, so claim
+        // left/right clicks (origin/dev) and also scroll so swipe-to-switch-Space
+        // works over this region too.
         guard let event = NSApp.currentEvent else {
             return true
         }
-        return event.type == .leftMouseDown || event.type == .rightMouseDown
+        return event.type == .leftMouseDown
+            || event.type == .rightMouseDown
+            || event.type == .scrollWheel
+    }
+}
+
+/// ThemedHostingView variant that mirrors `SafeAreaIgnoringHostingView`'s
+/// safe-area + titlebar hit-test handling. Used for SwiftUI content that
+/// sits in the tab strip row and needs theme env injection (e.g. the
+/// active-Space picker).
+private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, TitlebarAwareHitTestable {
+    /// Menu dropped on hover and left-click — the Space switcher. Right-click
+    /// keeps the standard `menu` (the tab-strip context menu), so the two
+    /// gestures surface different menus from the same chip.
+    var primaryMenu: NSMenu?
+
+    private var hoverTrackingArea: NSTrackingArea?
+    /// Set while a just-dropped menu could still be under the cursor, so the
+    /// `mouseEntered` AppKit re-delivers when a popped menu closes doesn't
+    /// immediately reopen it. Cleared once the cursor genuinely leaves the chip.
+    private var suppressHoverOpen = false
+
+    /// How long the dropped Space switcher stays open before auto-dismissing,
+    /// mirroring the sidebar hover card's cap so a forgotten menu can't linger.
+    private static let menuAutoCloseAfter: TimeInterval = 10
+
+    override var safeAreaInsets: NSEdgeInsets {
+        return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+
+    func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+        // This view hosts the active-Space chip, so a left-click must reach it
+        // to drop the Space-switcher menu (see `mouseDown`). Unlike the empty
+        // tab-strip bar — where left-clicks must fall through to the titlebar
+        // for window drag — clicks here are always meant for the chip.
+        if NSApp.currentEvent?.type == .leftMouseDown { return true }
+        return shouldConsumeTitlebarEvent(NSApp.currentEvent)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    /// Hovering the chip drops the Space switcher, mirroring the popover the chip
+    /// used to open on hover — now rendered as a menu.
+    override func mouseEntered(with event: NSEvent) {
+        guard !suppressHoverOpen else { return }
+        dropPrimaryMenu()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        suppressHoverOpen = false
+    }
+
+    /// Left-clicking the chip drops the same Space switcher. The chip's SwiftUI
+    /// content has no click gesture, so this `mouseDown` is reached for the click.
+    override func mouseDown(with event: NSEvent) {
+        if primaryMenu != nil {
+            dropPrimaryMenu()
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    /// Pops `primaryMenu` from the chip's bottom-leading corner, matching the old
+    /// popover's placement below the icon. `suppressHoverOpen` is latched before
+    /// the (modal) pop so the re-entrant `mouseEntered` after the menu closes
+    /// can't reopen it until the cursor leaves and returns.
+    private func dropPrimaryMenu() {
+        guard let primaryMenu else { return }
+        suppressHoverOpen = true
+        let bottomLeading = NSPoint(x: bounds.minX, y: isFlipped ? bounds.maxY : bounds.minY)
+
+        // Auto-dismiss a switcher that's left open. `popUp` blocks in a modal
+        // tracking loop running in `.eventTracking`, so the timer is registered
+        // for that mode (and `.common`) to fire while the menu is up;
+        // `cancelTracking()` then tears it down and lets `popUp` return. The
+        // timer is invalidated the instant `popUp` returns — whether the user or
+        // the timeout closed the menu — so it never outlives this call.
+        let autoClose = Timer(timeInterval: Self.menuAutoCloseAfter, repeats: false) { [weak primaryMenu] _ in
+            primaryMenu?.cancelTracking()
+        }
+        RunLoop.main.add(autoClose, forMode: .eventTracking)
+        RunLoop.main.add(autoClose, forMode: .common)
+
+        primaryMenu.popUp(positioning: nil, at: bottomLeading, in: self)
+        autoClose.invalidate()
+
+        // `popUp` returned because the menu closed. The tracking area's
+        // `mouseExited` is swallowed during that loop, so a cursor that left the
+        // chip while the menu was open would never clear the latch — stranding
+        // `suppressHoverOpen` and killing hover-to-open from then on. Settle it
+        // now from the cursor's real position instead of trusting a follow-up
+        // `mouseExited` that may never arrive.
+        if !cursorIsInsideChip() {
+            suppressHoverOpen = false
+        }
+    }
+
+    /// Whether the pointer currently sits over the chip, read from the window's
+    /// live mouse location (available outside the event stream) so it's valid
+    /// right after a modal menu loop, when tracking-area events aren't.
+    private func cursorIsInsideChip() -> Bool {
+        guard let window else { return false }
+        return bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 }
 
 final class TabStripBarView: NSView, TitlebarAwareHitTestable {
+    /// Swipe-to-switch-Space gesture (see `SpaceSwipeTracker`) — the
+    /// traditional-layout counterpart of the sidebar's handler. Gestures
+    /// land here when made over the bar itself and when the tab strip
+    /// declines them (content fits, or already scrolled to a clamp edge —
+    /// see `TabStrip.scrollWheel`).
+    private let spaceSwipe = SpaceSwipeTracker()
+    var onSpaceSwipe: ((Int) -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        switch spaceSwipe.handle(event) {
+        case .passthrough:
+            super.scrollWheel(with: event)
+        case .consumed:
+            break
+        case .trigger(let step):
+            onSpaceSwipe?(step)
+        }
+    }
+
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
         return shouldConsumeHitTest(for: NSApp.currentEvent)
     }
 
     func shouldConsumeHitTest(for event: NSEvent?) -> Bool {
-        return event?.type == .rightMouseDown
+        return shouldConsumeTitlebarEvent(event)
     }
 }
 
@@ -46,9 +192,29 @@ final class TabStripBarController: NSViewController {
     /// Hosting view for the right-side button cluster.
     private var rightButtonsHostingView: SafeAreaIgnoringHostingView<TabStripRightButtons>?
 
+    /// Hosting view for the active-Space picker, pinned to the trailing edge
+    /// of the tab strip row so it shares a horizontal line with the pinned
+    /// tabs and the new-tab button.
+    private var spacesPickerHostingView: SafeAreaIgnoringThemedHostingView?
+
+    /// Last-applied picker visibility, so the toggle observer only remakes
+    /// constraints when the master Spaces flag actually flips.
+    private var lastSpacesPickerEnabled: Bool?
+    private var cancellables = Set<AnyCancellable>()
+
     private lazy var contextMenuHelper = TabAreaContextMenuHelper(browserState: browserState, isHorizontalLayout: true)
 
     private lazy var stripContextMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }()
+
+    /// Space-switcher menu dropped by the active-Space chip on hover / left-click
+    /// (the menu rendition of the old switcher popover). Populated lazily in
+    /// `menuNeedsUpdate` so it always reflects the current Space list and active
+    /// Space; distinct from `stripContextMenu`, which the chip shows on right-click.
+    private lazy var spaceSwitcherMenu: NSMenu = {
         let menu = NSMenu()
         menu.delegate = self
         return menu
@@ -109,6 +275,19 @@ final class TabStripBarController: NSViewController {
     
     /// Horizontal inset that aligns the strip with the surrounding chrome.
     private static let horizontalInset: CGFloat = 78 + 10
+
+    /// Leading inset for the active-Space chip, tuned so the Space icon sits
+    /// between the macOS traffic-light buttons and the first pinned tab. The
+    /// first tab is pinned to the chip's trailing edge, so moving the chip only
+    /// changes the *left* gap (the icon→tab gap moves with it). The chip uses
+    /// tight internal padding (`SpacesStripView.compactChipHorizontalPadding`),
+    /// so the inset carries the left clearance.
+    private static let trafficLightInset: CGFloat = 80
+
+    /// Maximum width budget for the leading active-Space chip. Short names hug
+    /// their content; long names truncate inside this budget rather than
+    /// stealing room from the tabs.
+    private static let spacesPickerWidth: CGFloat = 150
     
     // MARK: - UI Setup
     
@@ -128,23 +307,136 @@ final class TabStripBarController: NSViewController {
         hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
         rightButtonsHostingView = hostingView
         view.addSubview(hostingView)
-        
+
+        // Active-Space picker — a compact icon+name chip pinned to the leading
+        // edge, just to the right of the macOS traffic lights, so the user can
+        // switch Space from the same row that hosts the tabs. Falls back to the
+        // manager's key slot during early window bringup before the controller
+        // wires up.
+        let slot = browserState.windowController?.slot
+            ?? SpaceManager.shared.keySlot
+            ?? SpaceManager.shared.createSlot(initialSpaceId: nil)
+        let spacesPicker = SpacesStripView(
+            manager: SpaceManager.shared,
+            slot: slot,
+            showsEllipsisAffordance: false,
+            resolveOwnerController: { [weak browserState] in browserState?.windowController }
+        )
+        let spacesHostingView = SafeAreaIgnoringThemedHostingView(
+            rootView: spacesPicker,
+            themeSource: browserState.themeContext
+        )
+        spacesHostingView.setContentHuggingPriority(.required, for: .horizontal)
+        spacesHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        spacesPickerHostingView = spacesHostingView
+        view.addSubview(spacesHostingView)
+
         view.addSubview(tabStrip)
         view.menu = stripContextMenu
         tabStrip.menu = stripContextMenu
         hostingView.menu = stripContextMenu
-        
-        tabStrip.snp.makeConstraints { make in
-            make.leading.equalToSuperview().inset(Self.horizontalInset)
-            make.top.bottom.equalToSuperview()
-            make.trailing.equalTo(hostingView.snp.leading)
+        // Right-clicking the active-Space chip shows the same strip context menu
+        // as the rest of the tab bar (the active-Space controls). Hovering or
+        // left-clicking it instead drops the Space-switcher menu, popped by
+        // SafeAreaIgnoringThemedHostingView (mouseEntered / mouseDown).
+        spacesHostingView.menu = stripContextMenu
+        spacesHostingView.primaryMenu = spaceSwitcherMenu
+
+        // The tab strip's leading edge depends on the active-Space picker (it
+        // starts just after it), so its constraints are made alongside the
+        // picker's in `applySpacesPickerVisibility`.
+        applySpacesPickerVisibility()
+        observeSpacesFeatureFlag()
+
+        (view as? TabStripBarView)?.onSpaceSwipe = { [weak self] step in
+            self?.activateAdjacentSpace(by: step)
         }
-        
-        hostingView.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(WebContentConstant.edgesSpacing)
+    }
+
+    /// Switches THIS window's active Space, clamped at the first/last Space
+    /// (no wrap-around) so the slide animation direction always matches the
+    /// swipe. At a clamp edge a rubber-band end effect plays instead of the
+    /// swipe being swallowed. Traditional-layout counterpart of
+    /// `SidebarViewController.activateAdjacentSpace` — the sidebar owns the
+    /// gesture in vertical layouts.
+    private func activateAdjacentSpace(by step: Int) {
+        guard PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional,
+              spacesPickerEligible else { return }
+        let spaces = SpaceManager.shared.spaces
+        guard let slot = browserState.windowController?.slot ?? SpaceManager.shared.keySlot,
+              let currentId = slot.activeSpaceId,
+              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else { return }
+        let targetIdx = currentIdx + step
+        guard spaces.indices.contains(targetIdx) else {
+            // Already at the first/last Space (or only one exists) — nowhere to
+            // switch, so play the rubber-band end effect instead of silently
+            // swallowing the swipe.
+            browserState.windowController?.bounceContentForSpaceSwitchEdge(forward: step > 0)
+            return
+        }
+        slot.activate(spaceId: spaces[targetIdx].spaceId, userInitiated: true)
+    }
+
+    /// Shows or hides the active-Space picker to match the master Spaces
+    /// feature flag, and lays out the row around it. The picker is a compact
+    /// chip pinned to the leading edge (just past the traffic lights); the tab
+    /// strip starts right after it. When the feature is off the picker
+    /// collapses to zero width and the tab strip reclaims the leading inset.
+    /// Whether the active-Space picker should appear in this window: the master
+    /// Spaces flag must be on AND the window must not be Incognito. Off-the-record
+    /// sessions are a single ephemeral context with no Spaces, so the chip and its
+    /// swipe-to-switch gesture are suppressed (mirroring the sidebar layout).
+    private var spacesPickerEligible: Bool {
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() && !browserState.isIncognito
+    }
+
+    private func applySpacesPickerVisibility() {
+        guard let spacesView = spacesPickerHostingView,
+              let rightButtons = rightButtonsHostingView else { return }
+        let enabled = spacesPickerEligible
+        guard lastSpacesPickerEnabled != enabled else { return }
+        lastSpacesPickerEnabled = enabled
+
+        spacesView.isHidden = !enabled
+        spacesView.snp.remakeConstraints { make in
+            make.leading.equalToSuperview().inset(Self.trafficLightInset)
+            make.centerY.equalToSuperview().offset(-2)
+            if enabled {
+                // Hug the icon+name (content hugging is required) but never
+                // grow past the budget — long names truncate instead.
+                make.width.lessThanOrEqualTo(Self.spacesPickerWidth)
+            } else {
+                make.width.equalTo(0)
+            }
+            make.height.equalTo(SpacesStripView.height)
+        }
+        rightButtons.snp.remakeConstraints { make in
             make.centerY.equalToSuperview().offset(-2)
             make.width.equalTo(Self.horizontalInset)
+            make.trailing.equalToSuperview().inset(WebContentConstant.edgesSpacing)
         }
+        tabStrip.snp.remakeConstraints { make in
+            make.top.bottom.equalToSuperview()
+            make.trailing.equalTo(rightButtons.snp.leading)
+            if enabled {
+                make.leading.equalTo(spacesView.snp.trailing).offset(6)
+            } else {
+                make.leading.equalToSuperview().inset(Self.horizontalInset)
+            }
+        }
+    }
+
+    /// Re-applies the picker visibility whenever the master Spaces flag flips.
+    /// The toggle writes `UserDefaults.standard`, so the change arrives via
+    /// `didChangeNotification`; the visibility applier no-ops unless the
+    /// resolved state actually changed.
+    private func observeSpacesFeatureFlag() {
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applySpacesPickerVisibility()
+            }
+            .store(in: &cancellables)
     }
     
     // MARK: - Card Entry Handling
@@ -167,7 +459,10 @@ final class TabStripBarController: NSViewController {
 
 extension TabStripBarController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === stripContextMenu else { return }
-        contextMenuHelper.populate(menu)
+        if menu === stripContextMenu {
+            contextMenuHelper.populate(menu)
+        } else if menu === spaceSwitcherMenu {
+            AppController.shared?.populateSpaceSwitcherMenu(menu)
+        }
     }
 }

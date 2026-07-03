@@ -48,6 +48,17 @@ import PostHog
     override init() {
         super.init()
         Self.shared = self
+        // Opt out of AppKit's window-state restoration. macOS otherwise
+        // re-enters native fullscreen on a previously-fullscreen window a few
+        // seconds into the next launch (its own Spaces/saved-state restoration),
+        // independent of Chromium's restored show-state and the window's
+        // `isRestorable` — leaving restored windows fullscreen (and the reconcile
+        // then orphans empty fullscreen Spaces). Chromium owns tab/session
+        // restore and Phi owns window frame/Space affinity, so AppKit's
+        // window-state restoration is redundant here; turning it off makes
+        // restored windows come back as normal windows. Set in `init` (before
+        // `applicationWillFinishLaunching`) so it lands before AppKit reads it.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -81,6 +92,10 @@ import PostHog
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(loginCompleted(_:)),
                                                name: .loginCompleted,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(refreshSpacesMenuVisibility),
+                                               name: .activeBrowserWindowDidChange,
                                                object: nil)
         
         if PhiPreferences.AISettings.launchSentinelOnLogin.loadValue() {
@@ -148,6 +163,10 @@ import PostHog
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppLogInfo("-----------------------------  Quitting: \(Self.makeClientString()) ------------------------------")
+        // Note: on Cmd+Q this fires AFTER Chromium's window teardown; the restore
+        // snapshot is frozen earlier, in phiWillTryToTerminateApplicationNotification.
+        // Re-assert here as a backstop for any quit path that reaches this hook.
+        SpaceManager.shared.markTerminating()
         return .terminateNow
     }
     
@@ -177,7 +196,13 @@ import PostHog
             } else {
                 AppLogDebug("reopen: access token still fresh, skipping renew")
             }
-            return ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
+            let handled = ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
+            // Chromium's reopen surfaces every browser window it owns, which
+            // un-hides the slots' hidden sibling Space windows. Re-assert the
+            // one-visible-window-per-slot invariant so only the active Space
+            // stays on screen.
+            SpaceManager.shared.reconcileSlotVisibilityAfterReopen()
+            return handled
         }
     }
     
@@ -254,6 +279,14 @@ import PostHog
     
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
+        // Posted (synchronously, main thread) by phi_app_controller_mac.mm's
+        // -tryToTerminateApplication: BEFORE chrome::CloseAllBrowsers() tears the
+        // windows down. This is the only quit signal that fires ahead of that
+        // teardown cascade (the AppKit applicationWillTerminate hook runs after
+        // it). Freeze the restore snapshot here so the closing windows can't
+        // drain it — the next launch then regroups restored windows into their
+        // slots and re-enters fullscreen.
+        SpaceManager.shared.markTerminating()
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {

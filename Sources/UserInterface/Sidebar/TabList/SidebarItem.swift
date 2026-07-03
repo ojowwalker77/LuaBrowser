@@ -95,8 +95,13 @@ final class SplitPairSidebarItem: SidebarItem, ContextMenuRepresentable {
     }
 
     /// Drives the merged cell's context menu off the left pane so the
-    /// user gets split-aware items (Remove from Split, etc.).
+    /// user gets split-aware items (Remove from Split, etc.) after the
+    /// shared multi-selection menu gets first chance to take over.
     @MainActor func makeContextMenu(on menu: NSMenu) {
+        if let browserState,
+           TabMultiSelectionMenu.populateIfNeeded(menu, browserState: browserState) {
+            return
+        }
         leftTab.makeContextMenu(on: menu)
     }
 }
@@ -159,6 +164,8 @@ extension NSPasteboard.PasteboardType {
     static let pinnedTab = NSPasteboard.PasteboardType("com.phibrowser.pinnedTab")
     /// Normal-tab pasteboard type storing `guid`.
     static let normalTab = NSPasteboard.PasteboardType("com.phibrowser.normalTab")
+    /// Multi-selection normal-tab pasteboard type storing comma-separated guids.
+    static let normalTabs = NSPasteboard.PasteboardType("com.phibrowser.normalTabs")
     /// Bookmark pasteboard type storing the bookmark GUID.
     static let phiBookmark = NSPasteboard.PasteboardType("com.phibrowser.bookmark")
     /// Source window identifier used for cross-window drags.
@@ -167,4 +174,15 @@ extension NSPasteboard.PasteboardType {
     /// when the user drags a `TabGroupSidebarItem`'s header — the
     /// payload identifies the entire contiguous group block.
     static let tabGroup = NSPasteboard.PasteboardType("com.phibrowser.tabGroup")
+}
+
+extension NSPasteboard {
+    func phiNormalTabIds() -> [Int] {
+        guard let payload = string(forType: .normalTabs) else { return [] }
+        var seen = Set<Int>()
+        return payload
+            .split(separator: ",")
+            .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { seen.insert($0).inserted }
+    }
 }

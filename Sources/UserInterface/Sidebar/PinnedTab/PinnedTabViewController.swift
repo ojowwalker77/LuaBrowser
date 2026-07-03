@@ -223,6 +223,7 @@ class PinnedTabViewController: NSViewController {
     private var placeholderTab: Tab?
     private var draggedPinnedGuid: String?
     private var isExternalDrag = false
+    private var isShowingMultiSelectionPlaceholderDragImage = false
     private var hasAppliedInitialContentSnapshot = false
     private var isActive = false
     /// Last applied left|right DB-guid pair per splitId. `PinnedSplitGroupItem`
@@ -232,7 +233,7 @@ class PinnedTabViewController: NSViewController {
     /// affected items so the icons follow the rendered pane order.
     private var lastSplitItemPairs: [String: String] = [:]
 
-    @Published var contentHeight: CGFloat = 10
+    @Published var contentHeight: CGFloat = 0
     
     init(state: BrowserState?, hostVC: NSViewController? = nil) {
         self.browserState = state
@@ -455,8 +456,8 @@ class PinnedTabViewController: NSViewController {
             $0.isSelected = false
             $0.view.isHidden = false
         }
-        if contentHeight != 10 {
-            contentHeight = 10
+        if contentHeight != 0 {
+            contentHeight = 0
         }
     }
 
@@ -757,9 +758,10 @@ class PinnedTabViewController: NSViewController {
         return tab.guidInLocalDB == draggedPinnedGuid
     }
 
-    private func updateEmptyViewVisibility(isDraggingTab: Bool = false) {
+    private func updateEmptyViewVisibility(isDraggingTab: Bool? = nil) {
         let isEmpty = pinnedTabs.isEmpty && pinnedExtensionItems.isEmpty
-        let showEmptyView = isEmpty && isDraggingTab
+        let draggingTab = isDraggingTab ?? browserState?.isDraggingTab ?? false
+        let showEmptyView = isEmpty && draggingTab
         emptyView.isHidden = !showEmptyView
         collectionView.isHidden = showEmptyView
     }
@@ -976,7 +978,7 @@ extension PinnedTabViewController {
             pinnedTabs = latestTabs
         }
         applySnapshot(animatingDifferences: true)
-        updateEmptyViewVisibility()
+        updateEmptyViewVisibility(isDraggingTab: false)
 
         // Unhide all items to ensure the dragged item reappears and the UI is clean.
         for item in collectionView.visibleItems() {
@@ -1010,11 +1012,17 @@ extension PinnedTabViewController {
         }
 
         let pasteboard = draggingInfo.draggingPasteboard
+        updateMultiSelectionPlaceholderDragImage(for: draggingInfo)
 
         if isCrossWindowDrag(pasteboard),
            let sourceState = sourceBrowserState(for: pasteboard),
            let targetState = browserState,
            !targetState.canAcceptCrossWindowDrag(from: sourceState) {
+            return []
+        }
+
+        if pasteboard.phiNormalTabIds().count > 1,
+           isCrossWindowDrag(pasteboard) {
             return []
         }
 
@@ -1056,6 +1064,15 @@ extension PinnedTabViewController {
         
         isDragging = false // Set isDragging to false before browserState updates.
         browserState?.tabDraggingSession.end()
+        isShowingMultiSelectionPlaceholderDragImage = false
+
+        let batchTabIds = pasteboard.phiNormalTabIds()
+        if batchTabIds.count > 1 {
+            guard !isCrossWindow else { return false }
+            let destinationIndex = min(finalDestinationIndex, pinnedTabs.count)
+            return browserState?.moveNormalTabs(tabIds: batchTabIds,
+                                                toPinnedTabs: destinationIndex) ?? false
+        }
 
         if isCrossWindow, let sourceState {
             if let guidString = pasteboard.string(forType: .pinnedTab) {
@@ -1171,6 +1188,7 @@ extension PinnedTabViewController {
 // MARK: - ReorderingCollectionViewDelegate
 extension PinnedTabViewController: ReorderingCollectionViewDelegate {
     func collectionView(_ collectionView: NSCollectionView, draggingExited info: NSDraggingInfo?) {
+        restoreMultiSelectionDragImageIfNeeded()
         // If it was an external drag, remove the placeholder when the drag exits the view.
         if isExternalDrag, let placeholder = placeholderTab {
             pinnedTabs.removeAll { $0 == placeholder }
@@ -1185,6 +1203,7 @@ extension PinnedTabViewController: ReorderingCollectionViewDelegate {
         updateDraggingSession(from: draggingInfo)
         guard let targetSection = Section(rawValue: indexPath.section), targetSection == .tabs else { return }
         let pasteboard = draggingInfo.draggingPasteboard
+        updateMultiSelectionPlaceholderDragImage(for: draggingInfo)
         let isCrossWindow = isCrossWindowDrag(pasteboard)
         
         // Case 1: Internal Reorder
@@ -1275,11 +1294,13 @@ extension PinnedTabViewController: ReorderingCollectionViewDelegate {
 // MARK: - NSDraggingDestination (for empty view)
 extension PinnedTabViewController: NSDraggingDestination {
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        updateDraggingSession(from: sender)
         // Only use the empty-state drop target when there are no pinned tabs yet.
         guard pinnedTabs.isEmpty else {
+            restoreMultiSelectionDragImageIfNeeded()
             return []
         }
+        updateDraggingSession(from: sender)
+        updateMultiSelectionPlaceholderDragImage(for: sender)
 
         let pasteboard = sender.draggingPasteboard
         
@@ -1309,12 +1330,12 @@ extension PinnedTabViewController: NSDraggingDestination {
     }
 
     func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        updateDraggingSession(from: sender)
         guard pinnedTabs.isEmpty else { return [] }
         return draggingEntered(sender)
     }
 
     func draggingExited(_ sender: NSDraggingInfo?) {
+        restoreMultiSelectionDragImageIfNeeded()
         // Clear the empty-state highlight.
         emptyView.layer?.backgroundColor = NSColor.clear.cgColor
     }
@@ -1330,6 +1351,7 @@ extension PinnedTabViewController: NSDraggingDestination {
         let pasteboard = sender.draggingPasteboard
         defer {
             self.browserState?.tabDraggingSession.end()
+            self.isShowingMultiSelectionPlaceholderDragImage = false
         }
         
         if isCrossWindowDrag(pasteboard),
@@ -1338,8 +1360,19 @@ extension PinnedTabViewController: NSDraggingDestination {
            !targetState.canAcceptCrossWindowDrag(from: sourceState) {
             return false
         }
+
+        if pasteboard.phiNormalTabIds().count > 1,
+           isCrossWindowDrag(pasteboard) {
+            return false
+        }
         
         // Handle normal-tab drops.
+        let batchTabIds = pasteboard.phiNormalTabIds()
+        if batchTabIds.count > 1 {
+            return browserState?.moveNormalTabs(tabIds: batchTabIds,
+                                                toPinnedTabs: 0) ?? false
+        }
+
         if let guidString = pasteboard.string(forType: .normalTab),
            let guid = Int(guidString) {
             // Insert at the first pinned position.
@@ -1371,6 +1404,166 @@ extension PinnedTabViewController {
             return CGPoint(x: sp.x, y: sp.y)
         }
         browserState.tabDraggingSession.update(screenLocation: screenPoint)
+    }
+
+    private func updateMultiSelectionPlaceholderDragImage(for info: NSDraggingInfo) {
+        let pasteboard = info.draggingPasteboard
+        let tabIds = pasteboard.phiNormalTabIds()
+        guard tabIds.count > 1,
+              !isCrossWindowDrag(pasteboard) else {
+            restoreMultiSelectionDragImageIfNeeded()
+            return
+        }
+
+        guard let browserState else { return }
+        browserState.tabDraggingSession.showTemporaryDragImage(
+            pinnedMultiSelectionDragImage(tabIds: tabIds, browserState: browserState)
+        )
+        isShowingMultiSelectionPlaceholderDragImage = true
+    }
+
+    private func restoreMultiSelectionDragImageIfNeeded() {
+        guard isShowingMultiSelectionPlaceholderDragImage else { return }
+        browserState?.tabDraggingSession.restoreOriginalDragImageForCurrentSession()
+        isShowingMultiSelectionPlaceholderDragImage = false
+    }
+
+    private func pinnedMultiSelectionDragImage(tabIds: [Int], browserState: BrowserState) -> NSImage {
+        let layoutSize = customLayout.currentItemSize
+        let imageSize = NSSize(
+            width: max(layoutSize.width, 53),
+            height: max(layoutSize.height, 45)
+        )
+        let orderedIds = orderedPinnedMultiSelectionPreviewTabIds(tabIds, browserState: browserState)
+        let representativeIds = Array(TabDragCountBadge.visibleRepresentativeTabIds(
+            tabIds: orderedIds,
+            browserState: browserState
+        ).prefix(3))
+        let visibleCount = TabDragCountBadge.visibleUnitCount(
+            tabIds: tabIds,
+            browserState: browserState
+        )
+        let image = NSImage(size: imageSize)
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: imageSize).fill()
+
+        let iconBoxSize: CGFloat = 24
+        let faviconSize: CGFloat = 18
+        let stackOffset: CGFloat = 4
+        let visibleDepth = CGFloat(max(0, representativeIds.count - 1))
+        let stackSize = iconBoxSize + visibleDepth * stackOffset
+        let stackOrigin = NSPoint(
+            x: (imageSize.width - stackSize) * 0.5,
+            y: (imageSize.height - stackSize) * 0.5 + visibleDepth * stackOffset
+        )
+
+        for index in stride(from: representativeIds.count - 1, through: 0, by: -1) {
+            let depth = CGFloat(index)
+            let boxRect = NSRect(
+                x: stackOrigin.x + depth * stackOffset,
+                y: stackOrigin.y - depth * stackOffset,
+                width: iconBoxSize,
+                height: iconBoxSize
+            )
+            drawPinnedMultiSelectionFaviconBox(
+                tabId: representativeIds[index],
+                in: boxRect,
+                faviconSize: faviconSize,
+                browserState: browserState,
+                isFront: index == 0
+            )
+        }
+
+        let badgeSize = TabDragCountBadge.size(for: visibleCount)
+        let badgeRect = NSRect(
+            x: 0,
+            y: imageSize.height - badgeSize.height,
+            width: badgeSize.width,
+            height: badgeSize.height
+        )
+        TabDragCountBadge.draw(count: visibleCount, in: badgeRect)
+
+        return image
+    }
+
+    private func orderedPinnedMultiSelectionPreviewTabIds(_ tabIds: [Int],
+                                                          browserState: BrowserState) -> [Int] {
+        var orderedIds: [Int] = []
+        func appendIfPresent(_ tabId: Int?) {
+            guard let tabId,
+                  tabIds.contains(tabId),
+                  !orderedIds.contains(tabId) else {
+                return
+            }
+            orderedIds.append(tabId)
+        }
+
+        appendIfPresent(browserState.focusingTab?.guid)
+        for tabId in tabIds {
+            appendIfPresent(tabId)
+        }
+        return orderedIds
+    }
+
+    private func drawPinnedMultiSelectionFaviconBox(tabId: Int,
+                                                    in boxRect: NSRect,
+                                                    faviconSize: CGFloat,
+                                                    browserState: BrowserState,
+                                                    isFront: Bool) {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
+        shadow.shadowBlurRadius = 5
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+
+        NSGraphicsContext.saveGraphicsState()
+        shadow.set()
+        let path = NSBezierPath(
+            roundedRect: boxRect,
+            xRadius: 7,
+            yRadius: 7
+        )
+        NSColor.controlBackgroundColor.withAlphaComponent(isFront ? 0.96 : 0.88).setFill()
+        path.fill()
+        NSColor.separatorColor.withAlphaComponent(0.28).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let favicon = pinnedMultiSelectionFavicon(tabId: tabId, browserState: browserState) else {
+            return
+        }
+
+        let faviconRect = NSRect(
+            x: boxRect.midX - faviconSize * 0.5,
+            y: boxRect.midY - faviconSize * 0.5,
+            width: faviconSize,
+            height: faviconSize
+        )
+        favicon.draw(
+            in: faviconRect,
+            from: NSRect(origin: .zero, size: favicon.size),
+            operation: .sourceOver,
+            fraction: isFront ? 1.0 : 0.92
+        )
+    }
+
+    private func pinnedMultiSelectionFavicon(tabId: Int, browserState: BrowserState) -> NSImage? {
+        guard let tab = browserState.tabs.first(where: { $0.guid == tabId }) else {
+            return FaviconConfiguration.default.placeholder
+        }
+        if let data = tab.liveFaviconData ?? tab.cachedFaviconData,
+           let image = NSImage(data: data) {
+            return image
+        }
+        if let urlString = tab.url,
+           let url = URL(string: urlString),
+           FaviconConfiguration.shouldUseDefaultFavicon(for: url) {
+            return .phiDefaultFavicon
+        }
+        return FaviconConfiguration.default.placeholder
     }
     
     private func dragSourceWindowId(from pasteboard: NSPasteboard) -> Int? {

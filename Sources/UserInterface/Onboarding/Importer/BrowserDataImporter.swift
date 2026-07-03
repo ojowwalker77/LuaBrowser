@@ -15,15 +15,22 @@ class BrowserDataImporter {
         case done
     }
 
-    struct ChromeProfileInfo: Equatable {
+    struct ChromiumProfileInfo: Equatable {
         let directory: String
         let name: String
         let email: String?
     }
 
-    let targetProfileId: String
-    let targetWindowId: Int?
-    
+    private(set) var targetProfileId: String
+    private(set) var targetSpaceId: String
+    private(set) var targetWindowId: Int?
+
+    /// True from the moment an import starts until its deferred bookmark
+    /// persistence finishes. While true the target must not be rebound, or the
+    /// pending snapshot would be saved into the newly-bound Space instead of
+    /// the one the running import was started for.
+    private(set) var isImporting = false
+
     // Continuations for active import requests, keyed by browser type.
     private var importContinuations: [BrowserType: CheckedContinuation<Bool, Never>] = [:]
     private let continuationQueue = DispatchQueue(label: "com.phibrowser.import.continuation")
@@ -32,8 +39,9 @@ class BrowserDataImporter {
     @Published private(set) var phase: Phase = .waiting
     @Published var status: String = ""
     
-    init(targetProfileId: String = LocalStore.defaultProfileId, targetWindowId: Int? = nil) {
+    init(targetProfileId: String = LocalStore.defaultProfileId, targetSpaceId: String = LocalStore.defaultSpaceId, targetWindowId: Int? = nil) {
         self.targetProfileId = targetProfileId
+        self.targetSpaceId = targetSpaceId
         self.targetWindowId = targetWindowId
         NotificationCenter.default.addObserver(
             self,
@@ -46,16 +54,61 @@ class BrowserDataImporter {
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
-    
-    /// Starts importing data from the selected browsers.
+
+    /// Retargets a future import to a different window/profile/Space when the
+    /// single import window is re-invoked from another Space. Callers must skip
+    /// this while `isImporting` is true so the in-flight import keeps its
+    /// original destination.
+    func updateTarget(profileId: String, spaceId: String, windowId: Int?) {
+        targetProfileId = profileId
+        targetSpaceId = spaceId
+        targetWindowId = windowId
+    }
+
+    /// The Arc Space bookmark root to persist, or nil. Gated on Arc actually being
+    /// among the selected browsers (defense in depth: never write Arc bookmarks for a
+    /// Chrome/Safari-only import even if an Arc space is cached), bookmarks being
+    /// requested for Arc, and a space being chosen.
+    static func arcBookmarkRoot(
+        options: [BrowserType],
+        arcSpace: ArcSpace?,
+        wantsBookmarks: Bool
+    ) -> ArcDataParserTool.Bookmark? {
+        guard options.contains(.arc), let arcSpace, wantsBookmarks else { return nil }
+        return arcSpace.root
+    }
+
+    /// Starts importing data from the selected browsers. Returns `false` only
+    /// when the call was ignored because an import is already in flight, so the
+    /// caller can skip its completion handler instead of advancing/closing the
+    /// UI out from under the running import.
     @MainActor
-    func startImportData(_ options: [BrowserType], chromeProfileDirectory: String? = nil, dataTypesPerBrowser: [BrowserType: [String]]? = nil) async {
+    @discardableResult
+    func startImportData(
+        _ options: [BrowserType],
+        chromeProfileDirectory: String? = nil,
+        arcSpace: ArcSpace? = nil,
+        dataTypesPerBrowser: [BrowserType: [String]]? = nil
+    ) async -> Bool {
         // Prefer the caller-provided window so Chromium import state follows the initiating window/profile.
         guard let windowId = targetWindowId ?? MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() else {
             AppLogError("No available window for import")
-            return
+            return true
         }
-        
+
+        // Reentrancy gate: a second start (rapid double-click, repeated action
+        // dispatch, programmatic re-call) while an import is unresolved would
+        // overwrite the BrowserType-keyed continuation and race the shared
+        // Chromium bookmark staging. @MainActor plus setting the flag with no
+        // preceding await makes this check atomic against a queued second call.
+        // Returning false lets the caller skip its completion for this ignored start.
+        guard !isImporting else {
+            AppLogInfo("Import already in progress; ignoring re-entrant start")
+            return false
+        }
+        isImporting = true
+        let lockedSpaceId = targetSpaceId
+        ImportTargetLock.shared.begin(into: lockedSpaceId)
         failedImports.removeAll()
 
         // Only clear bookmarks if at least one browser is importing bookmarks
@@ -77,47 +130,53 @@ class BrowserDataImporter {
                 bridgeDataTypes = bridgeDataTypes?.filter { $0 != ImportDataType.bookmarks.rawValue }
             }
 
-            if option != .arc || !(bridgeDataTypes?.isEmpty ?? true) {
-                let success = await importData(
-                    option,
-                    windowId: windowId,
-                    chromeProfileDirectory: chromeProfileDirectory,
-                    dataTypes: bridgeDataTypes
-                )
-
-                if !success {
-                    failedImports.append(option)
-                }
-
+            let sourceProfileDirectory: String?
+            switch option {
+            case .chrome: sourceProfileDirectory = chromeProfileDirectory
+            case .arc:    sourceProfileDirectory = arcSpace?.profile.directoryName
+            default:      sourceProfileDirectory = nil
+            }
+            // .unknown Arc profile (nil dir) → bookmarks only; never import Default's data.
+            let arcDataImportable = option != .arc || sourceProfileDirectory != nil
+            if (option != .arc || !(bridgeDataTypes?.isEmpty ?? true)), arcDataImportable {
+                let success = await importData(option, windowId: windowId,
+                    sourceProfileDirectory: sourceProfileDirectory, dataTypes: bridgeDataTypes)
+                if !success { failedImports.append(option) }
                 AppLogInfo("Import from \(option) completed with success: \(success)")
+            } else if option == .arc, !arcDataImportable, !(bridgeDataTypes?.isEmpty ?? true) {
+                // Deliberate, safe skip: the chosen Space's profile is unresolved
+                // (.unknown), so we import its bookmarks only and never fall back to
+                // Default's data. Surface it so the skip isn't silent.
+                AppLogWarn("Arc data import skipped for unresolved source profile; imported bookmarks only")
             }
         }
 
-        // Arc bookmarks: parse locally if user selected bookmarks for Arc
-        let arcBookmarks: [ArcDataParserTool.Bookmark]
         let arcWantsBookmarks = dataTypesPerBrowser?[.arc]?.contains(ImportDataType.bookmarks.rawValue) ?? true
-        if options.contains(.arc), arcWantsBookmarks, let arcData = getArcSidebarData() {
-            do {
-                arcBookmarks = try ArcDataParserTool.parse(data: arcData)
-            } catch {
-                AppLogError("\(error.localizedDescription)")
-                arcBookmarks = []
-            }
-        } else {
-            arcBookmarks = []
-        }
+        let arcSpaceRoot = Self.arcBookmarkRoot(options: options, arcSpace: arcSpace, wantsBookmarks: arcWantsBookmarks)
 
         updateCompletionStatus()
 
-        if importingBookmarks || !arcBookmarks.isEmpty {
+        if importingBookmarks || arcSpaceRoot != nil {
             Task { [weak self] in
-                guard let self else { return }
-                await self.persistImportedBookmarksAfterSnapshot(
-                    windowId: windowId,
-                    arcBookmarks: arcBookmarks
-                )
+                if let self {
+                    await self.persistImportedBookmarksAfterSnapshot(
+                        windowId: windowId,
+                        arcSpaceRoot: arcSpaceRoot
+                    )
+                    await MainActor.run { self.isImporting = false }
+                }
+                // Release the Space lock even if the importer was deallocated
+                // (its window can close right after startImportData returns);
+                // otherwise the Space stays locked until restart. `lockedSpaceId`
+                // is value-captured and the lock is global, so this needs no self.
+                ImportTargetLock.shared.end(into: lockedSpaceId)
             }
+        } else {
+            isImporting = false
+            ImportTargetLock.shared.end(into: lockedSpaceId)
         }
+
+        return true
     }
     
     
@@ -126,12 +185,19 @@ class BrowserDataImporter {
             .appendingPathComponent("Library/Application Support/Arc/StorableSidebar.json")
         return try? Data(contentsOf: localStateURL)
     }
+
+    /// Returns all Arc Spaces from StorableSidebar.json, sorted by title.
+    /// Used by the import picker to let the user choose which Space to import.
+    func loadArcSpaces() -> [ArcSpace] {
+        guard let data = getArcSidebarData() else { return [] }
+        return (try? ArcDataParserTool.parse(data: data)) ?? []
+    }
     
     /// Imports data for one browser using a continuation-backed async flow.
     private func importData(
         _ option: BrowserType,
         windowId: Int,
-        chromeProfileDirectory: String?,
+        sourceProfileDirectory: String?,
         dataTypes: [String]?
     ) async -> Bool {
         return await withCheckedContinuation { continuation in
@@ -144,7 +210,7 @@ class BrowserDataImporter {
                 self.importContinuations[option] = continuation
 
                 DispatchQueue.main.async {
-                    let profile = (option == .chrome ? chromeProfileDirectory : nil) ?? ""
+                    let profile = sourceProfileDirectory ?? ""
                     ChromiumLauncher.sharedInstance().bridge?.importBrowserData(
                         from: option,
                         profile: profile,
@@ -222,41 +288,32 @@ class BrowserDataImporter {
 
     private func persistImportedBookmarksAfterSnapshot(
         windowId: Int,
-        arcBookmarks: [ArcDataParserTool.Bookmark]
+        arcSpaceRoot: ArcDataParserTool.Bookmark?
     ) async {
         try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
 
         let bookmarkWrappers = await MainActor.run {
-            ChromiumLauncher
-                .sharedInstance()
-                .bridge?
-                .getAllBookmarks(withWindowId: windowId.int64Value)
+            ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(withWindowId: windowId.int64Value)
         }
 
-        await AccountController.shared.account?
-            .localStorage
-            .saveChromiumBookmarksToLocalStore(
-                bookmarkWrappers ?? [],
-                profileId: targetProfileId
-            )
+        await AccountController.shared.account?.localStorage.saveChromiumBookmarksToLocalStore(
+            bookmarkWrappers ?? [], profileId: targetProfileId, spaceId: targetSpaceId)
 
-        if !arcBookmarks.isEmpty {
+        if let arcSpaceRoot {
             await AccountController.shared.account?.localStorage.saveArcBookmarksToLocalStore(
-                arcBookmarks,
-                profileId: targetProfileId
-            )
+                arcSpaceRoot, profileId: targetProfileId, spaceId: targetSpaceId)
         }
 
         await AccountController.shared.account?.localStorage.reorderImportedBrowserFolders(
-            profileId: targetProfileId
-        )
+            profileId: targetProfileId, spaceId: targetSpaceId)
     }
 
-    func loadChromeProfiles() -> [ChromeProfileInfo] {
-        let localStateURL = FileManager.default.homeDirectoryForCurrentUser
+    func loadChromiumProfiles(
+        localStateURL: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Google/Chrome/Local State")
+    ) -> [ChromiumProfileInfo] {
         guard let data = try? Data(contentsOf: localStateURL) else {
-            AppLogError("Unable to read Chrome Local State at \(localStateURL.path)")
+            AppLogError("Unable to read Local State at \(localStateURL.path)")
             return []
         }
         guard
@@ -265,11 +322,11 @@ class BrowserDataImporter {
             let infoCache = profile["info_cache"] as? [String: Any],
             let profilesOrder = profile["profiles_order"] as? [String]
         else {
-            AppLogError("Invalid Chrome Local State profile structure")
+            AppLogError("Invalid Local State profile structure")
             return []
         }
 
-        var results: [ChromeProfileInfo] = []
+        var results: [ChromiumProfileInfo] = []
         results.reserveCapacity(profilesOrder.count)
         for directory in profilesOrder {
             guard let info = infoCache[directory] as? [String: Any] else {
@@ -277,7 +334,7 @@ class BrowserDataImporter {
             }
             let name = (info["name"] as? String) ?? directory
             let email = info["user_name"] as? String
-            results.append(ChromeProfileInfo(directory: directory, name: name, email: email))
+            results.append(ChromiumProfileInfo(directory: directory, name: name, email: email))
         }
 
         return results
@@ -287,4 +344,32 @@ class BrowserDataImporter {
 // MARK: - Notification Name
 extension Notification.Name {
     static let browserImportCompleted = Notification.Name("browserImportCompleted")
+}
+
+/// Tracks which Spaces currently have an import writing into them so a Space
+/// can't be deleted out from under an in-flight import — which would otherwise
+/// strand the imported bookmarks under an orphan root (the persist path also
+/// revalidates the Space as a backstop). The importer brackets this around its
+/// `isImporting` window. Lock-guarded rather than actor-isolated so the
+/// non-isolated `SpaceManager.deleteSpace` can consult it synchronously.
+final class ImportTargetLock {
+    static let shared = ImportTargetLock()
+    private let lock = NSLock()
+    private var importingSpaceIds: Set<String> = []
+    private init() {}
+
+    func begin(into spaceId: String) {
+        lock.lock(); defer { lock.unlock() }
+        importingSpaceIds.insert(spaceId)
+    }
+
+    func end(into spaceId: String) {
+        lock.lock(); defer { lock.unlock() }
+        importingSpaceIds.remove(spaceId)
+    }
+
+    func isImporting(into spaceId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return importingSpaceIds.contains(spaceId)
+    }
 }

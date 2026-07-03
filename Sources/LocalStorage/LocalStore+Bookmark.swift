@@ -28,7 +28,7 @@ extension LocalStore {
                         parentId: String?,
                         index: Int? = nil,
                         guid: String? = nil,
-                        spaceId: String? = nil,
+                        spaceId: String = LocalStore.defaultSpaceId,
                         secondaryUrl: String? = nil,
                         secondaryTitle: String? = nil,
                         favicon: Data? = nil) {
@@ -55,7 +55,7 @@ extension LocalStore {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context) else {
                     AppLogError("Parent folder not found when creating bookmark")
                     return
                 }
@@ -84,11 +84,11 @@ extension LocalStore {
                          parentId: String?,
                          index: Int? = nil,
                          guid: String? = nil,
-                         spaceId: String? = nil) {
+                         spaceId: String = LocalStore.defaultSpaceId) {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context) else {
                     AppLogError("Parent folder not found when creating directory")
                     return
                 }
@@ -116,6 +116,7 @@ extension LocalStore {
                                      bookmarkURL: String,
                                      bookmarkFavicon: Data? = nil,
                                      index: Int? = nil,
+                                     spaceId: String = LocalStore.defaultSpaceId,
                                      completion: ((Bool) -> Void)? = nil) {
         AppLogDebug("[BookmarkAdd] createDirectoryWithBookmark request folderTitle=\(folderTitle) parentId=\(parentId ?? "nil") folderGuid=\(folderGuid) bookmarkTitle=\(bookmarkTitle ?? "nil") bookmarkURL=\(bookmarkURL)")
         guard let normalizedBookmarkURL = normalizedURL(from: bookmarkURL) else {
@@ -126,7 +127,7 @@ extension LocalStore {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context) else {
                     AppLogError("Parent folder not found when creating directory with bookmark")
                     return
                 }
@@ -163,20 +164,51 @@ extension LocalStore {
                                       profileId: String,
                                       parentId: String?,
                                       index: Int?,
-                                      bookmarks: [(title: String?, url: String, guid: String, favicon: Data?)]) {
-        let normalizedBookmarks: [(title: String?, url: URL, guid: String, favicon: Data?)] = bookmarks.compactMap { bookmark in
-            guard let normalizedURL = normalizedURL(from: bookmark.url) else {
+                                      spaceId: String = LocalStore.defaultSpaceId,
+                                      bookmarks: [(title: String?,
+                                                   url: String,
+                                                   guid: String,
+                                                   secondaryUrl: String?,
+                                                   secondaryTitle: String?,
+                                                   favicon: Data?)]) {
+        let normalizedBookmarks: [(title: String?,
+                                   url: URL,
+                                   guid: String,
+                                   secondaryUrl: URL?,
+                                   secondaryTitle: String?,
+                                   favicon: Data?)] = bookmarks.compactMap { bookmark -> (title: String?,
+                                                                                            url: URL,
+                                                                                            guid: String,
+                                                                                            secondaryUrl: URL?,
+                                                                                            secondaryTitle: String?,
+                                                                                            favicon: Data?)? in
+            guard let primaryURL = normalizedURL(from: bookmark.url) else {
                 AppLogError("Invalid bookmark url: \(bookmark.url)")
                 return nil
             }
-            return (title: bookmark.title, url: normalizedURL, guid: bookmark.guid, favicon: bookmark.favicon)
+            let normalizedSecondaryURL: URL?
+            if let secondaryUrl = bookmark.secondaryUrl {
+                guard let normalized = normalizedURL(from: secondaryUrl) else {
+                    AppLogError("Invalid bookmark secondary url: \(secondaryUrl)")
+                    return nil
+                }
+                normalizedSecondaryURL = normalized
+            } else {
+                normalizedSecondaryURL = nil
+            }
+            return (title: bookmark.title,
+                    url: primaryURL,
+                    guid: bookmark.guid,
+                    secondaryUrl: normalizedSecondaryURL,
+                    secondaryTitle: bookmark.secondaryTitle,
+                    favicon: bookmark.favicon)
         }
         guard normalizedBookmarks.count == bookmarks.count else { return }
 
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context) else {
                     AppLogError("Parent folder not found when creating directory with bookmarks")
                     return
                 }
@@ -197,6 +229,8 @@ extension LocalStore {
                                                     index: childIndex,
                                                     guid: bookmark.guid,
                                                     spaceId: folder.spaceId,
+                                                    secondaryUrl: bookmark.secondaryUrl,
+                                                    secondaryTitle: bookmark.secondaryTitle,
                                                     favicon: bookmark.favicon,
                                                     now: now,
                                                     in: context)
@@ -207,36 +241,49 @@ extension LocalStore {
         }
     }
     
-    /// Ensures the hidden root folder exists for bookmarks without an explicit parent.
-    func createDefaultRootDir(profileId: String) {
+    /// Ensures the hidden root folder exists for bookmarks without an explicit
+    /// parent, in the given Space.
+    func createDefaultRootDir(profileId: String,
+                              spaceId: String = LocalStore.defaultSpaceId) {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                _ = try self.bookmarkRoot(profileId: profileId, in: context, createIfNeeded: true)
+                _ = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true)
             } catch {
                 AppLogError("Failed to create default root: \(error)")
             }
         }
     }
 
-    /// Persists bookmarks imported from Arc into the local store.
-    func saveArcBookmarksToLocalStore(_ bookmarks: [ArcDataParserTool.Bookmark], profileId: String) async {
+    /// Persists bookmarks from one Arc Space into the local store.
+    /// `spaceRoot` is the Space's bookmark root; its children are imported
+    /// directly under a Space-named landing folder. Nothing is written when
+    /// `spaceRoot` has no children (avoids empty folders for empty Spaces).
+    func saveArcBookmarksToLocalStore(
+        _ spaceRoot: ArcDataParserTool.Bookmark,
+        profileId: String,
+        spaceId: String = LocalStore.defaultSpaceId
+    ) async {
+        guard !spaceRoot.children.isEmpty else { return }   // no empty Space-named folder
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
+                guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
+                    AppLogWarn("Skipping Arc bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
+                    return
+                }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
-                      let root = try self.bookmarkRoot(profileId: profileId, in: context, createIfNeeded: true) else { return }
-                
+                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
+
                 let now = Date()
                 let importRoot = TabDataModel(
-                    title: Self.importedFromArcFolderTitle,
-                    guid: UUID().uuidString,
-                    index: 0,
-                    url: Self.folderPlaceholderURL,
-                    favicon: nil,
-                    createdDate: now,
-                    updatedDate: now
-                )
+                    // Defensive fallback: the parser fills the Space title (real or
+                    // localized "Untitled Space"), so this only matters if a nil-title
+                    // root ever reaches here — share the SAME localized fallback the
+                    // picker shows, not the legacy generic "Imported From Arc" name.
+                    title: spaceRoot.title ?? NSLocalizedString("Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
+                    guid: UUID().uuidString, index: 0, url: Self.folderPlaceholderURL,
+                    favicon: nil, createdDate: now, updatedDate: now)
                 importRoot.dataType = .bookmarkFolder
                 importRoot.isCreatedByChromium = false
                 importRoot.spaceId = root.spaceId
@@ -245,30 +292,16 @@ extension LocalStore {
                 importRoot.profile = profile
                 context.insert(importRoot)
                 try self.insert(node: importRoot, to: root, at: nil, in: context)
-                
-                func insertArcBookmark(
-                    _ arcBookmark: ArcDataParserTool.Bookmark,
-                    parent: TabDataModel,
-                    index: Int
-                ) throws {
+
+                func insertArcBookmark(_ arcBookmark: ArcDataParserTool.Bookmark, parent: TabDataModel, index: Int) throws {
                     let title = (arcBookmark.title?.isEmpty ?? true) ? "Untitled" : arcBookmark.title
-                    let url = arcBookmark.isFolder
-                        ? Self.folderPlaceholderURL
-                        : self.normalizedURL(from: arcBookmark.url)
+                    let url = arcBookmark.isFolder ? Self.folderPlaceholderURL : self.normalizedURL(from: arcBookmark.url)
                     guard let url else {
                         AppLogError("Skipping bookmark with invalid URL: \(arcBookmark.url ?? "nil")")
                         return
                     }
-                    
-                    let node = TabDataModel(
-                        title: title ?? "Untitled",
-                        guid: UUID().uuidString,
-                        index: 0,
-                        url: url,
-                        favicon: nil,
-                        createdDate: now,
-                        updatedDate: now
-                    )
+                    let node = TabDataModel(title: title ?? "Untitled", guid: UUID().uuidString,
+                        index: 0, url: url, favicon: nil, createdDate: now, updatedDate: now)
                     node.dataType = arcBookmark.isFolder ? .bookmarkFolder : .bookmark
                     node.isCreatedByChromium = false
                     node.spaceId = parent.spaceId
@@ -277,14 +310,14 @@ extension LocalStore {
                     node.profile = profile
                     context.insert(node)
                     try self.insert(node: node, to: parent, at: index, in: context)
-                    
                     for (childIndex, child) in arcBookmark.children.enumerated() {
                         try insertArcBookmark(child, parent: node, index: childIndex)
                     }
                 }
-                
-                for (index, bookmark) in bookmarks.enumerated() {
-                    try insertArcBookmark(bookmark, parent: importRoot, index: index)
+
+                // Insert the Space's children directly under the Space-named folder (no double-nest).
+                for (index, child) in spaceRoot.children.enumerated() {
+                    try insertArcBookmark(child, parent: importRoot, index: index)
                 }
             } catch {
                 AppLogError("Failed to save Arc bookmarks: \(error)")
@@ -292,12 +325,16 @@ extension LocalStore {
         }
     }
     
-    func saveChromiumBookmarksToLocalStore(_ bookmarks: [BookmarkWrapper], profileId: String) async {
+    func saveChromiumBookmarksToLocalStore(_ bookmarks: [BookmarkWrapper], profileId: String, spaceId: String = LocalStore.defaultSpaceId) async {
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
+                guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
+                    AppLogWarn("Skipping Chromium bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
+                    return
+                }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
-                      let root = try self.bookmarkRoot(profileId: profileId, in: context, createIfNeeded: true) else { return }
+                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
                 guard let bookmarksBar = bookmarks.first(where: { $0.title == "Bookmarks Bar" }) else {
                     AppLogError("Bookmarks Bar not found in Chromium bookmarks")
                     return
@@ -359,11 +396,11 @@ extension LocalStore {
         }
     }
 
-    func reorderImportedBrowserFolders(profileId: String) async {
+    func reorderImportedBrowserFolders(profileId: String, spaceId: String = LocalStore.defaultSpaceId) async {
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
-                guard let root = try self.bookmarkRoot(profileId: profileId, in: context, createIfNeeded: false) else { return }
+                guard let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: false) else { return }
                 let rootChildren = try self.children(of: root, in: context)
 
                 let rankedImportFolders = rootChildren.enumerated().compactMap { offset, child -> (Int, Int, TabDataModel)? in
@@ -407,11 +444,15 @@ extension LocalStore {
                     AppLogError("Bookmark \(guid) not found for move")
                     return
                 }
-                guard try !self.isProfileBookmarkRoot(node, in: context) else {
+                guard try !self.isBookmarkRoot(node, in: context) else {
                     AppLogError("Attempted to move bookmark root")
                     return
                 }
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, in: context) else {
+                // Use the source node's own spaceId so a missing/nil parentId
+                // falls back to the right Space's root (cross-Space moves are
+                // not supported via this API today).
+                let resolveSpaceId = node.spaceId ?? Self.defaultSpaceId
+                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: resolveSpaceId, in: context) else {
                     AppLogError("Target parent not found for move")
                     return
                 }
@@ -504,7 +545,7 @@ extension LocalStore {
             guard let self else { return }
             do {
                 guard let node = try self.bookmarkNode(with: guid, in: context) else { return }
-                guard try !self.isProfileBookmarkRoot(node, in: context) else {
+                guard try !self.isBookmarkRoot(node, in: context) else {
                     AppLogError("Attempted to delete bookmark root")
                     return
                 }
@@ -524,10 +565,12 @@ extension LocalStore {
     
     @MainActor
     /// Returns all bookmarks directly under the specified parent.
-    func fetchBookmarks(parentId: String?, profileId: String) -> [TabDataModel] {
+    func fetchBookmarks(parentId: String?,
+                        profileId: String,
+                        spaceId: String = LocalStore.defaultSpaceId) -> [TabDataModel] {
         guard let context = mainContext else { return [] }
         do {
-            guard let parent = try resolveParent(for: parentId, profileId: profileId, in: context, createIfNeeded: false) else {
+            guard let parent = try resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: false) else {
                 return []
             }
             let siblings = try children(of: parent, in: context)
@@ -551,12 +594,15 @@ extension LocalStore {
     }
     
     @MainActor
-    /// Publishes bookmark changes from the underlying store.
-    func bookmarksPublisher(profileId: String) -> AnyPublisher<[TabDataModel], Never> {
+    /// Publishes bookmark changes from the underlying store, scoped to a Space.
+    /// Pre-Spaces rows are backfilled to `LocalStore.defaultSpaceId` by the
+    /// V5→V6 migration, so this filter is total — no nil-equivalence rule.
+    func bookmarksPublisher(profileId: String,
+                            spaceId: String = LocalStore.defaultSpaceId) -> AnyPublisher<[TabDataModel], Never> {
         guard let context = mainContext else {
             return Just([]).eraseToAnyPublisher()
         }
-        
+
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
         let fetchBookmarks: () -> [TabDataModel] = {
             do {
@@ -569,7 +615,9 @@ extension LocalStore {
                     sortBy: sortBy
                 )
                 let bookmarks: [TabDataModel] = try context.fetch(descriptor)
-                return bookmarks.filter { $0.profile?.profileId == profileId }
+                return bookmarks.filter {
+                    $0.profile?.profileId == profileId && $0.spaceId == spaceId
+                }
             } catch {
                 AppLogError("Failed to fetch bookmarks for publisher: \(error)")
                 return []
@@ -595,6 +643,134 @@ extension LocalStore {
                 cancellable.cancel()
             })
             .eraseToAnyPublisher()
+    }
+}
+
+// MARK: - Bookmark Root (visible to sibling LocalStore extensions)
+extension LocalStore {
+    /// Whether imported bookmarks may be written into `(profileId, spaceId)`.
+    /// The default Space is always allowed (its root is the legacy profile root
+    /// and needs no `SpaceModel`). A non-default Space must still have a live
+    /// `SpaceModel`: if it was deleted or re-profiled mid-import, writing would
+    /// create an orphan root the UI never shows, so the import is dropped.
+    func importTargetSpaceIsWritable(profileId: String, spaceId: String, in context: ModelContext) throws -> Bool {
+        if spaceId == Self.defaultSpaceId { return true }
+        let descriptor = FetchDescriptor<SpaceModel>(
+            predicate: #Predicate { $0.spaceId == spaceId && $0.profileId == profileId }
+        )
+        return try context.fetchCount(descriptor) > 0
+    }
+
+    /// Resolves the hidden root folder for `(profileId, spaceId)`.
+    ///
+    /// For the default Space, the root is shared with `ProfileModel.bookmarkRoot`
+    /// so pre-Spaces data stays reachable without migration data movement —
+    /// when a default-space root is materialized we link it on both
+    /// `space.bookmarkRoot` and `profile.bookmarkRoot`. For non-default Spaces
+    /// a fresh `TabDataModel` folder is created and linked only on the
+    /// Space; the Profile-level link is left alone so the default space's
+    /// behavior is unchanged.
+    func bookmarkRoot(profileId: String,
+                      spaceId: String,
+                      in context: ModelContext,
+                      createIfNeeded: Bool) throws -> TabDataModel? {
+        guard let profile = try profile(with: profileId, in: context, createIfNeeded: createIfNeeded) else {
+            return nil
+        }
+        let spaceDescriptor = FetchDescriptor<SpaceModel>(
+            predicate: #Predicate { $0.spaceId == spaceId && $0.profileId == profileId }
+        )
+        let space = try context.fetch(spaceDescriptor).first
+
+        // Prefer the explicit per-Space root if already linked.
+        if let existing = space?.bookmarkRoot {
+            return existing
+        }
+        // Legacy compat: for the default Space, treat the Profile's existing
+        // bookmarkRoot as the Space's root and back-link if the Space row
+        // is around to receive the pointer.
+        if spaceId == Self.defaultSpaceId, let profileRoot = profile.bookmarkRoot {
+            space?.bookmarkRoot = profileRoot
+            return profileRoot
+        }
+        // Heal-on-read: an earlier call may have created a root but failed
+        // to set the back-link (e.g. because `space` was nil at the time,
+        // or because two BookmarkManagers initialised concurrently for
+        // the same (profileId, spaceId) — now possible since a Space can
+        // host a window in multiple slots simultaneously). Without this
+        // recovery, every call here creates ANOTHER orphan root, and the
+        // bookmarks publisher returns all of them — visible to the user
+        // as duplicate "Bookmarks" folders in non-default Spaces.
+        // Reclaim the first matching un-parented bookmarkFolder for this
+        // (profileId, spaceId) instead of stamping out a new one. We
+        // fetch by the simplest predicate the macro supports (just
+        // `type == folder`) and post-filter in Swift to keep the
+        // expression checkable — same pattern the publisher uses.
+        let folderRaw = TabDataType.bookmarkFolder.rawValue
+        let folderDescriptor = FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == folderRaw },
+            sortBy: [SortDescriptor(\.createdDate)]
+        )
+        let candidateFolders = try context.fetch(folderDescriptor)
+        let orphanRoots = candidateFolders.filter {
+            $0.parent == nil &&
+            $0.spaceId == spaceId &&
+            $0.profileId == profileId &&
+            $0.isCreatedByChromium == false
+        }
+        if let primary = orphanRoots.first {
+            // Re-link to the SpaceModel so subsequent calls hit the fast
+            // `space?.bookmarkRoot` branch above and stop fetching here.
+            space?.bookmarkRoot = primary
+            // If earlier races stamped out more than one orphan root,
+            // collapse them: reparent every duplicate root's children
+            // under the primary, then delete the duplicate. We keep the
+            // oldest (createdDate ascending) so any references that
+            // already point at the primary stay valid.
+            if orphanRoots.count > 1 {
+                for duplicate in orphanRoots.dropFirst() {
+                    let dupGuid = duplicate.guid
+                    let childDescriptor = FetchDescriptor<TabDataModel>(
+                        predicate: #Predicate<TabDataModel> { $0.parent?.guid == dupGuid }
+                    )
+                    // Reparent before deleting. Use `try` (not `try?`): if the
+                    // fetch fails we must NOT delete the duplicate, or its
+                    // children would be orphaned (SwiftData nullifies their
+                    // `parent`) and the bookmarks silently lost. The enclosing
+                    // function throws, so the error propagates and the write is
+                    // abandoned with the duplicate intact.
+                    for child in try context.fetch(childDescriptor) {
+                        child.parent = primary
+                    }
+                    context.delete(duplicate)
+                }
+            }
+            return primary
+        }
+        guard createIfNeeded else { return nil }
+        let now = Date()
+        let root = TabDataModel(title: NSLocalizedString("Bookmarks", comment: "Default root bookmarks folder title"),
+                                guid: UUID().uuidString,
+                                index: 0,
+                                url: Self.folderPlaceholderURL,
+                                favicon: nil as Data?,
+                                createdDate: now,
+                                updatedDate: now)
+        root.dataType = TabDataType.bookmarkFolder
+        root.profileId = profileId
+        root.profile = profile
+        root.spaceId = spaceId
+        root.isCreatedByChromium = false
+        context.insert(root)
+        space?.bookmarkRoot = root
+        // Mirror onto the Profile only when this is the first time the
+        // default Space materializes; non-default spaces must not pollute
+        // the profile-wide pointer or imports/legacy lookups will jump
+        // spaces unexpectedly.
+        if spaceId == Self.defaultSpaceId, profile.bookmarkRoot == nil {
+            profile.bookmarkRoot = root
+        }
+        return root
     }
 }
 
@@ -693,35 +869,9 @@ private extension LocalStore {
         return bookmark
     }
     
-    func bookmarkRoot(profileId: String,
-                      in context: ModelContext,
-                      createIfNeeded: Bool) throws -> TabDataModel? {
-        guard let profile = try profile(with: profileId, in: context, createIfNeeded: createIfNeeded) else {
-            return nil
-        }
-        if let existing = profile.bookmarkRoot {
-            return existing
-        }
-        guard createIfNeeded else { return nil }
-        let now = Date()
-        let root = TabDataModel(title: NSLocalizedString("Bookmarks", comment: "Default root bookmarks folder title"),
-                                guid: UUID().uuidString,
-                                index: 0,
-                                url: Self.folderPlaceholderURL,
-                                favicon: nil as Data?,
-                                createdDate: now,
-                                updatedDate: now)
-        root.dataType = TabDataType.bookmarkFolder
-        root.profileId = profileId
-        root.profile = profile
-        root.isCreatedByChromium = false
-        context.insert(root)
-        profile.bookmarkRoot = root
-        return root
-    }
-    
     func resolveParent(for parentId: String?,
                        profileId: String,
+                       spaceId: String = LocalStore.defaultSpaceId,
                        in context: ModelContext,
                        createIfNeeded: Bool = true) throws -> TabDataModel? {
         if let parentId,
@@ -729,13 +879,22 @@ private extension LocalStore {
            node.dataType == .bookmarkFolder {
             return node
         }
-        return try bookmarkRoot(profileId: profileId, in: context, createIfNeeded: createIfNeeded)
+        return try bookmarkRoot(profileId: profileId,
+                                spaceId: spaceId,
+                                in: context,
+                                createIfNeeded: createIfNeeded)
     }
 
-    func isProfileBookmarkRoot(_ node: TabDataModel, in context: ModelContext) throws -> Bool {
-        let descriptor: FetchDescriptor<ProfileModel> = FetchDescriptor<ProfileModel>()
-        let profiles: [ProfileModel] = try context.fetch(descriptor)
-        return profiles.contains(where: { $0.bookmarkRoot?.guid == node.guid })
+    /// Returns true if `node` is the hidden top-level folder for any Profile
+    /// or Space — i.e. moving/deleting it is illegal because the bookmark tree
+    /// would lose its root.
+    func isBookmarkRoot(_ node: TabDataModel, in context: ModelContext) throws -> Bool {
+        let profileDescriptor: FetchDescriptor<ProfileModel> = FetchDescriptor<ProfileModel>()
+        if try context.fetch(profileDescriptor).contains(where: { $0.bookmarkRoot?.guid == node.guid }) {
+            return true
+        }
+        let spaceDescriptor: FetchDescriptor<SpaceModel> = FetchDescriptor<SpaceModel>()
+        return try context.fetch(spaceDescriptor).contains(where: { $0.bookmarkRoot?.guid == node.guid })
     }
 
     static func importedBrowserSourceValue(

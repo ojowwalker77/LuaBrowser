@@ -225,9 +225,55 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// Returns whether Phi extensions should be kept enabled (Mac is source of truth).
 /// Called synchronously by the policy provider — must not block.
 - (BOOL)shouldEnablePhiExtensions;
+/// Whether a backup import is in progress; preinstalled apps reads it to defer
+/// extension preinstall. Called synchronously — must not block.
+- (BOOL)isBackupImporting;
+/// Whether newly created profiles should auto-install the iCloud Passwords
+/// extension (the OOBE password-manager choice; the Mac preference is the
+/// source of truth). Read by the Chromium-side preinstall flow. Called
+/// synchronously — must not block.
+- (BOOL)shouldAutoInstallICloudPasswords;
 - (BOOL)handleDeeplinkWithUrlString:(NSString *)urlString windowId:(int64_t)windowId;
 - (void)toggleChatSidebar:(NSNumber * _Nullable)show;
 - (void)showFeedbackDialog;
+
+/// A navigation matched a Space URL rule whose action is "ask first", so
+/// Chromium cancelled it instead of routing silently. The Mac client should
+/// prompt the user to choose a destination Space and open `urlString` there,
+/// or re-open it in `sourceWindowId` if the user keeps it where it is.
+/// `defaultSpaceId` is the rule's configured target Space — the suggested
+/// default selection in the prompt.
+- (void)askSpaceForURL:(NSString *)urlString
+        defaultSpaceId:(NSString *)defaultSpaceId
+        sourceWindowId:(int64_t)sourceWindowId
+        sourceIsNewTab:(BOOL)sourceIsNewTab;
+
+/// The user picked a Space from the web-content right-click "Open link as"
+/// submenu. The Mac client should open `urlString` as a new foreground tab in
+/// the Space identified by `spaceId`, spawning/activating its window if it is
+/// not currently open. `sourceWindowId` is the window the right-click happened
+/// in (used to resolve the source slot for window placement).
+- (void)openLinkInSpace:(NSString *)spaceId
+                    url:(NSString *)urlString
+         sourceWindowId:(int64_t)sourceWindowId;
+
+/// A silent (non-"ask") Space URL rule matched, but the target Space's window
+/// is not currently open, so Chromium cancelled the navigation instead of
+/// routing it. The Mac client should spawn/activate the Space identified by
+/// `spaceId` and open `urlString` as a new foreground tab there, bypassing
+/// Space URL routing for that one re-open. `sourceWindowId` is the window the
+/// navigation originated in (used to resolve the slot the Space is surfaced
+/// in). Same destination as the "ask first" flow, minus the prompt.
+- (void)routeURLInSpace:(NSString *)spaceId
+                    url:(NSString *)urlString
+         sourceWindowId:(int64_t)sourceWindowId;
+
+/// A Space URL rule routed a navigation that started from a new tab page to a
+/// DIFFERENT Space, so the URL is opening elsewhere. The Mac client should reset
+/// `windowId`'s active new-tab page back to a clean state because the source
+/// navigation was cancelled before it could complete. A no-op if that window's
+/// active tab is not a new tab page.
+- (void)refreshNewTabInWindow:(int64_t)windowId;
 
 // ==========================================================================
 // Split view notifications (Chromium → Mac)
@@ -273,10 +319,33 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 // Per-window dynamic extension action icon. Keys: windowId, extensionId, tabId,
 // iconData (PNG NSData, empty => no dynamic icon), dipSize, scale.
 - (void)actionIconChanged:(NSDictionary *)info;
+// Renderer crash page (Chromium → Mac). tabId/windowId are pre-resolved (the
+// WebContents may be mid-teardown). `data` keys: title, message, buttonLabel,
+// helpLinkLabel, errorCodeText, tips (NSArray<NSString*>), helpLinkUrl,
+// showFeedbackButton, errorCode, isRepeatedlyCrashing, kind, terminationStatus.
+// The crash-page staleness token is owned by the Mac side (not sent here).
+- (void)showCrashPage:(int64_t)tabId
+             windowId:(int64_t)windowId
+                 data:(NSDictionary *)data;
+// Hide/dismiss the crash page (renderer recovered).
+- (void)hideCrashPage:(int64_t)tabId windowId:(int64_t)windowId;
 // Optional metadata-rich variants for richer native tab orchestration.
 - (void)tabWillBeRemove:(int64_t)tabId
                windowId:(int64_t)windowId
                  context:(NSDictionary<NSString *, id> *)context;
+/// Restore-aware variant of `mainBrowserWindowCreated:type:profileId:windowId:`
+/// — preferred by the bridge when implemented. `restoredFromWindowId` is
+/// non-zero only when Chromium session restore re-created this window from
+/// the previous session, and then carries the PREVIOUS session's windowId
+/// for it (the id the Mac client saw — and may have persisted — last run).
+/// `windowId` is always the fresh per-run id; the two never coincide by
+/// contract, only by counter accident, so match restore snapshots against
+/// `restoredFromWindowId` exclusively.
+- (void)mainBrowserWindowCreated:(NSWindow *)window
+                            type:(ChromiumBrowserType)browserType
+                       profileId:(NSString *)profileId
+                        windowId:(int64_t)windowId
+            restoredFromWindowId:(int64_t)restoredFromWindowId;
 // Relationship snapshot version increases monotonically per window.
 - (void)tabRelationshipSnapshotChanged:(NSDictionary *)snapshot
                              windowId:(int64_t)windowId
@@ -326,6 +395,18 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 
 - (id<WebContentWrapper>)newWebContentsForUrl:(NSString *)urlString;
 
+// Resolves `urlString` against the Space URL routing table for `windowId` and,
+// if a rule matches, hands the URL off through the same routing path the
+// navigation throttle uses (prompt for a Space, spawn a Space's window, or open
+// in an already-open Space window) and returns YES. Returns NO when no rule
+// matches (or the URL already belongs in this window's Space), so the caller
+// should open it locally as usual.
+//
+// The omnibox calls this for the empty-Space paths (native NTP / no tab), whose
+// navigation runs on a detached WebContents the throttle can't attribute to a
+// Browser — so routing must be decided here, before the local open.
+- (BOOL)routeURLIfSpaceRuleMatches:(NSString *)urlString windowId:(int64_t)windowId;
+
 - (void)createNewTabWithUrl:(NSString*)urlString
                    windowId:(int64_t)windowId
                  customGuid:(NSString* _Nullable)customGuid
@@ -358,6 +439,64 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                              tabId:(int64_t)tabId;
 - (void)moveTabToLastWithWindowId:(int64_t)windowId
                             tabId:(int64_t)tabId;
+- (void)moveTabsToNewWindowWithWindowId:(int64_t)windowId
+                                 tabIds:(NSArray<NSNumber *> *)tabIds;
+
+// ==========================================================================
+// Space URL routing (Mac → Chromium)
+// ==========================================================================
+
+/// Push the current Space URL routing table down to Chromium. Replaces the
+/// entire table atomically; send on every change. Chromium does not diff.
+///
+/// `rules` is an array of dictionaries; required keys per entry:
+///   @"targetSpaceId" (NSString *)               — the destination Space.
+///   @"host"          (NSString *)               — "github.com" (exact),
+///                                                 "*.foo.com" (suffix) or
+///                                                 "*needle*" (host contains).
+///   @"pathPrefix"    (NSString * _Nullable)     — optional path prefix match.
+///   @"ask"           (NSNumber * _Nullable)     — bool; when YES a match is
+///                                                 not routed silently — the
+///                                                 navigation is cancelled and
+///                                                 `askSpaceForURL:...` fires.
+///   @"sortOrder"     (NSNumber *)               — stable tie-break, asc wins.
+///
+/// `spaceWindowMap` maps NSString spaceId -> NSNumber windowId (int64).
+/// Spaces whose window is not currently open should be omitted; rules whose
+/// targetSpaceId is not in the map are treated as no-match.
+- (void)setSpaceRoutingTable:(NSArray<NSDictionary<NSString *, id> *> *)rules
+              spaceWindowMap:(NSDictionary<NSString *, NSNumber *> *)spaceWindowMap;
+
+/// Push the Space list shown in the web-content right-click "Open Link In
+/// Space" submenu. Replaces the whole list atomically; send on every change to
+/// the Space set, a Space's name, or which window a Space is open in.
+///
+/// `spaces` is an array of dictionaries; keys per entry:
+///   @"spaceId"  (NSString *)               — the Space's wire identity.
+///   @"name"     (NSString *)               — user-facing Space name.
+///   @"windowId" (NSNumber *)               — int64 of the Space's currently
+///                                            open window, or 0 if none. Used to
+///                                            exclude the current Space from the
+///                                            submenu in the right-clicked window.
+- (void)setOpenLinkSpaceMenu:(NSArray<NSDictionary<NSString *, id> *> *)spaces;
+
+/// Open `url` as a new foreground tab in `windowId`, bypassing Space URL
+/// routing for that one navigation. Used by the "ask every time" flow after
+/// the user has chosen a Space: re-opening the URL there must not be caught
+/// by the same rule and prompted again (which would loop). The bypass is a
+/// one-shot exemption matched on (url, windowId).
+- (void)openTabBypassingSpaceRoutingWithUrl:(NSString *)url
+                                    windowId:(int64_t)windowId;
+
+/// Navigate `windowId`'s ACTIVE tab to `url` IN PLACE, bypassing Space URL
+/// routing for that one navigation. Used by the "ask every time" flow when the
+/// user keeps the URL in the current Space and the active tab is a new tab /
+/// NTP: the URL replaces that NTP directly instead of spawning a separate tab.
+/// Like `openTabBypassingSpaceRoutingWithUrl:`, the bypass is a one-shot
+/// exemption matched on (url, windowId) so the same rule doesn't re-prompt in a
+/// loop. Falls back to opening a new tab if the window has no active tab.
+- (void)navigateActiveTabBypassingSpaceRoutingWithUrl:(NSString *)url
+                                             windowId:(int64_t)windowId;
 
 /// Create a new tab group containing the given Phi-stable tab ids in
 /// `windowId`. Returns the new group's 32-char uppercase hex token, or an
@@ -468,9 +607,28 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                                  isCollapsed:(BOOL)isCollapsed;
 // Wrapped by base::apple::CallWithEHFrame for Chromium-side exception handling.
 - (void)callWithEHFrame:(void (^)(void))block;
-- (void)openURLInNewWindow:(NSString *)url;
-// Returns a dictionary with keys: @"window", @"windowId", @"windowType".
-- (NSDictionary<NSString *, id> *)createBrowserWithWindowType:(ChromiumBrowserType)browserType;
+/// Opens |url| in a new browser window.
+/// |profileId| is the on-disk profile basename (same wire format as
+/// `mainBrowserWindowCreated:profileId:`). Pass nil to use the last-used
+/// profile (preserves single-profile behavior for menu ⌘N / dock reopen).
+/// Caller is responsible for `ensureProfileLoaded:` for unloaded profiles
+/// — passing an unknown/unloaded `profileId` falls back to the last-used
+/// profile with a logged warning.
+- (void)openURLInNewWindow:(NSString *)url
+                 profileId:(NSString * _Nullable)profileId;
+/// Creates a new Browser window of |browserType| bound to |profileId|
+/// (same wire format as above; nil = last-used profile). Unlike
+/// `openURLInNewWindow:profileId:` there is NO fallback for an
+/// unknown/unloaded |profileId|: the Mac side pairs the returned window
+/// with the Space that requested the profile, and a substituted profile
+/// would surface another profile's pinned tabs inside that Space — the
+/// call returns nil instead. Callers `ensureProfileLoaded:` first.
+/// Returns a dictionary with keys: @"window" (NSWindow*), @"windowId"
+/// (NSNumber*), @"windowType" (NSNumber* of ChromiumBrowserType),
+/// @"profileId" (NSString*, the basename actually used). Returns nil when
+/// the window could not be created; callers must handle the nil result.
+- (nullable NSDictionary<NSString *, id> *)createBrowserWithWindowType:(ChromiumBrowserType)browserType
+                                                            profileId:(NSString * _Nullable)profileId;
 - (void)tryToTerminateApplication:(NSApplication*)app;
 - (void)stopTryingToTerminateApplication:(NSApplication*)app;
 - (void)applicationWillFinishLaunching:(NSNotification*)notification;
@@ -518,6 +676,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// @param windowId The window ID (used to resolve target Profile)
 - (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
                         windowId:(int64_t)windowId;
+
+/// Install one or more Chrome Web Store extensions into a specific profile,
+/// resolved by its on-disk basename. The profile must already be loaded (call
+/// `ensureProfileLoaded:` first). Mirrors the OOBE iCloud Passwords choice onto
+/// newly created profiles. Results report via extensionInstallResult:status:.
+- (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
+                       profileId:(NSString *)profileId;
 
 - (NSArray <id<BookmarkWrapper>> *)getAllBookmarksWithWindowId:(int64_t)windowId;
 - (void)removeAllBookmarksWithWindowId:(int64_t)windowId;
@@ -741,6 +906,83 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 
 /// Returns all active split ID strings in the given window.
 - (NSArray<NSString *> *)listSplitsInWindow:(int64_t)windowId;
+
+// ==========================================================================
+// Profile management (Mac → Chromium)
+// ==========================================================================
+
+/// Enumerates every on-disk profile known to Chromium's
+/// ProfileAttributesStorage. Each dict has keys:
+///   @"profileId" (NSString *)   — on-disk basename, the wire identity.
+///   @"displayName" (NSString *) — user-facing name.
+///   @"isLoaded" (NSNumber/BOOL) — currently in memory.
+///   @"isInUse" (NSNumber/BOOL)  — any live Browser is bound to it.
+/// Synchronous; safe to poll on each Mac-side refresh.
+- (NSArray<NSDictionary<NSString *, id> *> *)listProfiles;
+
+/// Creates a new on-disk profile via Chromium's CreateMultiProfileAsync.
+/// `completion` fires on the UI thread with the new profile's basename, or
+/// nil on failure.
+- (void)createProfileWithDisplayName:(NSString *)displayName
+                          completion:(void (^)(NSString * _Nullable profileId))completion;
+
+/// Schedules `profileId` for deletion. Rejects (success=NO) if any live
+/// Browser is bound to it — Phi's Space↔Profile binding is immutable so a
+/// live Browser implies an active Space; Mac is expected to refuse the
+/// affordance up front, this is a backstop.
+- (void)deleteProfile:(NSString *)profileId
+           completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Renames `profileId` to `displayName`. `completion` fires on the UI thread
+/// with success/error. Pure metadata update on ProfileAttributesStorage — does
+/// not touch the Space↔Profile binding or any live Browser.
+- (void)renameProfile:(NSString *)profileId
+        toDisplayName:(NSString *)displayName
+           completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Ensures `profileId` is loaded into memory. Short-circuits if already
+/// loaded. SpaceManager calls this before spawning a window for a Space on a
+/// not-yet-loaded profile (first cross-profile activation per session).
+- (void)ensureProfileLoaded:(NSString *)profileId
+                 completion:(void (^)(BOOL success))completion;
+
+// ==========================================================================
+// Per-profile search, download & data settings (Mac → Chromium)
+// ==========================================================================
+
+/// Lists `profileId`'s default-search-provider candidates. `completion` fires
+/// on the UI thread with one dict per engine — keys @"id" (sync GUID),
+/// @"name", @"keyword", @"isDefault" — or nil on failure. Loads the profile
+/// and its TemplateURLService first if needed, so it may be async for a
+/// profile that isn't currently in memory.
+- (void)listSearchEngines:(NSString *)profileId
+               completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> * _Nullable engines))completion;
+
+/// Sets `profileId`'s default search engine to the engine whose sync GUID is
+/// `engineId` (from -listSearchEngines:). `completion` fires on the UI thread
+/// with success/error.
+- (void)setDefaultSearchEngine:(NSString *)profileId
+                      engineId:(NSString *)engineId
+                    completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Reads `profileId`'s default download directory as a filesystem path.
+/// `completion` fires on the UI thread with the path, or nil on failure.
+- (void)getDownloadLocation:(NSString *)profileId
+                 completion:(void (^)(NSString * _Nullable path))completion;
+
+/// Sets `profileId`'s default download directory to `path`. `completion` fires
+/// on the UI thread with success/error.
+- (void)setDownloadLocation:(NSString *)profileId
+                       path:(NSString *)path
+                 completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Opens one of `profileId`'s data/settings pages in a browser window for that
+/// profile (creating one if needed). `page` is one of @"privacy",
+/// @"passwords", @"payments", @"notifications", @"clearBrowserData".
+/// `completion` fires on the UI thread with success/error.
+- (void)openProfileDataPage:(NSString *)profileId
+                       page:(NSString *)page
+                 completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
 
 @end
 

@@ -438,6 +438,14 @@ class BookmarkBar: NSView {
         let sourceState = sourceBrowserState(for: sender.draggingPasteboard) ?? state
         let dropIndex = resolvedDropIndex()
 
+        let batchTabIds = sender.draggingPasteboard.phiNormalTabIds()
+        if batchTabIds.count > 1 {
+            guard sourceState === state else { return false }
+            return state.moveNormalTabs(tabIds: batchTabIds,
+                                        toBookmark: nil,
+                                        index: dropIndex)
+        }
+
         if let guidString = pasteboardItem.string(forType: .normalTab),
            let tabGuid = Int(guidString),
            let draggedTab = sourceState.tabs.first(where: { $0.guid == tabGuid }) {

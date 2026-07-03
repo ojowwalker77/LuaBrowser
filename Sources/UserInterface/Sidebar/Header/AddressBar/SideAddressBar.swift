@@ -8,6 +8,8 @@ import SnapKit
 import Combine
 import SwiftUI
 class SideAddressBar: NSView {
+    static let addressTextFieldAccessibilityIdentifier = "sidebarHeader.addressView"
+
     private enum LayoutMetrics {
         static let extensionButtonWidth: CGFloat = 24
         static let extensionButtonSpacing: CGFloat = 2
@@ -390,6 +392,7 @@ class SideAddressBar: NSView {
         textField.isEditable = false
         textField.isSelectable = false
         textField.lineBreakMode = .byTruncatingTail
+        textField.setAccessibilityIdentifier(Self.addressTextFieldAccessibilityIdentifier)
         containerView.addSubview(textField)
     }
     
@@ -424,7 +427,7 @@ class SideAddressBar: NSView {
         rightStackView.setContentCompressionResistancePriority(.init(1000), for: .horizontal)
         rightStackView.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
-            make.trailing.equalToSuperview().inset(4)
+            make.trailing.equalToSuperview().inset(2)
             make.height.equalToSuperview()
         }
 

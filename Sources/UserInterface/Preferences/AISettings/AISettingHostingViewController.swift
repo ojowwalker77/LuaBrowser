@@ -43,4 +43,5 @@ final class AISettingHostingViewController: NSViewController {
         hostingController?.view.needsLayout = true
         connectorViewModel.loadConnectionsIfNeeded()
     }
+
 }

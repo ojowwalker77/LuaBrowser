@@ -79,9 +79,7 @@ private struct ThemeSectionView: View {
     @Environment(\.phiAppearance) private var appearance
 
     private var themes: [Theme] {
-        Theme.builtInThemes.map { builtInTheme in
-            ThemeManager.shared.registeredThemes[builtInTheme.id] ?? builtInTheme
-        }
+        ThemeManager.shared.orderedThemes
     }
     
     private var selectedTheme: Theme {
@@ -430,38 +428,16 @@ private struct ThemeColorItemView: View {
         return Color(theme.color(for: .themeColor, appearance: appearance))
     }
 
-    private var selectedBorderColor: Color {
-        Color(theme.color(for: .themeColor, appearance: appearance))
-    }
-
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Circle()
-                    .fill(swatchColor)
-                    .frame(width: 22, height: 22)
-                    .frame(width: 26, height: 26)
-                    .overlay {
-                        Circle()
-                            .stroke(selected ? selectedBorderColor : Color.clear, lineWidth: 2)
-                    }
-                    .overlay {
-                        Circle()
-                            .stroke(Color.black.opacity(theme == .pure ? 0.12 : 0), lineWidth: 0.5)
-                            .frame(width: 22, height: 22)
-                    }
-                    .shadow(color: Color.black.opacity(0.12), radius: 4, y: 1)
-
-                Text(theme.name)
-                    .font(.system(size: 11))
-                    .themedForeground(.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .opacity(selected ? 1 : 0)
-            }
-            .frame(width: 30)
-        }
-        .buttonStyle(.plain)
+        ThemeSwatchView(
+            fillColor: swatchColor,
+            ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
+            selected: selected,
+            title: theme.name,
+            showsContrastBorder: theme == .pure,
+            action: action
+        )
+        .frame(width: 30)
     }
 }
 

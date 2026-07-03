@@ -68,6 +68,7 @@ final class TabDraggingSession {
     private enum TabDragImageMode {
         case original
         case pageSnapshot
+        case temporary
     }
     private var tabDragImageMode: TabDragImageMode = .original
 
@@ -317,6 +318,21 @@ final class TabDraggingSession {
         guard lastIsInsideDragBoundary == false,
               let snapshotItem = snapshot.draggingItem,
               shouldSwitchDragImage(for: snapshotItem) else {
+            return
+        }
+
+        if let tab = item as? Tab,
+           let sourceState = state,
+           let tabIds = sourceState.multiSelectionDragTabIds(startingFrom: tab) {
+            if !sourceState.moveNormalTabsToNewWindow(
+                tabIds: tabIds,
+                dropScreenLocation: snapshot.screenLocation ?? NSEvent.mouseLocation
+            ) {
+                AppLogWarn(
+                    "[MultiTabDrag] moveNormalTabsToNewWindow failed; " +
+                    "cancelling tear-off ids=\(tabIds)"
+                )
+            }
             return
         }
 
@@ -646,6 +662,37 @@ final class TabDraggingSession {
 
 // MARK: - Drag image switching (Tab)
 extension TabDraggingSession {
+    func showTemporaryDragImage(_ image: NSImage) {
+        guard nativeSession != nil,
+              image.size.width > 0,
+              image.size.height > 0 else {
+            return
+        }
+        captureOriginalDraggingItemsIfNeeded()
+
+        let targetSize = image.size
+        let count = enumerateDraggingItems { draggingItem in
+            let currentFrame = draggingItem.draggingFrame
+            let targetFrame = NSRect(
+                x: currentFrame.midX - targetSize.width * 0.5,
+                y: currentFrame.midY - targetSize.height * 0.5,
+                width: targetSize.width,
+                height: targetSize.height
+            )
+            draggingItem.imageComponentsProvider = nil
+            draggingItem.setDraggingFrame(targetFrame, contents: image)
+        }
+
+        guard count > 0 else { return }
+        tabDragImageMode = .temporary
+        cachedTabSnapshotImage = nil
+        debugLogTabImageModeChange("showTemporary items=\(count)")
+    }
+
+    func restoreOriginalDragImageForCurrentSession() {
+        restoreOriginalDragImageIfNeeded()
+    }
+
     private func enumerateDraggingItems(_ body: (NSDraggingItem) -> Void) -> Int {
         var count = 0
         withNativeSession { session in
@@ -767,7 +814,7 @@ extension TabDraggingSession {
         captureOriginalDraggingItemsIfNeeded()
 
         if cachedTabSnapshotImage == nil {
-            cachedTabSnapshotImage = resolveOutsideWindowDragImage(for: item)
+            cachedTabSnapshotImage = resolveOutsideWindowDragImageWithBadge(for: item)
         }
 
         guard let snapshotImage = cachedTabSnapshotImage else { return }
@@ -789,6 +836,35 @@ extension TabDraggingSession {
         _ = enumerateDraggingItems { draggingItem in
             draggingItem.setDraggingFrame(frame, contents: image)
         }
+    }
+
+    private func snapshotBadgeCount(for item: SidebarItem) -> Int? {
+        guard let tab = item as? Tab,
+              let state,
+              let tabIds = state.multiSelectionDragTabIds(startingFrom: tab) else {
+            return nil
+        }
+
+        let count = TabDragCountBadge.visibleUnitCount(tabIds: tabIds, browserState: state)
+        return count > 1 ? count : nil
+    }
+
+    private func resolveOutsideWindowDragImageWithBadge(for item: SidebarItem) -> NSImage? {
+        guard let image = resolveOutsideWindowDragImage(for: item) else {
+            return nil
+        }
+        guard let count = snapshotBadgeCount(for: item) else {
+            return image
+        }
+        let badgeSize = TabDragCountBadge.size(for: count)
+        return TabDragCountBadge.image(
+            image,
+            drawingBadgeCount: count,
+            nearAnchor: CGPoint(
+                x: image.size.width * 0.5,
+                y: image.size.height * 0.25 + badgeSize.height * 0.5 + 4
+            )
+        )
     }
 
     /// Resolve the drag image to use when the cursor is outside the source window.

@@ -17,6 +17,12 @@ struct DanglingWindow {
     let windowId: Int
     let browserType: ChromiumBrowserType
     let profileId: String
+    let spaceId: String
+    /// Slot resolved at window-creation time (pre-login). Captured here so
+    /// `processDanglingWindow` hands it to the real `MainBrowserWindowController`
+    /// without re-resolving — the slot already holds any pending spawn
+    /// intent / frame for this windowId.
+    weak var slot: SpaceWindowSlot?
     /// Tabs created before login, will be processed after login
     var pendingTabs: [Tab] = []
     /// Tab-group events emitted before the window's BrowserState exists
@@ -29,7 +35,15 @@ struct DanglingWindow {
 
 class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     static let shared = MainBrowserWindowControllersManager()
-    private(set) var activeWindowController: MainBrowserWindowController?
+    private(set) var activeWindowController: MainBrowserWindowController? {
+        didSet {
+            guard oldValue !== activeWindowController else { return }
+            NotificationCenter.default.post(
+                name: .activeBrowserWindowDidChange,
+                object: activeWindowController
+            )
+        }
+    }
     private var windowControllers: Set<MainBrowserWindowController> = []
     
     /// Windows created before user login, waiting to be converted to MainBrowserWindowController
@@ -51,16 +65,26 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     ///   - window: The NSWindow created by Chromium
     ///   - windowId: The window identifier
     ///   - browserType: The type of browser window (normal, incognito, etc.)
-    func addDanglingWindow(_ window: NSWindow, windowId: Int, browserType: ChromiumBrowserType, profileId: String) {
+    func addDanglingWindow(_ window: NSWindow,
+                           windowId: Int,
+                           browserType: ChromiumBrowserType,
+                           profileId: String,
+                           spaceId: String = LocalStore.defaultSpaceId,
+                           slot: SpaceWindowSlot? = nil) {
         assert(Thread.isMainThread)
         AppLogInfo("🪟 [WindowManager] Adding dangling window - windowId: \(windowId), type: \(browserType.rawValue)")
-        
+
         // Hide the window to prevent it from showing before login
         hideDanglingWindow(window)
-        
-        let danglingWindow = DanglingWindow(window: window, windowId: windowId, browserType: browserType, profileId: profileId)
+
+        let danglingWindow = DanglingWindow(window: window,
+                                            windowId: windowId,
+                                            browserType: browserType,
+                                            profileId: profileId,
+                                            spaceId: spaceId,
+                                            slot: slot)
         danglingWindows.append(danglingWindow)
-        
+
         AppLogInfo("🪟 [WindowManager] Dangling windows count: \(danglingWindows.count)")
     }
     
@@ -128,31 +152,58 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     @objc private func handleLoginCompleted() {
         assert(Thread.isMainThread)
         AppLogInfo("🪟 [WindowManager] Login completed - processing \(danglingWindows.count) dangling window(s)")
-        
+
+        var danglingSlots: [SpaceWindowSlot] = []
+        for danglingWindow in danglingWindows {
+            guard let slot = danglingWindow.slot,
+                  !danglingSlots.contains(where: { $0 === slot }) else {
+                continue
+            }
+            danglingSlots.append(slot)
+        }
+
         for danglingWindow in danglingWindows {
             processDanglingWindow(danglingWindow)
         }
-        
+
         // Clear dangling windows after processing
         danglingWindows.removeAll()
+        removeEmptyDanglingSlots(danglingSlots)
         AppLogInfo("🪟 [WindowManager] All dangling windows processed")
     }
     
-    /// Convert a dangling window to a proper MainBrowserWindowController and show it
+    /// Restore a dangling window, or close it if no tabs arrived before login.
     @MainActor
     private func processDanglingWindow(_ danglingWindow: DanglingWindow) {
         AppLogInfo("🪟 [WindowManager] Processing dangling window - windowId: \(danglingWindow.windowId), pending tabs: \(danglingWindow.pendingTabs.count)")
+        guard !danglingWindow.pendingTabs.isEmpty else {
+            closeEmptyDanglingWindow(danglingWindow)
+            return
+        }
         guard let account = AccountController.shared.account else {
             AppLogError("No available account")
             return
         }
-        // Create the MainBrowserWindowController now that the user is logged in
+        // Create the MainBrowserWindowController now that the user is logged in.
+        // The slot was resolved at addDanglingWindow time; if it was dropped
+        // by the manager in the meantime (unlikely pre-login but defensive),
+        // fall back to a fresh slot for `.normal` windows so the new
+        // controller still has somewhere to register.
+        let slot: SpaceWindowSlot?
+        if danglingWindow.browserType == .normal {
+            slot = danglingWindow.slot
+                ?? SpaceManager.shared.createSlot(initialSpaceId: danglingWindow.spaceId)
+        } else {
+            slot = nil
+        }
         let windowController = MainBrowserWindowController(
             window: danglingWindow.window,
             windowId: danglingWindow.windowId,
             browserType: danglingWindow.browserType,
             profileId: danglingWindow.profileId,
-            account: account
+            spaceId: danglingWindow.spaceId,
+            account: account,
+            slot: slot
         )
         
         // Process pending tabs that were created before login
@@ -188,6 +239,26 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         
         AppLogInfo("🪟 [WindowManager] Dangling window processed and displayed - windowId: \(danglingWindow.windowId)")
     }
+
+    @MainActor
+    private func closeEmptyDanglingWindow(_ danglingWindow: DanglingWindow) {
+        AppLogInfo("🪟 [WindowManager] Closing empty dangling window - windowId: \(danglingWindow.windowId)")
+        if let bridge = ChromiumLauncher.sharedInstance().bridge {
+            bridge.executeCommand(
+                Int32(CommandWrapper.IDC_CLOSE_WINDOW.rawValue),
+                windowId: Int64(danglingWindow.windowId)
+            )
+        } else {
+            danglingWindow.window.close()
+        }
+    }
+
+    @MainActor
+    private func removeEmptyDanglingSlots(_ slots: [SpaceWindowSlot]) {
+        for slot in slots where slot.windowsBySpaceId.isEmpty {
+            SpaceManager.shared.removeSlot(slot)
+        }
+    }
     
     func retainWindowControllerUntilWindowClosed(_ windowController: MainBrowserWindowController) {
         assert(Thread.isMainThread)
@@ -217,6 +288,12 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
             return
         }
         WindowThemeMessageRouter.shared.stopObservingWindow(windowId: windowController.windowId)
+        if windowController.browserType == .normal {
+            // Slot.unregisterWindow handles the per-slot "surface another
+            // visible controller if this was the visible one" logic and
+            // asks SpaceManager to drop the slot when it becomes empty.
+            windowController.slot?.unregisterWindow(windowController, for: windowController.spaceId)
+        }
         windowControllers.remove(windowController)
     }
     
@@ -289,4 +366,11 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
+}
+
+extension Notification.Name {
+    /// Posted when the focused browser window changes (or is cleared). Menu
+    /// state that depends on the active window — e.g. the menu-bar Spaces
+    /// menu, which is hidden for incognito windows — refreshes on this.
+    static let activeBrowserWindowDidChange = Notification.Name("activeBrowserWindowDidChange")
 }

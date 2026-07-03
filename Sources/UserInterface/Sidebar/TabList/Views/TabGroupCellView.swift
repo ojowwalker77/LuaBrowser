@@ -79,6 +79,13 @@ protocol TabGroupCellViewDelegate: AnyObject {
                       intoGroupToken token: String,
                       atNormalTabsIdx normalTabsIdx: Int) -> Bool
 
+    /// Drop landed in the inner table for a temporary multi-selection.
+    /// Controller owns the selected-id reorder and group-membership batch.
+    func tabGroupCell(_ cell: TabGroupCellView,
+                      didAcceptTabsWithGuids tabIds: [Int],
+                      intoGroupToken token: String,
+                      atNormalTabsIdx normalTabsIdx: Int) -> Bool
+
     /// Inner table can accept bookmarks that can become group members.
     /// The controller owns bookmark lookup, so validation stays routed
     /// through this boundary before the cell shows a drop indicator.
@@ -483,7 +490,7 @@ final class TabGroupCellView: SidebarCellView {
         innerTable.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         innerTable.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
         innerTable.registerForDraggedTypes([
-            .normalTab, .pinnedTab, .phiBookmark, .sourceWindowId
+            .normalTab, .normalTabs, .pinnedTab, .phiBookmark, .sourceWindowId
         ])
 
         // Cell width is controlled by `GroupTabsTableView.frameOfCell`,
@@ -900,6 +907,25 @@ final class TabGroupCellView: SidebarCellView {
 
         return groupItem
     }
+
+    func draggingImageForMemberTabId(_ tabId: Int) -> NSImage? {
+        guard let row = currentMemberOrder.firstIndex(where: { key in
+            if let pair = splitPairsByKey[key] {
+                return pair.leftTab.guid == tabId || pair.rightTab.guid == tabId
+            }
+            return key == tabId
+        }) else {
+            return nil
+        }
+        guard let cell = innerTable.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? SidebarCellView else {
+            return nil
+        }
+        return cell.createDraggingImage()
+    }
 }
 
 // MARK: - Click activation
@@ -914,10 +940,31 @@ extension TabGroupCellView {
     @objc fileprivate func innerTableClicked(_ sender: NSTableView) {
         let row = sender.clickedRow
         guard row >= 0,
-              currentMemberOrder.indices.contains(row),
-              let tab = tabsByGuid[currentMemberOrder[row]]
+              currentMemberOrder.indices.contains(row)
         else { return }
-        tab.performAction(with: nil)
+        activateMemberRow(for: currentMemberOrder[row])
+    }
+
+    fileprivate func handleMultiSelectionCommandClick(for key: Int) -> Bool {
+        guard let state = configuredBrowserState else { return false }
+        if let pair = splitPairsByKey[key] {
+            return state.toggleMultiSelectionForSplitPair(
+                leftTab: pair.leftTab,
+                rightTab: pair.rightTab
+            )
+        }
+        if let tab = tabsByGuid[key] {
+            return state.toggleMultiSelection(for: tab)
+        }
+        return false
+    }
+
+    fileprivate func activateMemberRow(for key: Int) {
+        if let pair = splitPairsByKey[key] {
+            pair.performAction(with: nil)
+            return
+        }
+        tabsByGuid[key]?.performAction(with: nil)
     }
 }
 
@@ -1018,22 +1065,22 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
 
     func tableView(_ tableView: GroupTabsTableView,
                    didClickRow row: Int) {
-        guard currentMemberOrder.indices.contains(row),
-              let tab = tabsByGuid[currentMemberOrder[row]] else {
+        guard currentMemberOrder.indices.contains(row) else {
             return
         }
+        let key = currentMemberOrder[row]
         // Cmd+click toggles multi-selection; a plain click clears it first.
         if let state = configuredBrowserState {
             let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
             if isCommandClick,
-               state.toggleMultiSelection(for: tab) {
+               handleMultiSelectionCommandClick(for: key) {
                 return
             }
             if state.multiSelection.isActive {
                 state.clearMultiSelection()
             }
         }
-        tab.performAction(with: nil)
+        activateMemberRow(for: key)
     }
 
     func tableView(_ tableView: GroupTabsTableView,
@@ -1089,21 +1136,26 @@ extension TabGroupCellView: GroupTabsDragSource {
         // existing `.normalTab` drop handlers (reorder, pin, bookmark)
         // pick up the split-as-a-unit semantics automatically.
         let key = currentMemberOrder[row]
-        let guid: Int
+        let dragTab: Tab
         if let pair = splitPairsByKey[key] {
-            guid = pair.leftTab.guid
-        } else if tabsByGuid[key] != nil {
-            guid = key
+            dragTab = pair.leftTab
+        } else if let tab = tabsByGuid[key] {
+            dragTab = tab
         } else {
             return nil
         }
 
         let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(String(guid), forType: .normalTab)
+        pasteboardItem.setString(String(dragTab.guid), forType: .normalTab)
         pasteboardItem.setString(String(state.windowId), forType: .sourceWindowId)
+        let batchIds = state.multiSelectionDragTabIds(startingFrom: dragTab)
+        if let ids = batchIds {
+            pasteboardItem.setString(ids.map(String.init).joined(separator: ","),
+                                     forType: .normalTabs)
+        }
         AppLogDebug(
-            "[TAB_GROUPS][INNER_DRAG] dataSource.pasteboardWriter guid=\(guid) " +
-            "windowId=\(state.windowId)"
+            "[TAB_GROUPS][INNER_DRAG] dataSource.pasteboardWriter guid=\(dragTab.guid) " +
+            "windowId=\(state.windowId) batchIds=\(batchIds ?? [])"
         )
         return pasteboardItem
     }
@@ -1276,6 +1328,7 @@ extension TabGroupCellView: GroupTabsDragSource {
         )
 
         let pasteboard = info.draggingPasteboard
+        let batchTabIds = pasteboard.phiNormalTabIds()
         let accepted: Bool
         if let pinnedGuid = pasteboard.string(forType: .pinnedTab),
            !pinnedGuid.isEmpty {
@@ -1293,6 +1346,12 @@ extension TabGroupCellView: GroupTabsDragSource {
                 intoGroupToken: group.token,
                 atNormalTabsIdx: normalTabsIdx,
                 groupIndex: groupIndex) ?? false
+        } else if !batchTabIds.isEmpty {
+            accepted = groupCellDelegate?.tabGroupCell(
+                self,
+                didAcceptTabsWithGuids: batchTabIds,
+                intoGroupToken: group.token,
+                atNormalTabsIdx: normalTabsIdx) ?? false
         } else if let guidString = pasteboard.string(forType: .normalTab),
                   let guid = Int(guidString),
                   let tab = state.tabs.first(where: { $0.guid == guid }) {

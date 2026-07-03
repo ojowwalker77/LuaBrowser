@@ -76,11 +76,11 @@ extension BrowserState {
     func createDirectory(title: String,
                          parentId: String?,
                          index: Int? = nil) {
-        localStore.createDirectory(title: title, profileId: profileId, parentId: parentId)
+        localStore.createDirectory(title: title, profileId: profileId, parentId: parentId, spaceId: spaceId)
     }
     
     func addBookmark(url: String, title: String, parentId: String) {
-        localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parentId)
+        localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parentId, spaceId: spaceId)
     }
 
     /// If `tab` belongs to a split pair, save the whole pair as one split-view
@@ -141,6 +141,7 @@ extension BrowserState {
                 parentId: parentGuid,
                 index: targetIndex,
                 guid: newBookmarkGuid,
+                spaceId: spaceId,
                 secondaryUrl: URLProcessor.processUserInput(secondaryURL),
                 secondaryTitle: secondaryDisplayTitle,
                 favicon: primaryTab.liveFaviconData ?? primaryTab.cachedFaviconData
@@ -183,6 +184,7 @@ extension BrowserState {
                 parentId: parentGuid,
                 index: targetIndex,
                 guid: UUID().uuidString,
+                spaceId: spaceId,
                 secondaryUrl: URLProcessor.processUserInput(secondaryURL),
                 secondaryTitle: secondaryDisplayTitle,
                 favicon: leftPinned.liveFaviconData ?? leftPinned.cachedFaviconData
@@ -205,11 +207,20 @@ extension BrowserState {
 
         localStore.updateLastSeen(bookmark.guid)
         if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
+            if layoutMode.isTraditional {
+                detachBookmarkTabsForComfortableLayout(bookmarkGuids: [bookmark.guid])
+                openTwoURLsAsSplit(primaryURL: url,
+                                   secondaryURL: secondaryURL)
+                return
+            }
             if let splitId = splitBookmarkBindings[bookmark.guid],
                let group = splits.first(where: { $0.id == splitId }),
                let primaryTab = tabs.first(where: { $0.guid == group.primaryTabId }),
                let wrapper = primaryTab.webContentWrapper {
                 wrapper.setAsActiveTab()
+                MainActor.assumeIsolated {
+                    focuseTab(primaryTab)
+                }
             } else {
                 openTwoURLsAsSplit(primaryURL: url,
                                    secondaryURL: secondaryURL,
@@ -223,6 +234,12 @@ extension BrowserState {
             return
         }
 
+        if layoutMode.isTraditional {
+            detachBookmarkTabsForComfortableLayout(bookmarkGuids: [realBookmark.guid])
+            createTab(URLProcessor.processUserInput(url), customGuid: nil, focusAfterCreate: true)
+            return
+        }
+
         // Verify the binding from BOTH directions before activating: the
         // bookmark side (isOpened/webContentWrapper) must agree with the
         // tab side (a live tab whose `guidInLocalDB` still points back at
@@ -233,10 +250,13 @@ extension BrowserState {
         // falling through to `createTab` here opens a fresh bookmark
         // tab, which `handleBookmarkTabOpened` rebinds cleanly.
         if realBookmark.isOpened,
-           let wrapper = realBookmark.webContentWrapper,
            let boundTab = tabs.first(where: { $0.guidInLocalDB == realBookmark.guid }),
+           let wrapper = boundTab.webContentWrapper,
            splitGroup(forTabId: boundTab.guid) == nil {
             wrapper.setAsActiveTab()
+            MainActor.assumeIsolated {
+                focuseTab(boundTab)
+            }
         } else {
             createTab(URLProcessor.processUserInput(url), customGuid: realBookmark.guid, focusAfterCreate: true)
         }

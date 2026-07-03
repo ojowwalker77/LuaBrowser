@@ -9,7 +9,7 @@ import SnapKit
 /// Floating sidebar shown when the primary sidebar is collapsed in non-comfortable layouts.
 /// Lightweight mirror of SidebarViewController.
 class FloatingSidebarViewController: NSViewController {
-    private static let defaultFavoriteHeight: CGFloat = 10
+    private static let defaultFavoriteHeight: CGFloat = 0
     private let messageCardMaxHeight: CGFloat = 200
 
     /// Main vertical stack

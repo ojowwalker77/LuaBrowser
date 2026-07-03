@@ -5,8 +5,33 @@
 
 import Foundation
 import Combine
+
 /// Window-scoped browser state for tabs, layout, and sidebar UI.
 class BrowserState {
+    struct NormalTabRelativeOrderMove: Equatable {
+        enum Anchor: Equatable {
+            case before(Int)
+            case after(Int)
+        }
+
+        let tabId: Int
+        let anchor: Anchor
+    }
+
+    enum NormalTabRelativeOrderSyncOperation: Equatable {
+        case tab(NormalTabRelativeOrderMove)
+        case split(splitId: String, tabIds: [Int], toIndex: Int)
+    }
+
+    private struct NormalTabRelativeOrderSyncUnit {
+        let tabIds: [Int]
+        let splitId: String?
+
+        var firstTabId: Int { tabIds[0] }
+        var lastTabId: Int { tabIds[tabIds.count - 1] }
+        var isSplit: Bool { splitId != nil }
+    }
+
     /// Tabs mirrored from Chromium, including their order.
     @Published var tabs: [Tab] = []
     /// Non-pinned tabs shown in the sidebar list.
@@ -245,6 +270,9 @@ class BrowserState {
     let windowId: Int
     let localStore: LocalStore
     let profileId: String
+    /// Identifies which Space this window renders. Persisted pinned tabs and
+    /// bookmarks under the same Space share this id; see `SpaceModel`.
+    let spaceId: String
     let isIncognito: Bool
     let searchSuggestionChanged = PassthroughSubject<([[String: Any]], String), Never>()
     
@@ -346,10 +374,12 @@ class BrowserState {
     init(windowId: Int,
          localStore: LocalStore,
          profileId: String = LocalStore.defaultProfileId,
+         spaceId: String = LocalStore.defaultSpaceId,
          isIncognito: Bool = false) {
         self.windowId = windowId
         self.localStore = localStore
         self.profileId = profileId
+        self.spaceId = spaceId
         self.isIncognito = isIncognito
         self.imagePreviewState = BrowserImagePreviewState(loader: ImagePreviewLoader())
         self.themeContext = BrowserThemeContext(
@@ -401,6 +431,7 @@ class BrowserState {
         let persistedURL = localTab.pinnedUrl ?? localTab.url
         if existing.pinnedUrl != persistedURL {
             existing.pinnedUrl = persistedURL
+            navigateOpenPinnedTab(existing, toEditedURL: persistedURL)
         }
         
         if existing.storedTitle != localTab.storedTitle {
@@ -433,7 +464,25 @@ class BrowserState {
             existing.url = persistedURL
         }
     }
-    
+
+    /// A pinned-tab URL edit lands here in every space of the profile except
+    /// the editing one (whose live tab `applyPinnedTabEdit` already
+    /// navigates). If this space has the tab open, retarget its web content
+    /// too; custom_value must be cleared around the navigation or
+    /// `CrossDomainNewTabNavigationThrottle` bounces the cross-domain load.
+    private func navigateOpenPinnedTab(_ tab: Tab, toEditedURL url: String?) {
+        guard let url, tab.isOpenned, let wrapper = tab.webContentWrapper else { return }
+        if tab.url != url {
+            tab.url = url
+        }
+        wrapper.updateTabCustomValue("")
+        wrapper.navigate(toURL: url)
+        guard let pinnedGuid = tab.guidInLocalDB else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            wrapper.updateTabCustomValue(pinnedGuid)
+        }
+    }
+
     @MainActor
     func pinnedTabEditingURL(for guid: String, fallbackURL: String?) -> String {
         if let localTab = localStore.getTab(by: guid) {
@@ -577,7 +626,90 @@ class BrowserState {
             return
         }
         lastLegacyLayout = traditionalLayout
+        if traditionalLayout {
+            detachBookmarkTabsForComfortableLayout()
+        }
         self.updateNormalTabs()
+    }
+
+    @discardableResult
+    func detachBookmarkTabsForComfortableLayout(bookmarkGuids targetBookmarkGuids: Set<String>? = nil) -> Bool {
+        guard !isIncognito else { return false }
+        let allBookmarkGuids = Set(
+            bookmarkManager.getAllBookmarks()
+                .filter { !$0.isFolder }
+                .map(\.guid)
+        )
+        let bookmarkGuids = targetBookmarkGuids.map { $0.intersection(allBookmarkGuids) } ?? allBookmarkGuids
+        guard !bookmarkGuids.isEmpty else { return false }
+
+        var detachedBookmarkGuids = clearPendingBookmarkSplitBindings(for: bookmarkGuids)
+        for tab in tabs {
+            guard !tab.isPinned,
+                  let localGuid = tab.guidInLocalDB,
+                  bookmarkGuids.contains(localGuid) else {
+                continue
+            }
+            migrateAIChatTab(for: tab, toNewIdentifier: nil)
+            tab.guidInLocalDB = nil
+            tab.webContentWrapper?.updateTabCustomValue("")
+            detachedBookmarkGuids.insert(localGuid)
+        }
+
+        let boundSplitBookmarkGuids = splitBookmarkBindings.keys.filter { bookmarkGuids.contains($0) }
+        for bookmarkGuid in boundSplitBookmarkGuids {
+            splitBookmarkBindings.removeValue(forKey: bookmarkGuid)
+            detachedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        guard !detachedBookmarkGuids.isEmpty else { return false }
+        for bookmarkGuid in detachedBookmarkGuids {
+            guard let bookmark = bookmarkManager.bookmark(withGuid: bookmarkGuid) else { continue }
+            clearBookmarkOpenedStateForComfortableLayout(bookmark)
+        }
+        return true
+    }
+
+    private func clearPendingBookmarkSplitBindings(for bookmarkGuids: Set<String>) -> Set<String> {
+        var clearedBookmarkGuids = Set<String>()
+
+        for pendingGuid in Array(pendingPrimarySplitTargetByGuid.keys) {
+            guard var pending = pendingPrimarySplitTargetByGuid[pendingGuid],
+                  let bookmarkGuid = pending.boundBookmarkGuid,
+                  bookmarkGuids.contains(bookmarkGuid) else {
+                continue
+            }
+            pending.boundBookmarkGuid = nil
+            pendingPrimarySplitTargetByGuid[pendingGuid] = pending
+            clearedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        for pendingGuid in Array(pendingSplitPartnerByCustomGuid.keys) {
+            guard var pending = pendingSplitPartnerByCustomGuid[pendingGuid],
+                  let bookmarkGuid = pending.boundBookmarkGuid,
+                  bookmarkGuids.contains(bookmarkGuid) else {
+                continue
+            }
+            pending.boundBookmarkGuid = nil
+            pendingSplitPartnerByCustomGuid[pendingGuid] = pending
+            clearedBookmarkGuids.insert(bookmarkGuid)
+        }
+
+        return clearedBookmarkGuids
+    }
+
+    private func clearBookmarkOpenedStateForComfortableLayout(_ bookmark: Bookmark) {
+        if bookmark.isOpened {
+            bookmark.isOpened = false
+        }
+        if bookmark.chromiumTabGuid != -1 {
+            bookmark.chromiumTabGuid = -1
+        }
+        bookmark.setWebContentWrapper(nil)
+        bookmark.clearCanonicalFaviconSource()
+        if bookmark.isActive {
+            bookmark.isActive = false
+        }
     }
 
     func updateNormalTabs() {
@@ -864,6 +996,11 @@ class BrowserState {
             focuseTab(tab)
             return true
         }
+        if let activeTab = focusingTab, isBookmarkBackedTab(activeTab) {
+            clearMultiSelection()
+            focuseTab(tab)
+            return true
+        }
         // A group overview is a separate surface where multi-selection is
         // disabled: a Cmd+click activates the tab (which dismisses the
         // overview) rather than toggling the selection.
@@ -875,6 +1012,43 @@ class BrowserState {
         // The active tab is always implicitly included; toggling it is a no-op.
         if tab.guid == focusingTab?.guid { return true }
         multiSelection.toggle(tab.guid)
+        return true
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleMultiSelectionForSplitPair(leftTab: Tab, rightTab: Tab) -> Bool {
+        guard TabMultiSelection.isEnabled else {
+            clearMultiSelection()
+            return false
+        }
+        guard activeGroupOverviewToken == nil,
+              !leftTab.isPinned,
+              !rightTab.isPinned,
+              !isBookmarkBackedTab(leftTab),
+              !isBookmarkBackedTab(rightTab) else {
+            clearMultiSelection()
+            return false
+        }
+        if let activeTab = focusingTab, isBookmarkBackedTab(activeTab) {
+            clearMultiSelection()
+            return false
+        }
+
+        let paneIds = [leftTab.guid, rightTab.guid]
+        let selectableIds: [Int]
+        if let activeGuid = focusingTab?.guid {
+            selectableIds = paneIds.filter { $0 != activeGuid }
+        } else {
+            selectableIds = paneIds
+        }
+        guard !selectableIds.isEmpty else { return true }
+
+        if selectableIds.contains(where: { multiSelection.contains($0) }) {
+            selectableIds.forEach { multiSelection.remove($0) }
+        } else {
+            selectableIds.forEach { multiSelection.insert($0) }
+        }
         return true
     }
 
@@ -890,9 +1064,50 @@ class BrowserState {
         return normalTabs.filter { target.contains($0.guid) }
     }
 
+    /// Selected normal tabs in tab order, expanded so any selected split pane
+    /// carries its partner through actions that should treat splits as tabs.
+    var orderedMultiSelectedTabsIncludingSplitPartners: [Tab] {
+        let selectedIds = Set(orderedMultiSelectedTabs.map(\.guid))
+        let expandedIds = multiSelectionTabIdsIncludingSplitPartners(selectedIds: selectedIds)
+        return normalTabs.filter { expandedIds.contains($0.guid) }
+    }
+
+    /// Tab ids represented by a multi-selection drag that starts from `tab`.
+    /// Split panes expand to include their partner so drag/reorder never tears
+    /// an active split apart. Returns `nil` when the drag should behave as a
+    /// regular single-tab drag.
+    func multiSelectionDragTabIds(startingFrom tab: Tab) -> [Int]? {
+        guard TabMultiSelection.isEnabled, multiSelection.isActive else { return nil }
+        let orderedIds = orderedMultiSelectedTabsIncludingSplitPartners.map(\.guid)
+        guard orderedIds.count > 1, orderedIds.contains(tab.guid) else { return nil }
+        return orderedIds
+    }
+
+    private func multiSelectionTabIdsIncludingSplitPartners(selectedIds: Set<Int>) -> Set<Int> {
+        guard !selectedIds.isEmpty else { return selectedIds }
+
+        var expandedIds = selectedIds
+        for tabId in selectedIds {
+            guard let group = splitGroup(forTabId: tabId),
+                  !group.isPinned,
+                  let partnerId = group.partnerTabId(of: tabId) else {
+                continue
+            }
+            expandedIds.insert(partnerId)
+        }
+        return expandedIds
+    }
+
     private func isBookmarkBackedTab(_ tab: Tab) -> Bool {
-        guard !tab.isPinned, let guid = tab.guidInLocalDB, !guid.isEmpty else { return false }
-        return bookmarkManager.bookmark(withGuid: guid) != nil
+        guard !tab.isPinned else { return false }
+        if let guid = tab.guidInLocalDB, !guid.isEmpty,
+           bookmarkManager.bookmark(withGuid: guid) != nil {
+            return true
+        }
+        guard let group = splitGroup(forTabId: tab.guid) else { return false }
+        return splitBookmarkBindings.contains { bookmarkGuid, splitId in
+            splitId == group.id && bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
+        }
     }
 
     // MARK: - Multi-selection batch actions
@@ -919,7 +1134,7 @@ class BrowserState {
     }
 
     func copyLinksOfMultiSelectedTabs() {
-        let urls = orderedMultiSelectedTabs.compactMap { $0.url }
+        let urls = orderedMultiSelectedTabsIncludingSplitPartners.compactMap { $0.url }
         clearMultiSelection()
         guard !urls.isEmpty else { return }
         let pasteboard = NSPasteboard.general
@@ -928,24 +1143,109 @@ class BrowserState {
     }
 
     @MainActor
-    func duplicateMultiSelectedTabs() {
+    var multiSelectionSplitPair: (left: Tab, right: Tab)? {
         let tabs = orderedMultiSelectedTabs
+        guard tabs.count == 2 else { return nil }
+        guard tabs.allSatisfy({ tab in
+            !tab.isPinned &&
+            !isBookmarkBackedTab(tab) &&
+            splitGroup(forTabId: tab.guid) == nil
+        }) else {
+            return nil
+        }
+        return (tabs[0], tabs[1])
+    }
+
+    @MainActor
+    func openMultiSelectedTabsAsSplit() {
+        guard let pair = multiSelectionSplitPair else { return }
+        makeTabNormalOpened(tabId: pair.left.guid)
+        makeTabNormalOpened(tabId: pair.right.guid)
+        guard createSplit(leftTabId: pair.left.guid,
+                          rightTabId: pair.right.guid,
+                          layout: .vertical) != nil else {
+            return
+        }
         clearMultiSelection()
-        for tab in tabs {
-            guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
-            createTab(tabURL, focusAfterCreate: true)
+    }
+
+    @MainActor
+    func duplicateMultiSelectedTabs() {
+        let units = multiSelectionTabUnits
+        clearMultiSelection()
+        for unit in units {
+            switch unit {
+            case .tab(let tab):
+                guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
+                createTab(tabURL, focusAfterCreate: true)
+            case .split(let left, let right):
+                guard let leftURL = left.url, !leftURL.isEmpty,
+                      let rightURL = right.url, !rightURL.isEmpty else {
+                    continue
+                }
+                openTwoURLsAsSplit(primaryURL: leftURL, secondaryURL: rightURL)
+            }
         }
     }
 
+    private enum MultiSelectionTabUnit {
+        case tab(Tab)
+        case split(left: Tab, right: Tab)
+    }
+
+    private var multiSelectionTabUnits: [MultiSelectionTabUnit] {
+        tabUnitsPreservingSplits(from: orderedMultiSelectedTabs)
+    }
+
+    private func tabUnitsPreservingSplits(from selectedTabs: [Tab]) -> [MultiSelectionTabUnit] {
+        let selectedIds = Set(selectedTabs.map(\.guid))
+        let expandedIds = multiSelectionTabIdsIncludingSplitPartners(selectedIds: selectedIds)
+        var units: [MultiSelectionTabUnit] = []
+        var consumedSplitIds = Set<String>()
+
+        for tab in normalTabs where expandedIds.contains(tab.guid) {
+            guard let group = splitGroup(forTabId: tab.guid), !group.isPinned else {
+                units.append(.tab(tab))
+                continue
+            }
+            guard !consumedSplitIds.contains(group.id) else { continue }
+            guard let membership = splitMembership(forCellTab: tab),
+                  membership.liveGroup?.id == group.id,
+                  !membership.isPinned else {
+                units.append(.tab(tab))
+                continue
+            }
+
+            consumedSplitIds.insert(group.id)
+            units.append(.split(left: membership.leftPane, right: membership.rightPane))
+        }
+
+        return units
+    }
+
+    private struct BookmarkCreationDraft {
+        let title: String?
+        let url: String
+        let guid: String
+        let secondaryUrl: String?
+        let secondaryTitle: String?
+        let favicon: Data?
+    }
+
     func bookmarkMultiSelectedTabs(into folder: Bookmark?) {
-        let tabs = orderedMultiSelectedTabs
+        let units = multiSelectionTabUnits
         clearMultiSelection()
-        for tab in tabs {
-            guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
-            bookmarkManager.addBookmark(title: tab.title,
-                                        url: URLProcessor.processUserInput(tabURL),
-                                        to: folder,
-                                        faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
+        for unit in units {
+            switch unit {
+            case .tab(let tab):
+                guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
+                bookmarkManager.addBookmark(title: tab.title,
+                                            url: URLProcessor.processUserInput(tabURL),
+                                            to: folder,
+                                            faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
+            case .split(let left, _):
+                addSplitBookmarkFromTab(left, toFolder: folder, bindLiveSplit: false)
+            }
         }
     }
 
@@ -954,28 +1254,65 @@ class BrowserState {
     /// new-folder dialog) clears it; reading the live selection here would
     /// only see the implicit active tab.
     func bookmarkTabs(_ tabs: [Tab], intoNewFolderNamed name: String) {
-        let validTabs = tabs.filter { ($0.url?.isEmpty == false) }
+        let units = tabUnitsPreservingSplits(from: tabs)
+        let drafts = bookmarkCreationDrafts(from: units)
         clearMultiSelection()
-        guard let first = validTabs.first, let firstURL = first.url else { return }
-        bookmarkManager.addFolderFromTabStrip(
-            title: name,
-            to: nil,
-            bookmarkTitle: first.title,
-            bookmarkURL: URLProcessor.processUserInput(firstURL),
-            bookmarkFaviconData: first.liveFaviconData ?? first.cachedFaviconData
-        ) { [weak self] success, newFolderGuid in
-            // The folder may not be in the in-memory index yet, so address it
-            // by guid rather than resolving a `Bookmark` instance.
-            guard success, let self else { return }
-            for tab in validTabs.dropFirst() {
-                guard let tabURL = tab.url, !tabURL.isEmpty else { continue }
-                self.bookmarkManager.addBookmark(
-                    title: tab.title,
-                    url: URLProcessor.processUserInput(tabURL),
-                    toParentGuid: newFolderGuid,
-                    faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
+        guard !drafts.isEmpty else { return }
+        localStore.createDirectoryWithBookmarks(
+            folderTitle: name,
+            folderGuid: UUID().uuidString,
+            profileId: profileId,
+            parentId: nil,
+            index: nil,
+            spaceId: spaceId,
+            bookmarks: drafts.map {
+                (title: $0.title,
+                 url: $0.url,
+                 guid: $0.guid,
+                 secondaryUrl: $0.secondaryUrl,
+                 secondaryTitle: $0.secondaryTitle,
+                 favicon: $0.favicon)
+            }
+        )
+    }
+
+    private func bookmarkCreationDrafts(from units: [MultiSelectionTabUnit]) -> [BookmarkCreationDraft] {
+        units.compactMap { unit in
+            switch unit {
+            case .tab(let tab):
+                guard let tabURL = tab.url, !tabURL.isEmpty else { return nil }
+                return BookmarkCreationDraft(title: tab.title,
+                                             url: URLProcessor.processUserInput(tabURL),
+                                             guid: UUID().uuidString,
+                                             secondaryUrl: nil,
+                                             secondaryTitle: nil,
+                                             favicon: tab.liveFaviconData ?? tab.cachedFaviconData)
+            case .split(let tab, _):
+                return splitBookmarkCreationDraft(from: tab)
             }
         }
+    }
+
+    private func splitBookmarkCreationDraft(from tab: Tab) -> BookmarkCreationDraft? {
+        guard let group = splitGroup(forTabId: tab.guid), !group.isPinned,
+              let primaryTab = tabs.first(where: { $0.guid == group.primaryTabId }),
+              let secondaryTab = tabs.first(where: { $0.guid == group.secondaryTabId }),
+              let primaryURL = primaryTab.url, !primaryURL.isEmpty,
+              let secondaryURL = secondaryTab.url, !secondaryURL.isEmpty else {
+            return nil
+        }
+
+        let bookmarkTitle = primaryTab.title.isEmpty ? primaryURL : primaryTab.title
+        let secondaryDisplayTitle: String? = {
+            if primaryTab.title == secondaryTab.title { return nil }
+            return secondaryTab.title.isEmpty ? nil : secondaryTab.title
+        }()
+        return BookmarkCreationDraft(title: bookmarkTitle,
+                                     url: URLProcessor.processUserInput(primaryURL),
+                                     guid: UUID().uuidString,
+                                     secondaryUrl: URLProcessor.processUserInput(secondaryURL),
+                                     secondaryTitle: secondaryDisplayTitle,
+                                     favicon: primaryTab.liveFaviconData ?? primaryTab.cachedFaviconData)
     }
 
     @MainActor
@@ -1097,6 +1434,13 @@ class BrowserState {
         }
         return nil
     }
+
+    /// Resolve a normal tab by its Chromium guid. Crash-page bridge events only
+    /// target normal tabs: AI Chat tabs are blocked at the Chromium dispatch
+    /// (`sad_tab_helper.cc`), so this intentionally does NOT search `aiChatTabs`.
+    func resolveTab(_ tabId: Int) -> Tab? {
+        tabs.first(where: { $0.guid == tabId })
+    }
     
     /// Create an AI Chat tab associated with the specified identifier
     /// - Parameters:
@@ -1155,6 +1499,9 @@ class BrowserState {
                 return
             }
             aiChatTabs[identifier] = tab
+            // AI Chat tabs never show a native crash page — discard any buffered
+            // crash for this tab so it doesn't linger in the buffer.
+            _ = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid)
             return  // Don't add to regular tabs
         }
 
@@ -1186,6 +1533,12 @@ class BrowserState {
                                              hiddenOpenerTabIds: preseededHiddenOpenerTabIds)
 
         tabs.append(tab)
+        // Cross-window drag: a crash event may have been buffered before this
+        // tab existed on the Mac side (Coordinator.showCrashPage). Apply it now
+        // that the tab is in `tabs` so the new window shows the crash page.
+        if let bufferedCrash = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid) {
+            tab.crashState = bufferedCrash
+        }
         // If Chromium emitted a kCreated/kJoined for this tab while it was
         // still in flight, restore the group membership now that the Tab
         // exists. Sidebar reactivity comes through the group's
@@ -1502,6 +1855,16 @@ class BrowserState {
         
         // Resolve the normal tab after AI Chat-tab handling has been ruled out.
         guard let closedTab = tabs.first(where: { $0.guid == tabId }) else { return }
+        NotificationCenter.default.post(
+            name: .browserTabDidClose,
+            object: self,
+            userInfo: [
+                BrowserTabCloseInfoKey.tabId: closedTab.guid,
+                BrowserTabCloseInfoKey.windowId: windowId,
+                BrowserTabCloseInfoKey.url: closedTab.url as Any,
+                BrowserTabCloseInfoKey.localGuid: closedTab.guidInLocalDB as Any,
+            ]
+        )
 
         // Close the linked AI Chat synchronously. EventBus already hops through a
         // `Task @MainActor`, so we are no longer inside Chromium's tab strip
@@ -2150,6 +2513,75 @@ class BrowserState {
         }
     }
 
+    /// Reorders an arbitrary set of normal tabs as a stable block. Used by
+    /// temporary multi-selection drag: selected ids are ordered by
+    /// `normalTabOrder`, removed from their original positions, then inserted
+    /// together at the requested pre-removal destination.
+    func moveNormalTabsLocally(tabIds: [Int],
+                               to toIndex: Int,
+                               syncChromiumOrder: Bool = true) {
+        var seen = Set<Int>()
+        let requestedIds = tabIds.filter { seen.insert($0).inserted }
+        guard requestedIds.count > 1 else {
+            if let id = requestedIds.first,
+               let fromIndex = normalTabOrder.firstIndex(of: id) {
+                moveNormalTabLocally(from: fromIndex,
+                                     to: toIndex,
+                                     syncChromiumOrder: syncChromiumOrder)
+            }
+            return
+        }
+
+        let requestedSet = Set(requestedIds)
+        let movingIds = normalTabOrder.filter { requestedSet.contains($0) }
+        guard movingIds.count > 1,
+              let firstSourceIndex = normalTabOrder.firstIndex(of: movingIds[0]) else {
+            return
+        }
+
+        let beforeOrder = normalTabOrder
+        let snappedToIndex = snapDropOutsideSplitPair(toIndex: toIndex,
+                                                      fromIndex: firstSourceIndex)
+        let clampedToIndex = min(max(0, snappedToIndex), normalTabOrder.count)
+        let removedBeforeTarget = normalTabOrder
+            .prefix(clampedToIndex)
+            .filter { requestedSet.contains($0) }
+            .count
+        var insertIndex = clampedToIndex - removedBeforeTarget
+
+        var newOrder = normalTabOrder.filter { !requestedSet.contains($0) }
+        insertIndex = min(max(0, insertIndex), newOrder.count)
+        newOrder.insert(contentsOf: movingIds, at: insertIndex)
+        guard newOrder != normalTabOrder else { return }
+
+        let movingSet = Set(movingIds)
+        var externalChildren: Set<Int> = []
+        for tabId in movingIds {
+            for childId in nativeRelationGraph.directChildren(of: tabId)
+            where !movingSet.contains(childId) {
+                externalChildren.insert(childId)
+            }
+        }
+
+        nativeRelationGraph.fixOpenersAfterMovingSlice(movingSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        normalTabOrder = newOrder
+        updateNormalTabs()
+        AppLogDebug(
+            "[SidebarMultiDrag] local reorder windowId=\(windowId) " +
+            "requestedIds=\(requestedIds) movingIds=\(movingIds) " +
+            "toIndex=\(toIndex) snappedToIndex=\(snappedToIndex) " +
+            "insertIndex=\(insertIndex) before=\(beforeOrder) after=\(normalTabOrder)"
+        )
+
+        if syncChromiumOrder {
+            syncNormalTabsRelativeOrderToChromium(tabIds: movingIds)
+        }
+    }
+
     /// Reorders a contiguous slice of group members in `normalTabOrder`
     /// as a single atomic operation. The slice's group membership is
     /// invariant; only its position changes.
@@ -2550,6 +2982,67 @@ class BrowserState {
         )
     }
 
+    /// Tear off an ordered batch of normal tabs into a brand-new Browser
+    /// window. The caller supplies the selected tab ids, but this method
+    /// re-resolves the final member list from `normalTabs` so the destination
+    /// order matches the source window's visible order. Split partners are
+    /// included defensively so Chromium receives complete split collections
+    /// and can move them atomically.
+    @MainActor
+    @discardableResult
+    func moveNormalTabsToNewWindow(tabIds: [Int],
+                                   dropScreenLocation: CGPoint) -> Bool {
+        let requestedSet = Set(tabIds)
+        let expandedSet = multiSelectionTabIdsIncludingSplitPartners(selectedIds: requestedSet)
+        let memberIds = normalTabs.map(\.guid).filter { expandedSet.contains($0) }
+
+        guard memberIds.count > 1 else {
+            AppLogWarn("[MultiTabDrag] moveNormalTabsToNewWindow needs batch ids=\(tabIds)")
+            return false
+        }
+
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogWarn("[MultiTabDrag] moveNormalTabsToNewWindow missing bridge")
+            return false
+        }
+
+        let memberSet = Set(memberIds)
+        var externalChildren: Set<Int> = []
+        for memberId in memberIds {
+            for childId in nativeRelationGraph.directChildren(of: memberId)
+            where !memberSet.contains(childId) {
+                externalChildren.insert(childId)
+            }
+        }
+        nativeRelationGraph.fixOpenersAfterMovingSlice(memberSet)
+        for childId in externalChildren {
+            nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+        }
+
+        let sourceWindow = windowController?.window
+        tabDraggingSession.recordPendingTearOffWindowPlacement(
+            screenLocation: dropScreenLocation,
+            sourceWindow: sourceWindow
+        )
+
+        Self.stashCrossWindowFavicons(forMemberIds: memberIds, in: tabs)
+
+        for tab in tabs where memberSet.contains(tab.guid) {
+            tab.webContentWrapper?.updateTabCustomValue("")
+        }
+
+        AppLogDebug(
+            "[MultiTabDrag] moveNormalTabsToNewWindow windowId=\(windowId) " +
+            "requestedIds=\(tabIds) memberIds=\(memberIds) dropScreen=\(dropScreenLocation)"
+        )
+        bridge.moveTabsToNewWindow(
+            withWindowId: windowId.int64Value,
+            tabIds: memberIds.map { NSNumber(value: Int64($0)) }
+        )
+        clearMultiSelection()
+        return true
+    }
+
     /// Reorder a split pair as a unit. Called from `moveNormalTabLocally` when
     /// the dragged tab is part of a split — both members travel together so
     /// the split collection stays intact, and Chromium's `MoveSplit` is used
@@ -2647,33 +3140,299 @@ class BrowserState {
     }
 
     func syncNormalTabsRelativeOrderToChromium(tabIds: [Int]) {
-        for tabId in tabIds {
-            syncNormalTabRelativeOrderToChromium(tabId: tabId)
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogDebug(
+                "[SidebarMultiDrag] Chromium sync skipped: no bridge " +
+                "windowId=\(windowId) tabIds=\(tabIds) order=\(normalTabOrder)"
+            )
+            return
         }
+        let operations = normalTabRelativeOrderSyncOperations(tabIds: tabIds)
+        AppLogDebug(
+            "[SidebarMultiDrag] Chromium sync plan windowId=\(windowId) " +
+            "tabIds=\(tabIds) order=\(normalTabOrder) operations=\(operations)"
+        )
+        for operation in operations {
+            switch operation {
+            case .tab(let move):
+                syncNormalTabRelativeOrderToChromium(move, bridge: bridge)
+            case .split(let splitId, let splitTabIds, let toIndex):
+                AppLogDebug(
+                    "[SidebarMultiDrag] bridge.moveSplit splitId=\(splitId) " +
+                    "tabIds=\(splitTabIds) toIndex=\(toIndex)"
+                )
+                bridge.moveSplit(splitId,
+                                 to: Int32(toIndex),
+                                 windowId: windowId.int64Value)
+            }
+        }
+    }
+
+    func normalTabRelativeOrderSyncOperations(tabIds: [Int]) -> [NormalTabRelativeOrderSyncOperation] {
+        let movingIds = normalTabRelativeOrderMovingIds(tabIds: tabIds)
+        guard !movingIds.isEmpty else { return [] }
+        let units = normalTabRelativeOrderSyncUnits(movingIds: movingIds)
+        guard units.contains(where: \.isSplit) else {
+            return normalTabRelativeOrderTabSyncMoves(tabIds: tabIds).map {
+                .tab($0)
+            }
+        }
+        guard movingIds.count > 1 else {
+            return units.flatMap { unit -> [NormalTabRelativeOrderSyncOperation] in
+                if let splitId = unit.splitId {
+                    guard let toIndex = splitInsertionIndex(for: unit.tabIds) else { return [] }
+                    return [.split(splitId: splitId, tabIds: unit.tabIds, toIndex: toIndex)]
+                }
+                return normalTabRelativeOrderSyncMove(tabId: unit.firstTabId).map {
+                    [.tab($0)]
+                } ?? []
+            }
+        }
+        guard let firstIndex = normalTabOrder.firstIndex(of: movingIds[0]),
+              let lastIndex = normalTabOrder.firstIndex(of: movingIds[movingIds.count - 1]),
+              lastIndex - firstIndex + 1 == movingIds.count else {
+            return units.flatMap { unit -> [NormalTabRelativeOrderSyncOperation] in
+                if let splitId = unit.splitId {
+                    guard let toIndex = splitInsertionIndex(for: unit.tabIds) else { return [] }
+                    return [.split(splitId: splitId, tabIds: unit.tabIds, toIndex: toIndex)]
+                }
+                return normalTabRelativeOrderSyncMove(tabId: unit.firstTabId).map {
+                    [.tab($0)]
+                } ?? []
+            }
+        }
+
+        var simulatedStripOrder = chromiumStripOrderForRelativeSync()
+        var operations: [NormalTabRelativeOrderSyncOperation] = []
+
+        if lastIndex + 1 < normalTabOrder.count {
+            var anchorTabId = splitSafeBeforeAnchorTabId(normalTabOrder[lastIndex + 1])
+            for unit in units.reversed() {
+                if let splitId = unit.splitId {
+                    guard let toIndex = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                                   before: anchorTabId,
+                                                                   order: &simulatedStripOrder) else {
+                        continue
+                    }
+                    operations.append(.split(splitId: splitId,
+                                             tabIds: unit.tabIds,
+                                             toIndex: toIndex))
+                } else {
+                    let move = NormalTabRelativeOrderMove(tabId: unit.firstTabId,
+                                                          anchor: .before(anchorTabId))
+                    _ = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                   before: anchorTabId,
+                                                   order: &simulatedStripOrder)
+                    operations.append(.tab(move))
+                }
+                anchorTabId = unit.firstTabId
+            }
+            return operations
+        }
+
+        if firstIndex > 0 {
+            var anchorTabId = splitSafeAfterAnchorTabId(normalTabOrder[firstIndex - 1])
+            for unit in units {
+                if let splitId = unit.splitId {
+                    guard let toIndex = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                                   after: anchorTabId,
+                                                                   order: &simulatedStripOrder) else {
+                        continue
+                    }
+                    operations.append(.split(splitId: splitId,
+                                             tabIds: unit.tabIds,
+                                             toIndex: toIndex))
+                } else {
+                    let move = NormalTabRelativeOrderMove(tabId: unit.firstTabId,
+                                                          anchor: .after(anchorTabId))
+                    _ = moveTabIdsInSimulatedStrip(unit.tabIds,
+                                                   after: anchorTabId,
+                                                   order: &simulatedStripOrder)
+                    operations.append(.tab(move))
+                }
+                anchorTabId = unit.lastTabId
+            }
+            return operations
+        }
+
+        return []
+    }
+
+    private func syncNormalTabRelativeOrderToChromium(_ move: NormalTabRelativeOrderMove,
+                                                      bridge: PhiChromiumBridgeProtocol) {
+        switch move.anchor {
+        case .before(let anchorTabId):
+            AppLogDebug(
+                "[SidebarMultiDrag] bridge.moveTab tabId=\(move.tabId) " +
+                "beforeTabId=\(anchorTabId)"
+            )
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+        case .after(let anchorTabId):
+            AppLogDebug(
+                "[SidebarMultiDrag] bridge.moveTab tabId=\(move.tabId) " +
+                "afterTabId=\(anchorTabId)"
+            )
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
+    }
+
+    func normalTabRelativeOrderSyncMoves(tabIds: [Int]) -> [NormalTabRelativeOrderMove] {
+        normalTabRelativeOrderTabSyncMoves(tabIds: tabIds)
+    }
+
+    private func normalTabRelativeOrderTabSyncMoves(tabIds: [Int]) -> [NormalTabRelativeOrderMove] {
+        let movingIds = normalTabRelativeOrderMovingIds(tabIds: tabIds)
+        guard !movingIds.isEmpty else { return [] }
+        guard movingIds.count > 1 else {
+            return movingIds.compactMap { normalTabRelativeOrderSyncMove(tabId: $0) }
+        }
+        guard let firstIndex = normalTabOrder.firstIndex(of: movingIds[0]),
+              let lastIndex = normalTabOrder.firstIndex(of: movingIds[movingIds.count - 1]),
+              lastIndex - firstIndex + 1 == movingIds.count else {
+            return movingIds.compactMap { normalTabRelativeOrderSyncMove(tabId: $0) }
+        }
+
+        if lastIndex + 1 < normalTabOrder.count {
+            var anchorTabId = splitSafeBeforeAnchorTabId(normalTabOrder[lastIndex + 1])
+            return movingIds.reversed().map { tabId in
+                defer { anchorTabId = tabId }
+                return NormalTabRelativeOrderMove(tabId: tabId, anchor: .before(anchorTabId))
+            }
+        }
+
+        if firstIndex > 0 {
+            var anchorTabId = splitSafeAfterAnchorTabId(normalTabOrder[firstIndex - 1])
+            return movingIds.map { tabId in
+                defer { anchorTabId = tabId }
+                return NormalTabRelativeOrderMove(tabId: tabId, anchor: .after(anchorTabId))
+            }
+        }
+
+        return []
+    }
+
+    private func normalTabRelativeOrderMovingIds(tabIds: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        let requestedIds = tabIds.filter { seen.insert($0).inserted }
+        let requestedSet = Set(requestedIds)
+        return normalTabOrder.filter { requestedSet.contains($0) }
+    }
+
+    private func normalTabRelativeOrderSyncUnits(movingIds: [Int]) -> [NormalTabRelativeOrderSyncUnit] {
+        var units: [NormalTabRelativeOrderSyncUnit] = []
+        var consumed = Set<Int>()
+        let movingSet = Set(movingIds)
+        for tabId in movingIds {
+            if consumed.contains(tabId) { continue }
+            if let group = splitGroup(forTabId: tabId),
+               !group.isPinned,
+               let partnerId = group.partnerTabId(of: tabId),
+               movingSet.contains(partnerId) {
+                let pairIds = movingIds.filter {
+                    $0 == tabId || $0 == partnerId
+                }
+                if pairIds.count == 2 {
+                    units.append(NormalTabRelativeOrderSyncUnit(tabIds: pairIds,
+                                                                splitId: group.id))
+                    consumed.insert(tabId)
+                    consumed.insert(partnerId)
+                    continue
+                }
+            }
+            units.append(NormalTabRelativeOrderSyncUnit(tabIds: [tabId],
+                                                        splitId: nil))
+            consumed.insert(tabId)
+        }
+        return units
+    }
+
+    private func chromiumStripOrderForRelativeSync() -> [Int] {
+        let ordered = tabs.sorted { lhs, rhs in
+            if lhs.index == rhs.index { return lhs.guid < rhs.guid }
+            return lhs.index < rhs.index
+        }.map(\.guid)
+        return ordered.isEmpty ? normalTabOrder : ordered
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            before anchorTabId: Int,
+                                            order: inout [Int]) -> Int? {
+        moveTabIdsInSimulatedStrip(tabIds,
+                                   insertionIndex: { $0.firstIndex(of: anchorTabId) },
+                                   order: &order)
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            after anchorTabId: Int,
+                                            order: inout [Int]) -> Int? {
+        moveTabIdsInSimulatedStrip(tabIds,
+                                   insertionIndex: { currentOrder in
+                                       currentOrder.firstIndex(of: anchorTabId).map { $0 + 1 }
+                                   },
+                                   order: &order)
+    }
+
+    private func moveTabIdsInSimulatedStrip(_ tabIds: [Int],
+                                            insertionIndex: ([Int]) -> Int?,
+                                            order: inout [Int]) -> Int? {
+        let movingSet = Set(tabIds)
+        guard order.contains(where: { movingSet.contains($0) }) else { return nil }
+        order.removeAll { movingSet.contains($0) }
+        let insertIndex = min(max(0, insertionIndex(order) ?? order.count), order.count)
+        order.insert(contentsOf: tabIds, at: insertIndex)
+        return insertIndex
+    }
+
+    private func splitInsertionIndex(for tabIds: [Int]) -> Int? {
+        var order = chromiumStripOrderForRelativeSync()
+        guard let firstTabId = tabIds.first,
+              let currentIndex = order.firstIndex(of: firstTabId) else {
+            return nil
+        }
+        return moveTabIdsInSimulatedStrip(tabIds,
+                                          insertionIndex: { _ in currentIndex },
+                                          order: &order)
     }
 
     private func syncNormalTabRelativeOrderToChromium(tabId: Int) {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge,
-              let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+              let move = normalTabRelativeOrderSyncMove(tabId: tabId) else {
             return
+        }
+        switch move.anchor {
+        case .before(let anchorTabId):
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           beforeTabId: anchorTabId.int64Value)
+        case .after(let anchorTabId):
+            bridge.moveTab(withWindowId: windowId.int64Value,
+                           tabId: move.tabId.int64Value,
+                           afterTabId: anchorTabId.int64Value)
+        }
+    }
+
+    private func normalTabRelativeOrderSyncMove(tabId: Int) -> NormalTabRelativeOrderMove? {
+        guard let movedIndex = normalTabOrder.firstIndex(of: tabId) else {
+            return nil
         }
 
         if movedIndex + 1 < normalTabOrder.count {
             let anchorTabId = splitSafeBeforeAnchorTabId(
                 normalTabOrder[movedIndex + 1])
-            bridge.moveTab(withWindowId: windowId.int64Value,
-                           tabId: tabId.int64Value,
-                           beforeTabId: anchorTabId.int64Value)
-            return
+            return NormalTabRelativeOrderMove(tabId: tabId, anchor: .before(anchorTabId))
         }
 
         if movedIndex > 0 {
             let anchorTabId = splitSafeAfterAnchorTabId(
                 normalTabOrder[movedIndex - 1])
-            bridge.moveTab(withWindowId: windowId.int64Value,
-                           tabId: tabId.int64Value,
-                           afterTabId: anchorTabId.int64Value)
+            return NormalTabRelativeOrderMove(tabId: tabId, anchor: .after(anchorTabId))
         }
+
+        return nil
     }
 
     private func splitSafeBeforeAnchorTabId(_ anchorTabId: Int) -> Int {
@@ -3098,26 +3857,87 @@ class BrowserState {
         localStore.moveOrCreatePinnedTab(secondPane, after: firstPane.guidInLocalDB, profileId: profileId)
     }
     
-    func moveNormalTab(tabId: Int, toPinnd pinnedIndex: Int, selectAfterMove: Bool = false) {
-        guard let tab = tabs.first(where: { $0.guid == tabId }) else {
-            return
+    private func normalTabTransferUnits(tabIds: [Int]) -> [Tab] {
+        var seen = Set<Int>()
+        let requestedIds = Set(tabIds.filter { seen.insert($0).inserted })
+        guard !requestedIds.isEmpty else { return [] }
+
+        var consumedIds = Set<Int>()
+        var units: [Tab] = []
+        for tab in normalTabs where requestedIds.contains(tab.guid) {
+            guard !consumedIds.contains(tab.guid) else { continue }
+            units.append(tab)
+            consumedIds.insert(tab.guid)
+            if let group = splitGroup(forTabId: tab.guid), !group.isPinned {
+                consumedIds.insert(group.primaryTabId)
+                consumedIds.insert(group.secondaryTabId)
+            }
         }
+        return units
+    }
+
+    private func detachNormalTabFromGroupForPinning(_ tab: Tab) {
         // Phi-side pinning bypasses Chromium's TabStripModel (it stores
         // the tab as a bookmark-backed local entry instead), so the
         // automatic "pinning detaches from group" behavior in
         // `TabStripModel::SetTabPinned` doesn't fire. Detach explicitly
-        // here so all five paths into pinning — the right-click "Pin"
-        // menu plus the four drag-to-pinned-area drop sites (sidebar
-        // and horizontal strip, same- and cross-window) — keep
-        // Chromium's group state and Phi's `tab.groupToken` consistent.
-        // Local clear avoids a transient "pinned + grouped" frame
-        // before the kLeft event round-trips back through the bridge.
+        // so all paths into pinning keep Chromium's group state and Phi's
+        // `tab.groupToken` consistent.
         if tab.groupToken != nil,
            let bridge = ChromiumLauncher.sharedInstance().bridge {
             bridge.removeTabsFromGroup(withWindowId: windowId.int64Value,
-                                        tabIds: [NSNumber(value: Int64(tabId))])
+                                        tabIds: [NSNumber(value: Int64(tab.guid))])
             tab.groupToken = nil
         }
+    }
+
+    @discardableResult
+    @MainActor
+    func moveNormalTabs(tabIds: [Int], toPinnedTabs pinnedIndex: Int) -> Bool {
+        let units = normalTabTransferUnits(tabIds: tabIds)
+        guard !units.isEmpty else { return false }
+
+        let clampedIndex = max(0, min(pinnedIndex, pinnedTabs.count))
+        let snappedIndex = Self.pinnedInsertIndexOutsideSplitPair(
+            clampedIndex,
+            pinnedTabs: pinnedTabs)
+        var afterGuid: String?
+        if snappedIndex > 0, !pinnedTabs.isEmpty {
+            let anchorIndex = min(snappedIndex - 1, pinnedTabs.count - 1)
+            afterGuid = pinnedTabs[anchorIndex].guidInLocalDB
+        }
+
+        var didMove = false
+        for tab in units {
+            if let splitGroup = splitGroup(forTabId: tab.guid), !splitGroup.isPinned {
+                if let pair = pinSplit(splitGroup.id, afterPinnedGuid: afterGuid) {
+                    afterGuid = pair.secondaryGuid
+                    didMove = true
+                }
+                continue
+            }
+
+            detachNormalTabFromGroupForPinning(tab)
+            if let newGuid = moveNormalTabToPinned(tab,
+                                                   after: afterGuid,
+                                                   selectAfterMove: tab.isActive) {
+                afterGuid = newGuid
+                didMove = true
+            }
+        }
+
+        if didMove {
+            clearMultiSelection()
+        }
+        return didMove
+    }
+
+    @discardableResult
+    func moveNormalTab(tabId: Int, toPinnd pinnedIndex: Int, selectAfterMove: Bool = false) -> String? {
+        guard let tab = tabs.first(where: { $0.guid == tabId }) else {
+            return nil
+        }
+        detachNormalTabFromGroupForPinning(tab)
         var afterGuid: String?
         if pinnedIndex > 0, !pinnedTabs.isEmpty {
             let snappedIndex = Self.pinnedInsertIndexOutsideSplitPair(pinnedIndex, pinnedTabs: pinnedTabs)
@@ -3126,7 +3946,9 @@ class BrowserState {
         } else if pinnedIndex == -1, !pinnedTabs.isEmpty {
             afterGuid = pinnedTabs.last!.guidInLocalDB
         }
-        moveNormalTabToPinned(tab, after: afterGuid, selectAfterMove: selectAfterMove)
+        return moveNormalTabToPinned(tab,
+                                     after: afterGuid,
+                                     selectAfterMove: selectAfterMove)
     }
 
     /// Pin a normal tab using an explicit "after" anchor guid instead of an
@@ -3134,7 +3956,10 @@ class BrowserState {
     /// `pinnedTabs` publisher is async (background SwiftData write + main-queue
     /// hop), so an index computed against the post-first-insert state is not
     /// observable yet when a second insert runs synchronously after the first.
-    func moveNormalTabToPinned(_ tab: Tab, after afterGuid: String?, selectAfterMove: Bool = false) {
+    @discardableResult
+    func moveNormalTabToPinned(_ tab: Tab,
+                               after afterGuid: String?,
+                               selectAfterMove: Bool = false) -> String? {
         let tabId = tab.guid
         let affectedChildren = nativeRelationGraph.directChildren(of: tabId)
         nativeRelationGraph.fixOpenersAfterMovingTab(tabId)
@@ -3150,6 +3975,7 @@ class BrowserState {
         if let wrapper = tab.webContentWrapper {
             wrapper.updateTabCustomValue(newGuid)
         }
+        return newGuid
     }
     
     func movePinnedTabOut(pinnedGuid: String, to normalIndex: Int, selectAfterMove: Bool = false) {
@@ -3308,12 +4134,54 @@ class BrowserState {
     /// - Parameters:
     ///   - tabId: Chromium guid of the tab to move.
     ///   - parentGuid: Destination bookmark folder guid, or nil for the root.
-    ///   - index: Destination insertion index inside the parent folder.
+    ///   - index: Destination insertion index inside the parent folder, or nil to append.
     ///   - selectAfterMove: Whether the moved tab should remain selected.
-    func moveNormalTab(tabId: Int, toBookmark parentGuid: String?, index: Int, selectAfterMove: Bool = false) {
+    @discardableResult
+    func moveNormalTabs(tabIds: [Int],
+                        toBookmark parentGuid: String?,
+                        index: Int?) -> Bool {
+        let units = normalTabTransferUnits(tabIds: tabIds)
+        guard !units.isEmpty else { return false }
+
+        var didMove = false
+        var insertedCount = 0
+        for tab in units {
+            let targetIndex = index.map { $0 + insertedCount }
+            if let splitGroup = splitGroup(forTabId: tab.guid), !splitGroup.isPinned {
+                if addSplitBookmarkFromTab(tab,
+                                           toFolderGuid: parentGuid,
+                                           targetIndex: targetIndex) {
+                    insertedCount += 1
+                    didMove = true
+                }
+                continue
+            }
+
+            if moveNormalTab(tabId: tab.guid,
+                             toBookmark: parentGuid,
+                             index: targetIndex) {
+                insertedCount += 1
+                didMove = true
+            }
+        }
+
+        if didMove {
+            clearMultiSelection()
+        }
+        return didMove
+    }
+
+    /// Moves a normal tab into bookmarks.
+    /// - Parameters:
+    ///   - tabId: Chromium guid of the tab to move.
+    ///   - parentGuid: Destination bookmark folder guid, or nil for the root.
+    ///   - index: Destination insertion index inside the parent folder, or nil to append.
+    ///   - selectAfterMove: Whether the moved tab should remain selected.
+    @discardableResult
+    func moveNormalTab(tabId: Int, toBookmark parentGuid: String?, index: Int?, selectAfterMove: Bool = false) -> Bool {
         guard let tab = tabs.first(where: { $0.guid == tabId }),
               let url = tab.url, !url.isEmpty else {
-            return
+            return false
         }
         let newBookmarkGuid = UUID().uuidString
         prepareNormalTabForBookmark(tab, bookmarkGuid: newBookmarkGuid)
@@ -3324,9 +4192,11 @@ class BrowserState {
                                   parentId: parentGuid,
                                   index: index,
                                   guid: newBookmarkGuid,
+                                  spaceId: spaceId,
                                   favicon: tab.liveFaviconData ?? tab.cachedFaviconData)
 
         updateNormalTabs()
+        return true
     }
 
     private func prepareNormalTabForBookmark(_ tab: Tab, bookmarkGuid: String) {
@@ -3415,10 +4285,13 @@ class BrowserState {
             profileId: profileId,
             parentId: parentFolder?.guid,
             index: startIndex,
+            spaceId: spaceId,
             bookmarks: bookmarkDrafts.map {
                 (title: $0.title,
                  url: $0.url,
                  guid: $0.guid,
+                 secondaryUrl: nil,
+                 secondaryTitle: nil,
                  favicon: $0.tab.liveFaviconData ?? $0.tab.cachedFaviconData)
             }
         )
@@ -3476,6 +4349,7 @@ class BrowserState {
                                   parentId: parentGuid,
                                   index: index,
                                   guid: newBookmarkGuid,
+                                  spaceId: spaceId,
                                   favicon: pinnedTab.liveFaviconData ?? pinnedTab.cachedFaviconData)
 
         if pinnedTab.isOpenned, let chromiumTab = tabs.first(where: { $0.guidInLocalDB == pinnedGuid }) {
@@ -3555,6 +4429,7 @@ class BrowserState {
             parentId: parentGuid,
             index: index,
             guid: newBookmarkGuid,
+            spaceId: spaceId,
             secondaryUrl: URLProcessor.processUserInput(secondaryURL),
             secondaryTitle: secondaryDisplayTitle,
             favicon: primaryPinned.liveFaviconData ?? primaryPinned.cachedFaviconData
@@ -4189,6 +5064,17 @@ extension BrowserState {
     static func currentState() -> BrowserState? {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState
     }
+}
+
+extension Notification.Name {
+    static let browserTabDidClose = Notification.Name("BrowserStateTabDidClose")
+}
+
+enum BrowserTabCloseInfoKey {
+    static let tabId = "tabId"
+    static let windowId = "windowId"
+    static let url = "url"
+    static let localGuid = "localGuid"
 }
 
 extension BrowserState {

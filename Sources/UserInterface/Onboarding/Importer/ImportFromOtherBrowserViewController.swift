@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import AVFoundation
+import SwiftUI
 
 class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     enum Phase {
@@ -14,26 +15,32 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     
     enum DisplayMode {
         case login   // 640x800 for onboarding.
-        case normal  // 500x650 for the standalone window.
+        case normal  // 500x625 for the standalone window.
     }
     
     var onCompletion: (() -> Void)?
-    /// Called when user taps a browser row to enter data type selection.
-    var onBrowserSelected: ((_ browser: BrowserType, _ chromeProfileDir: String?) -> Void)?
-    /// Data types selected per browser, set by the window controller before import.
-    var dataTypesPerBrowser: [BrowserType: [String]]?
+    /// Per-browser selected data types in the Chromium bridge wire format,
+    /// projected live from `selectedTypesPerBrowser`. A browser with no selected
+    /// type is omitted; an all-empty selection is nil. Computed (never a stored
+    /// snapshot) so the import always reflects the current inline toggle state.
+    /// `nil`/missing key means "import all" downstream (BrowserDataImporter.swift:116).
+    var dataTypesPerBrowser: [BrowserType: [String]]? {
+        Self.projectDataTypes(selectedTypesPerBrowser)
+    }
     var phase = Phase.importor
     private let displayMode: DisplayMode
-    private let targetProfileId: String
-    private let targetWindowId: Int?
+    private var targetProfileId: String
+    private var targetSpaceId: String
+    private var targetWindowId: Int?
     
     private var viewWidth: CGFloat { displayMode == .login ? 640 : 500 }
     private var viewHeight: CGFloat { displayMode == .login ? 800 : 625 }
     private var titleFontSize: CGFloat { displayMode == .login ? 46 : 32 }
     private var titleTopOffset: CGFloat { displayMode == .login ? 96 : 56 }
-    private var optionsTopOffset: CGFloat { displayMode == .login ? 100 : 70 }
     private var optionWidth: CGFloat { displayMode == .login ? 472 : 380 }
     private var optionHeight: CGFloat { displayMode == .login ? 68 : 56 }
+    /// Height of an inline data-type toggle row (mirrors the old page-2 metric).
+    private var toggleRowHeight: CGFloat { displayMode == .login ? 44 : 36 }
     private let optionIconSize: CGFloat = 32
     private var optionFontSize: CGFloat { displayMode == .login ? 18 : 15 }
     private var buttonBottomOffset: CGFloat { displayMode == .login ? -96 : -56 }
@@ -45,29 +52,105 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     init(
         displayMode: DisplayMode = .login,
         targetProfileId: String = LocalStore.defaultProfileId,
+        targetSpaceId: String = LocalStore.defaultSpaceId,
         targetWindowId: Int? = nil
     ) {
         self.displayMode = displayMode
         self.targetProfileId = targetProfileId
+        self.targetSpaceId = targetSpaceId
         self.targetWindowId = targetWindowId
         super.init(nibName: nil, bundle: nil)
     }
-    
+
     required init?(coder: NSCoder) {
         self.displayMode = .login
         self.targetProfileId = LocalStore.defaultProfileId
+        self.targetSpaceId = LocalStore.defaultSpaceId
         self.targetWindowId = nil
         super.init(coder: coder)
     }
     
     private lazy var importer = BrowserDataImporter(
         targetProfileId: targetProfileId,
+        targetSpaceId: targetSpaceId,
         targetWindowId: targetWindowId
     )
-    /// Browsers that have been configured with data types (returned from data type page).
+
+    /// Retargets this single import window when it is re-invoked from another
+    /// Space. No-op while an import is in flight, so the running import keeps the
+    /// destination it was started for and only the window is brought forward.
+    func rebindTarget(profileId: String, spaceId: String, windowId: Int?) {
+        guard !importer.isImporting else { return }
+        targetProfileId = profileId
+        targetSpaceId = spaceId
+        targetWindowId = windowId
+        importer.updateTarget(profileId: profileId, spaceId: spaceId, windowId: windowId)
+        refreshTargetLabel()
+    }
+
+    /// Clears the previous import's inline selection + status so a re-opened standalone
+    /// singleton window (which reuses the same VC) starts fresh, instead of showing stale
+    /// toggles, a completed-status line, and a greyed-out Next. No-op while an import is in
+    /// flight, so a re-invoke during the deferred-persist window can't wipe live state.
+    func resetForReuse() {
+        guard !importer.isImporting else { return }
+        showSelectionView()
+        selectedTypesPerBrowser.removeAll()
+        configuredBrowsers.removeAll()
+        toggleRowsPerBrowser.values.forEach { $0.forEach { $0.setOn(false) } }
+        collapseAll()
+        updateImportStatus("")
+        updateConfiguredAppearance()
+        updateNextButtonState()
+    }
+
+    /// Caption (standalone window only) showing where bookmarks will land: the
+    /// target Space's icon + name and, in parentheses, its profile.
+    private lazy var targetHostingView = NSHostingView(rootView: ImportTargetView(iconStoredValue: nil, text: ""))
+
+    /// Formats the import-target caption: "Space Name (Profile Name)", or just
+    /// the Space name when the profile can't be resolved.
+    static func formatNameWithParenthetical(primary: String, secondary: String?) -> String {
+        if let secondary, !secondary.isEmpty { return "\(primary) (\(secondary))" }
+        return primary
+    }
+
+    static func formatImportTargetLabel(spaceName: String, profileName: String?) -> String {
+        formatNameWithParenthetical(primary: spaceName, secondary: profileName)
+    }
+
+    private func refreshTargetLabel() {
+        guard isViewLoaded, displayMode == .normal else { return }
+        let space = SpaceManager.shared.spaces.first { $0.spaceId == targetSpaceId }
+        let profileName = ProfileManager.shared.profile(for: targetProfileId)?.displayName
+        let spaceName = space?.name ?? NSLocalizedString(
+            "Current Space",
+            comment: "Fallback label for the import-target Space when it can't be resolved by id"
+        )
+        targetHostingView.rootView = ImportTargetView(
+            iconStoredValue: space?.iconName,
+            text: Self.formatImportTargetLabel(spaceName: spaceName, profileName: profileName)
+        )
+    }
+    /// Browsers configured inline (≥1 data type selected via the accordion).
     private(set) var configuredBrowsers: Set<BrowserType> = []
-    private var chromeProfiles: [BrowserDataImporter.ChromeProfileInfo] = []
-    private var selectedChromeProfile: BrowserDataImporter.ChromeProfileInfo?
+    /// Selected data types per browser, edited inline by the accordion toggles.
+    /// Single source of truth for what gets imported (projected by `dataTypesPerBrowser`).
+    private var selectedTypesPerBrowser: [BrowserType: Set<ImportDataType>] = [:]
+    /// Inline toggle rows + their collapsible containers, keyed by browser, so a
+    /// row can be reset (on profile change) and expanded/collapsed.
+    private var toggleRowsPerBrowser: [BrowserType: [DataTypeToggleRow]] = [:]
+    private var toggleContainersPerBrowser: [BrowserType: NSStackView] = [:]
+    /// The single currently-expanded browser (single-open accordion), or nil.
+    private var expandedBrowser: BrowserType?
+    private var chromeProfiles: [BrowserDataImporter.ChromiumProfileInfo] = []
+    private var selectedChromeProfile: BrowserDataImporter.ChromiumProfileInfo?
+    private var arcSpaces: [ArcSpace] = []
+    private var selectedArcSpaceIndex: Int?
+    private var selectedArcSpace: ArcSpace? {
+        guard let i = selectedArcSpaceIndex, arcSpaces.indices.contains(i) else { return nil }
+        return arcSpaces[i]
+    }
     
     private lazy var permisionImageView: NSImageView = {
         let imageView = NSImageView()
@@ -116,7 +199,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
             isSelected: false
         )
         view.onTap = { [weak self] in
-            self?.selectBrowser(.chrome)
+            self?.toggleExpansion(.chrome)
         }
         view.onProfileSelection = { [weak self] index in
             guard let self, index >= 0, index < self.chromeProfiles.count else {
@@ -125,7 +208,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
             let newProfile = self.chromeProfiles[index]
             if self.selectedChromeProfile?.directory != newProfile.directory {
                 self.selectedChromeProfile = newProfile
-                self.unmarkBrowserConfigured(.chrome)
+                self.resetToggles(for: .chrome)
             }
         }
         
@@ -143,7 +226,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         view.wantsLayer = true
         
         view.onTap = { [weak self] in
-            self?.selectBrowser(.safari)
+            self?.toggleExpansion(.safari)
         }
         return view
     }()
@@ -156,9 +239,17 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         )
         
         view.wantsLayer = true
-        
+
         view.onTap = { [weak self] in
-            self?.selectBrowser(.arc)
+            self?.toggleExpansion(.arc)
+        }
+        view.onProfileSelection = { [weak self] index in
+            guard let self, self.arcSpaces.indices.contains(index) else { return }
+            // Ignore re-selecting the already-chosen Space (NSMenu fires the action
+            // regardless), so it doesn't needlessly reset the configured state — matches Chrome.
+            guard self.selectedArcSpaceIndex != index else { return }
+            self.selectedArcSpaceIndex = index
+            self.resetToggles(for: .arc)
         }
         return view
     }()
@@ -219,6 +310,16 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         view.addSubview(permisionImageView)
         view.addSubview(desLabel)
 
+        if displayMode == .normal {
+            view.addSubview(targetHostingView)
+            targetHostingView.snp.makeConstraints { make in
+                make.centerX.equalToSuperview()
+                make.top.equalTo(titleLabel.snp.bottom).offset(12)
+                make.width.lessThanOrEqualTo(optionWidth)
+            }
+            refreshTargetLabel()
+        }
+
         applyOptionViewStyle(chromeOptionView)
         applyOptionViewStyle(safariOptionView)
         applyOptionViewStyle(arcOptionView)
@@ -226,32 +327,31 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         let hasChrome = hasChromeData()
         let hasArc = hasArcData()
         if hasChrome {
-            browserOptionsStackView.addArrangedSubview(chromeOptionView)
-            chromeOptionView.snp.makeConstraints { make in
-                make.width.equalTo(optionWidth)
-                make.height.equalTo(optionHeight)
-            }
+            browserOptionsStackView.addArrangedSubview(makeAccordionWrapper(header: chromeOptionView, browser: .chrome))
             refreshChromeProfilesIfNeeded()
         }
 
         if hasArc {
-            browserOptionsStackView.addArrangedSubview(arcOptionView)
-            arcOptionView.snp.makeConstraints { make in
-                make.width.equalTo(optionWidth)
-                make.height.equalTo(optionHeight)
-            }
+            browserOptionsStackView.addArrangedSubview(makeAccordionWrapper(header: arcOptionView, browser: .arc))
+            refreshArcSpacesIfNeeded()
         }
 
-        browserOptionsStackView.addArrangedSubview(safariOptionView)
-        safariOptionView.snp.makeConstraints { make in
-            make.width.equalTo(optionWidth)
-            make.height.equalTo(optionHeight)
-        }
+        browserOptionsStackView.addArrangedSubview(makeAccordionWrapper(header: safariOptionView, browser: .safari))
 
         optionsContainer.snp.makeConstraints { make in
             make.left.equalToSuperview().offset(containerLeftOffset)
-            make.centerY.equalToSuperview()
             make.width.equalTo(containerWidth)
+            if displayMode == .normal {
+                // Centered when short; when a row expands the card outgrows the
+                // centered band, so yield centerY (lower priority) and pin the top
+                // just below the target caption so it never rides up over it. The
+                // bottom is freed by collapsing the open row on Next (Step 5), so an
+                // in-flight import's status label never reaches the Next button.
+                make.centerY.equalToSuperview().priority(.medium)
+                make.top.greaterThanOrEqualTo(targetHostingView.snp.bottom).offset(8)
+            } else {
+                make.centerY.equalToSuperview()
+            }
         }
 
         browserOptionsStackView.snp.makeConstraints { make in
@@ -280,20 +380,147 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         optionView.applyStyle(iconSize: optionIconSize, fontSize: optionFontSize)
     }
     
-    private func selectBrowser(_ browser: BrowserType) {
-        let chromeDir = (browser == .chrome) ? selectedChromeProfile?.directory : nil
-        onBrowserSelected?(browser, chromeDir)
+    /// Projects the inline per-browser selections into the Chromium bridge wire
+    /// format. A browser with an empty set is omitted; an all-empty input yields
+    /// nil. rawValues are sorted for deterministic output. `nil`/missing key means
+    /// "import all" downstream (BrowserDataImporter.swift:116).
+    static func projectDataTypes(_ selected: [BrowserType: Set<ImportDataType>]) -> [BrowserType: [String]]? {
+        let dict = selected.reduce(into: [BrowserType: [String]]()) { acc, pair in
+            guard !pair.value.isEmpty else { return }
+            acc[pair.key] = pair.value.map { $0.rawValue }.sorted()
+        }
+        return dict.isEmpty ? nil : dict
     }
 
-    /// Called by the window controller when user returns from data type page after configuring.
-    func markBrowserConfigured(_ browser: BrowserType) {
+    private func handleToggle(browser: BrowserType, dataType: ImportDataType, isOn: Bool) {
+        if isOn {
+            selectedTypesPerBrowser[browser, default: []].insert(dataType)
+        } else {
+            selectedTypesPerBrowser[browser]?.remove(dataType)
+        }
+        if selectedTypesPerBrowser[browser]?.isEmpty ?? true {
+            unmarkBrowserConfigured(browser)
+        } else {
+            markBrowserConfigured(browser)
+        }
+    }
+
+    /// Resets a browser's inline selection (its toggles + configured state) after
+    /// the user picks a different Chrome profile / Arc Space — the old selection
+    /// belonged to the previous profile. The row stays expanded.
+    private func resetToggles(for browser: BrowserType) {
+        selectedTypesPerBrowser[browser] = nil
+        toggleRowsPerBrowser[browser]?.forEach { $0.setOn(false) }
+        unmarkBrowserConfigured(browser)
+    }
+
+    private func headerView(for browser: BrowserType) -> BrowserOptionView {
+        switch browser {
+        case .chrome: return chromeOptionView
+        case .arc: return arcOptionView
+        default: return safariOptionView
+        }
+    }
+
+    /// Toggles this browser's accordion body. Single-open: expanding one row
+    /// collapses any other open row.
+    private func toggleExpansion(_ browser: BrowserType) {
+        // Lock the accordion while an import is in flight: the page stays interactive
+        // during the async import, and expanding a row would re-grow the card (pushing
+        // the status label onto Next) and re-enable Next via the toggle path.
+        guard !importer.isImporting else { return }
+        let willExpand = (expandedBrowser != browser)
+        if let current = expandedBrowser, current != browser {
+            setExpanded(current, expanded: false, animated: true)
+        }
+        setExpanded(browser, expanded: willExpand, animated: true)
+        expandedBrowser = willExpand ? browser : nil
+    }
+
+    private func setExpanded(_ browser: BrowserType, expanded: Bool, animated: Bool = false) {
+        headerView(for: browser).setExpanded(expanded)
+        guard let container = toggleContainersPerBrowser[browser] else { return }
+        guard animated else {
+            container.isHidden = !expanded
+            return
+        }
+        // Animate the body show/hide plus the resulting card reflow (lower rows
+        // slide). A vertical NSStackView excludes a hidden arranged subview, so
+        // animating its `isHidden` via the animator proxy inside an implicit-
+        // animation group fades the body and animates the surrounding relayout.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.allowsImplicitAnimation = true
+            container.animator().isHidden = !expanded
+            self.view.layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// Builds one accordion cell: the browser header stacked above a collapsible
+    /// container of per-type toggle rows. The container starts hidden; a vertical
+    /// NSStackView excludes hidden arranged subviews, so showing/hiding it reflows
+    /// the card. The fixed header height lives here (on the header inside the
+    /// wrapper) so the wrapper itself sizes to its content.
+    private func makeAccordionWrapper(header: BrowserOptionView, browser: BrowserType) -> NSStackView {
+        header.snp.makeConstraints { make in
+            make.width.equalTo(optionWidth)
+            make.height.equalTo(optionHeight)
+        }
+
+        let toggleContainer = NSStackView()
+        toggleContainer.orientation = .vertical
+        toggleContainer.spacing = optionSpacing
+        toggleContainer.alignment = .centerX
+        toggleContainer.distribution = .fill
+        toggleContainer.isHidden = true
+
+        var rows: [DataTypeToggleRow] = []
+        for dataType in ImportDataType.availableTypes(for: browser) {
+            let row = DataTypeToggleRow(title: dataType.displayName, isOn: false)
+            row.onToggle = { [weak self] isOn in
+                self?.handleToggle(browser: browser, dataType: dataType, isOn: isOn)
+            }
+            toggleContainer.addArrangedSubview(row)
+            row.snp.makeConstraints { make in
+                make.width.equalTo(optionWidth)
+                make.height.equalTo(toggleRowHeight)
+            }
+            rows.append(row)
+        }
+        toggleRowsPerBrowser[browser] = rows
+        toggleContainersPerBrowser[browser] = toggleContainer
+
+        let wrapper = NSStackView()
+        wrapper.orientation = .vertical
+        wrapper.spacing = optionSpacing
+        wrapper.alignment = .centerX
+        wrapper.distribution = .fill
+        // Load-bearing: the accordion collapse relies on the hidden toggleContainer
+        // being EXCLUDED from layout (a collapsed row is just its header height).
+        // detachesHiddenViews already defaults to true; set it explicitly so the
+        // dependency is documented (matches BookmarkBar.swift's explicit setting).
+        wrapper.detachesHiddenViews = true
+        wrapper.addArrangedSubview(header)
+        wrapper.addArrangedSubview(toggleContainer)
+
+        wrapper.snp.makeConstraints { make in
+            make.width.equalTo(optionWidth)
+        }
+        toggleContainer.snp.makeConstraints { make in
+            make.width.equalTo(optionWidth)
+        }
+        return wrapper
+    }
+
+    /// Marks a browser configured; called by handleToggle when its inline selection becomes non-empty.
+    private func markBrowserConfigured(_ browser: BrowserType) {
         configuredBrowsers.insert(browser)
         updateConfiguredAppearance()
         updateNextButtonState()
     }
 
-    /// Called by the window controller when user changed Chrome profile, invalidating previous config.
-    func unmarkBrowserConfigured(_ browser: BrowserType) {
+    /// Clears a browser's configured state; called by handleToggle/resetToggles when its selection empties or its profile/Space changes.
+    private func unmarkBrowserConfigured(_ browser: BrowserType) {
         configuredBrowsers.remove(browser)
         updateConfiguredAppearance()
         updateNextButtonState()
@@ -366,7 +593,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
             chromeOptionView.setProfileSelectorVisible(false)
             return
         }
-        chromeProfiles = importer.loadChromeProfiles()
+        chromeProfiles = importer.loadChromiumProfiles()
         if chromeProfiles.count > 1 {
             chromeOptionView.setProfileSelectorVisible(true)
             let names = chromeProfiles.map { $0.name }
@@ -387,14 +614,51 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         }
     }
 
-    private func chromeProfileMenuTitle(_ profile: BrowserDataImporter.ChromeProfileInfo) -> String {
+    private func arcProfileDisplayNames() -> [String: String] {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Arc/User Data/Local State")
+        var map: [String: String] = [:]
+        for p in importer.loadChromiumProfiles(localStateURL: url) { map[p.directory] = p.name }
+        return map
+    }
+
+    private func refreshArcSpacesIfNeeded() {
+        guard hasArcData() else {
+            arcOptionView.setProfileSelectorVisible(false)
+            return
+        }
+        arcSpaces = importer.loadArcSpaces()
+        let profileNames = arcProfileDisplayNames()
+        if arcSpaces.count > 1 {
+            arcOptionView.setEnabled(true)
+            arcOptionView.setProfileSelectorVisible(true)
+            let buttonTitles = arcSpaces.map { $0.title }
+            let menuTitles = arcSpaces.map { space -> String in
+                let secondary = space.profile.directoryName.flatMap { profileNames[$0] }
+                    ?? space.profile.directoryName
+                return Self.formatNameWithParenthetical(primary: space.title, secondary: secondary)
+            }
+            arcOptionView.updateProfileOptions(buttonTitles: buttonTitles, menuTitles: menuTitles, selectedIndex: 0)
+            selectedArcSpaceIndex = 0
+        } else if arcSpaces.count == 1 {
+            arcOptionView.setEnabled(true)
+            arcOptionView.setProfileSelectorVisible(false)
+            selectedArcSpaceIndex = 0
+        } else {
+            arcOptionView.setProfileSelectorVisible(false)
+            arcOptionView.setEnabled(false)        // no Spaces → nothing to import
+            selectedArcSpaceIndex = nil
+        }
+    }
+
+    private func chromeProfileMenuTitle(_ profile: BrowserDataImporter.ChromiumProfileInfo) -> String {
         guard let email = profile.email, !email.isEmpty else {
             return profile.name
         }
         return "\(profile.name) (\(email))"
     }
 
-    private func selectedChromeProfileIndex(in profiles: [BrowserDataImporter.ChromeProfileInfo]) -> Int? {
+    private func selectedChromeProfileIndex(in profiles: [BrowserDataImporter.ChromiumProfileInfo]) -> Int? {
         guard let selected = selectedChromeProfile else {
             return nil
         }
@@ -404,6 +668,13 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private func showPermissionView() {
         optionsContainer.isHidden = true
         importStatusLabel.isHidden = true
+        // The standalone target caption sits just under the title, where the
+        // permission explanation (`desLabel`) also goes — hide it on this screen
+        // so the two don't overlap. The flow proceeds to import (never back to
+        // the selection screen) afterwards, so it needn't be restored.
+        if displayMode == .normal {
+            targetHostingView.isHidden = true
+        }
         permisionImageView.isHidden = false
         browserOptionsStackView.isHidden = true
         titleLabel.stringValue = NSLocalizedString("Permissions", comment: "Import browser data page - Page title when showing permission request")
@@ -417,7 +688,31 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
             make.height.equalTo(40)
         }
     }
-    
+
+    /// Inverse of `showPermissionView()`: restores the browser-selection screen.
+    /// The standalone singleton reuses the same VC, so a window closed on the
+    /// Full-Disk-Access permission screen must reopen on the selection screen rather
+    /// than stranded on the permission dead-end. Called from `resetForReuse`.
+    private func showSelectionView() {
+        phase = .importor
+        optionsContainer.isHidden = false
+        browserOptionsStackView.isHidden = false
+        if displayMode == .normal {
+            targetHostingView.isHidden = false
+        }
+        permisionImageView.isHidden = true
+        desLabel.isHidden = true
+        importStatusLabel.isHidden = true
+        titleLabel.stringValue = NSLocalizedString("Browser data", comment: "Import browser data page - Page title")
+        nextButton.title = NSLocalizedString("Next", comment: "Onboarding base - Next button to proceed to next step")
+        nextButton.snp.remakeConstraints { make in
+            make.bottom.equalToSuperview().offset(buttonBottomOffset)
+            make.centerX.equalToSuperview()
+            make.width.equalTo(120)
+            make.height.equalTo(40)
+        }
+    }
+
     private func openFullDiskAccessSettings() {
         let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
         if let url = URL(string: urlString) {
@@ -425,7 +720,16 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         }
     }
     
+    /// Collapses any expanded accordion row (single-open invariant). Called before
+    /// import so the card shrinks back and the status label clears the Next button.
+    private func collapseAll() {
+        guard let current = expandedBrowser else { return }
+        setExpanded(current, expanded: false)
+        expandedBrowser = nil
+    }
+
     override func nextButtonTapped(_ sender: NSButton? = nil) {
+        collapseAll()
         if phase == .permision, !hasFullDiskAccess() {
             openFullDiskAccessSettings()
             return
@@ -441,11 +745,17 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
 
         if !configuredBrowsers.isEmpty {
             Task {
-                await importer.startImportData(
+                // A repeat trigger (e.g. rapid double-click) is ignored by the
+                // importer's reentrancy guard, which returns false; only advance
+                // the UI when this call actually started the import, so the window
+                // is not closed out from under the in-flight one.
+                let didStart = await importer.startImportData(
                     Array(configuredBrowsers),
                     chromeProfileDirectory: selectedChromeProfile?.directory,
+                    arcSpace: configuredBrowsers.contains(.arc) ? selectedArcSpace : nil,
                     dataTypesPerBrowser: dataTypesPerBrowser
                 )
+                guard didStart else { return }
                 await MainActor.run {
                     onCompletion?()
                 }
@@ -460,6 +770,7 @@ class BrowserOptionView: NSView {
     var onTap: (() -> Void)?
     var onProfileSelection: ((Int) -> Void)?
     private var isSelected: Bool
+    private var isEnabledRow = true
     
     private let iconImageView: NSImageView
     private let titleLabel: NSTextField
@@ -548,10 +859,16 @@ class BrowserOptionView: NSView {
         addTrackingArea(trackingArea)
     }
     
+    func setEnabled(_ enabled: Bool) {
+        isEnabledRow = enabled
+        alphaValue = enabled ? 1.0 : 0.4
+    }
+
     override func mouseDown(with event: NSEvent) {
+        guard isEnabledRow else { return }
         onTap?()
     }
-    
+
     func setConfigured(_ configured: Bool) {
         isSelected = configured
         updateAppearance()
@@ -564,7 +881,16 @@ class BrowserOptionView: NSView {
     func setProfileSelectorVisible(_ visible: Bool) {
         profileSelectorButton.isHidden = !visible
     }
-    
+
+    /// Disclosure state: chevron points right when collapsed, down when expanded.
+    func setExpanded(_ expanded: Bool) {
+        let symbolName = expanded ? "chevron.down" : "chevron.right"
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            chevronImageView.image = image.withSymbolConfiguration(config)
+        }
+    }
+
     func applyStyle(iconSize: CGFloat, fontSize: CGFloat) {
         iconImageView.snp.updateConstraints { make in
             make.width.height.equalTo(iconSize)
@@ -934,6 +1260,29 @@ class OnboardingBaseViewController: NSViewController {
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
             loopObserver = nil
+        }
+    }
+}
+
+/// Import-target caption hosted in the standalone import window: the target
+/// Space's icon followed by "Space Name (Profile Name)". Reuses the shared
+/// Spaces icon renderer so phi-icons and emoji render identically to the strip.
+private struct ImportTargetView: View {
+    let iconStoredValue: String?
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Reuse the strip's icon view: it renders phi-icons, emoji (with
+            // `.fixedSize()` so the glyph isn't clipped), and SF-symbol
+            // fallbacks correctly — unlike IconPickerSelectionView, whose emoji
+            // branch clips to a tight size×size frame.
+            SpaceIconView(storedValue: iconStoredValue, size: 16, symbolWeight: .regular, tint: .white)
+                .environment(\.colorScheme, .dark)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
         }
     }
 }

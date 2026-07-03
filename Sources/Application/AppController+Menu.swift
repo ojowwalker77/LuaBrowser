@@ -13,6 +13,7 @@ extension AppController {
     static let exportLogsItemTag = 500011
     static let manageUserDataHelpSeparatorTag = 500012
     static let manageUserDataParentItemTag = 500013
+    static let timeMachineBackupsParentItemTag = 500014
     static let toggleBookmarkBarItemTag = 500003
     static let toggleBookmarkBarOnNewTabItemTag = 500004
     static let layoutModeDefaultItemTag = 500005
@@ -22,6 +23,24 @@ extension AppController {
     static let whatsNewItemTag = 500009
     static let bookmarksMenuItemTag = 500010
     static let bookmarksMenuIdentifier = NSUserInterfaceItemIdentifier("phi.bookmarks.menu")
+    static let spacesNewProfileItemTag = 500015
+    static let spacesDeleteProfileParentItemTag = 500016
+    static let viewMenuPhiSectionSeparatorTag = 500023
+    static let spacesProfileSeparatorTag = 500020
+    static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
+    static let spacesMenuItemTag = 500018
+    static let spacesNewSpaceItemTag = 500030
+    static let spacesRenameItemTag = 500031
+    static let spacesChangeThemeParentTag = 500033
+    static let spacesNextItemTag = 500034
+    static let spacesPreviousItemTag = 500035
+    static let spacesChangeProfileParentTag = 500036
+    static let spacesDeleteSpaceItemTag = 500037
+    static let spacesListItemTagBase = 510000
+    static let spacesURLRulesItemTag = 500021
+    static let spacesURLRulesSeparatorTag = 500022
+    static let spacesMenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.menu")
+    static let timeMachineBackupsMenuIdentifier = NSUserInterfaceItemIdentifier("phi.time-machine.backups.menu")
     
     func startObservingMainMenu() {
         guard let app = NSApplication.shared as NSApplication? else {
@@ -52,6 +71,8 @@ extension AppController {
                 submenu.items.removeAll { item in
                     item.tag == CommandWrapper.PHI_TOGGLE_SIDEBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue ||
+                    item.tag == CommandWrapper.PHI_NEW_CONVERSATION.rawValue ||
+                    item.tag == AppController.viewMenuPhiSectionSeparatorTag ||
                     item.tag == AppController.toggleBookmarkBarItemTag ||
                     item.tag == AppController.toggleBookmarkBarOnNewTabItemTag ||
                     item.tag == AppController.layoutModeDefaultItemTag ||
@@ -61,7 +82,9 @@ extension AppController {
                 }
 
                 if submenu.items.last?.isSeparatorItem == false {
-                    submenu.addItem(NSMenuItem.separator())
+                    let topSeparator = NSMenuItem.separator()
+                    topSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                    submenu.addItem(topSeparator)
                 }
                 
                 let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("Layout Mode", comment: "View menu - Layout mode section header in View menu"))
@@ -89,7 +112,9 @@ extension AppController {
                 traditionalLayoutItem.target = self
                 submenu.addItem(traditionalLayoutItem)
 
-                submenu.addItem(NSMenuItem.separator())
+                let bookmarkBarSeparator = NSMenuItem.separator()
+                bookmarkBarSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                submenu.addItem(bookmarkBarSeparator)
                 let toggleBookmarkBarItem = NSMenuItem(title: NSLocalizedString("Always Show Bookmark Bar", comment: "View menu - Menu item to always show the bookmark bar"),
                                                    action: #selector(toggleBookmarkBar(_:)),
                                                    keyEquivalent: "b")
@@ -104,7 +129,9 @@ extension AppController {
                 toggleBookmarkBarOnNewTabItem.target = self
                 submenu.addItem(toggleBookmarkBarOnNewTabItem)
 
-                submenu.addItem(NSMenuItem.separator())
+                let sidebarSeparator = NSMenuItem.separator()
+                sidebarSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                submenu.addItem(sidebarSeparator)
 
                 let toggleSidebarItem = NSMenuItem(title: NSLocalizedString("Toggle Sidebar", comment: "View menu - Menu item to show or hide the sidebar"),
                                                    action: #selector(toggleSidebar(_:)),
@@ -189,6 +216,7 @@ extension AppController {
                     $0.tag == AppController.exportLogsItemTag ||
                     $0.tag == AppController.whatsNewItemTag ||
                     $0.tag == AppController.manageUserDataHelpSeparatorTag ||
+                    $0.tag == AppController.timeMachineBackupsParentItemTag ||
                     $0.tag == AppController.manageUserDataParentItemTag
                 }
                 
@@ -231,6 +259,8 @@ extension AppController {
                 userDataSeparator.tag = AppController.manageUserDataHelpSeparatorTag
                 subMenu.addItem(userDataSeparator)
 
+                subMenu.addItem(makeTimeMachineBackupsMenuItem())
+
                 let manageUserDataTitle = NSLocalizedString("Manage User Data", comment: "Help menu - Parent menu item for exporting and importing Phi user data backup")
                 let manageUserDataItem = NSMenuItem(title: manageUserDataTitle, action: nil, keyEquivalent: "")
                 manageUserDataItem.tag = AppController.manageUserDataParentItemTag
@@ -259,7 +289,9 @@ extension AppController {
         if !hasBookmarksMenu {
             installBookmarksMenu(in: mainMenu)
         }
-        
+
+        installOrUpdateSpacesMenu(in: mainMenu)
+
         if mainMenu.items.first(where: { $0.title == "*DEBUG*" }) == nil {
             let item = buildDebugMenuItem()
             #if DEBUG || NIGHTLY_BUILD
@@ -269,6 +301,74 @@ extension AppController {
                 mainMenu.addItem(item)
             }
             #endif // DEBUG || NIGHTLY_BUILD
+        }
+    }
+
+    fileprivate func rebuildDeleteProfileSubmenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let deletable = ProfileManager.shared.profiles.filter { $0.profileId != LocalStore.defaultProfileId }
+        guard !deletable.isEmpty else {
+            let empty = NSMenuItem(
+                title: NSLocalizedString("No Profiles to Delete", comment: "Spaces menu - Delete Profile submenu empty state"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            menu.addItem(empty)
+            return
+        }
+        let boundProfileIds = Set(SpaceManager.shared.spaces.map { $0.profileId })
+        for profile in deletable {
+            let inUse = boundProfileIds.contains(profile.profileId)
+            let title: String
+            if inUse {
+                title = String(
+                    format: NSLocalizedString("%@ — in use by a Space", comment: "Spaces menu - Delete Profile row label for a profile bound to a Space"),
+                    profile.displayName
+                )
+            } else {
+                title = profile.displayName
+            }
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(deleteSelectedProfile(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = profile
+            menu.addItem(item)
+        }
+    }
+
+    @objc func newProfile(_ sender: Any?) {
+        guard let name = ProfileNameFieldValidator.present(.create) else { return }
+        ProfileManager.shared.createProfile(displayName: name) { _ in }
+    }
+
+    @objc func deleteSelectedProfile(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let profile = menuItem.representedObject as? PhiBrowserProfile else {
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = String(
+            format: NSLocalizedString("Delete profile \u{201C}%@\u{201D}?", comment: "Title of the delete-profile confirmation"),
+            profile.displayName
+        )
+        alert.informativeText = NSLocalizedString(
+            "All cookies, history, extensions, and saved data on this profile will be permanently removed. This cannot be undone.",
+            comment: "Body of the delete-profile confirmation"
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        ProfileManager.shared.deleteProfile(profile.profileId) { success, error in
+            if !success {
+                let errAlert = NSAlert()
+                errAlert.messageText = NSLocalizedString("Couldn't delete profile", comment: "Title of the profile-delete error")
+                errAlert.informativeText = error ?? NSLocalizedString("Unknown error", comment: "Fallback profile-delete error reason")
+                errAlert.runModal()
+            }
         }
     }
 
@@ -300,6 +400,39 @@ extension AppController {
             mainMenu.insertItem(menuItem, at: windowIndex)
         } else {
             mainMenu.addItem(menuItem)
+        }
+    }
+
+    private func makeTimeMachineBackupsMenuItem() -> NSMenuItem {
+        let title = NSLocalizedString("Time Machine Backups", comment: "Help menu - Parent menu item listing completed Phi Time Machine backups")
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.tag = AppController.timeMachineBackupsParentItemTag
+
+        let submenu = NSMenu(title: title)
+        submenu.identifier = AppController.timeMachineBackupsMenuIdentifier
+        submenu.delegate = self
+        rebuildTimeMachineBackupsMenu(submenu)
+        item.submenu = submenu
+        return item
+    }
+
+    private func rebuildTimeMachineBackupsMenu(_ menu: NSMenu) {
+        do {
+            try TimeMachineMenuPresenter().populate(
+                menu,
+                target: self,
+                action: #selector(restoreTimeMachineBackup(_:))
+            )
+        } catch {
+            AppLogError("Time Machine backups menu failed: \(error.localizedDescription)")
+            menu.removeAllItems()
+            let item = NSMenuItem(
+                title: NSLocalizedString("Backups Unavailable", comment: "Help menu - Time Machine submenu placeholder when the backup catalog cannot be read"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            menu.addItem(item)
         }
     }
 
@@ -430,9 +563,94 @@ extension AppController {
             break
         }
     }
-    
+
     @objc func showWhatsNew(_ sender: Any?) {
         BrowserState.currentState()?.createTab("chrome://whats-new", focusAfterCreate: true)
+    }
+
+    @objc func restoreTimeMachineBackup(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let backupIDString = menuItem.representedObject as? String,
+              let backupID = UUID(uuidString: backupIDString) else {
+            return
+        }
+
+        do {
+            guard let backup = try TimeMachineMenuPresenter().backup(id: backupID) else {
+                presentTimeMachineRestoreFailure(
+                    NSLocalizedString("The selected Time Machine backup is no longer available.", comment: "Help menu - Time Machine restore error when a selected backup disappears")
+                )
+                return
+            }
+
+            let backupTitle = backup.menuTitle()
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("Restore Time Machine Backup?", comment: "Help menu - Time Machine restore confirmation title")
+            let messageTemplate = NSLocalizedString(
+                "Phi will quit and restore %@. The current app and selected user data will be replaced.",
+                comment: "Help menu - Time Machine restore confirmation body"
+            )
+            alert.informativeText = String(format: messageTemplate, backupTitle)
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: NSLocalizedString("Restore", comment: "Help menu - Time Machine restore confirmation button"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Generic - Cancel button to dismiss an alert"))
+
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+
+            let progressModal = TimeMachineRestoreProgressModal(backupTitle: backupTitle)
+            DispatchQueue.main.async {
+                Task {
+                    let coordinator = TimeMachineRestoreCoordinator(progressHandler: { progress in
+                        Task { @MainActor in
+                            progressModal.update(progress)
+                        }
+                    })
+
+                    do {
+                        _ = try await coordinator.prepareAndLaunchRestore(for: backup)
+                        await MainActor.run {
+                            progressModal.finish(outcome: .success(()), response: .OK)
+                        }
+                    } catch {
+                        await MainActor.run {
+                            progressModal.finish(outcome: .failure(error), response: .abort)
+                        }
+                    }
+                }
+            }
+
+            _ = progressModal.run()
+            switch progressModal.outcome {
+            case .some(.success):
+                NSApp.terminate(nil)
+            case .some(.failure(let error)):
+                let messageTemplate = NSLocalizedString(
+                    "Phi could not start Time Machine restore: %@",
+                    comment: "Help menu - Time Machine restore launch failure body"
+                )
+                presentTimeMachineRestoreFailure(String(format: messageTemplate, error.localizedDescription))
+            case .none:
+                break
+            }
+        } catch {
+            let messageTemplate = NSLocalizedString(
+                "Phi could not read Time Machine backups: %@",
+                comment: "Help menu - Time Machine restore catalog read failure body"
+            )
+            presentTimeMachineRestoreFailure(String(format: messageTemplate, error.localizedDescription))
+        }
+    }
+
+    private func presentTimeMachineRestoreFailure(_ message: String) {
+        AppLogError("Time Machine restore failed: \(message)")
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Time Machine Restore Failed", comment: "Help menu - Time Machine restore failure alert title")
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+        alert.runModal()
     }
     
     @objc func exportLogs(_ sender: Any?) {
@@ -556,6 +774,572 @@ extension AppController {
         alert.alertStyle = .informational
         alert.addButton(withTitle: NSLocalizedString("OK", comment: "Extension info alert - OK button to dismiss the alert"))
         alert.runModal()
+    }
+
+    // MARK: - Spaces top-level menu
+
+    /// Whether the menu-bar "Spaces" top-level menu should be visible. Hidden
+    /// when the Spaces feature is off, and hidden when the focused window is
+    /// incognito — incognito windows expose no Spaces, matching the suppressed
+    /// sidebar strip and the off-the-record "Open Link In Space" menu.
+    private var shouldShowSpacesMenu: Bool {
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+            && !isActiveWindowIncognito()
+    }
+
+    /// Re-evaluates the menu-bar "Spaces" top-level item's visibility against
+    /// the focused window. Called when the active window changes (see
+    /// `.activeBrowserWindowDidChange`) so the menu drops out for incognito
+    /// windows and returns for normal ones.
+    @objc func refreshSpacesMenuVisibility() {
+        guard let item = NSApp.mainMenu?.items.first(where: {
+            $0.tag == AppController.spacesMenuItemTag
+        }) else { return }
+        item.isHidden = !shouldShowSpacesMenu
+    }
+
+    /// Finds the existing Spaces top-level menu item by tag and refreshes its
+    /// submenu, or installs a new one right after the View menu when this is
+    /// the first time the main menu has been hooked (or after Chromium swapped
+    /// the menu wholesale).
+    private func installOrUpdateSpacesMenu(in mainMenu: NSMenu) {
+        let menuItem: NSMenuItem
+        let isNew: Bool
+        if let existing = mainMenu.items.first(where: { $0.tag == AppController.spacesMenuItemTag }) {
+            menuItem = existing
+            isNew = false
+        } else {
+            menuItem = NSMenuItem(
+                title: NSLocalizedString("Spaces", comment: "Main menu - Top-level Spaces menu title in the application menu bar"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            menuItem.tag = AppController.spacesMenuItemTag
+            isNew = true
+        }
+
+        let submenu = menuItem.submenu ?? NSMenu(title: menuItem.title)
+        submenu.identifier = AppController.spacesMenuIdentifier
+        submenu.delegate = self
+        submenu.autoenablesItems = true
+        menuItem.submenu = submenu
+        menuItem.isHidden = !shouldShowSpacesMenu
+
+        rebuildSpacesMenu(submenu)
+
+        if isNew {
+            let insertIndex: Int
+            if let viewIdx = mainMenu.items.firstIndex(where: { $0.title == "View" }) {
+                insertIndex = viewIdx + 1
+            } else if let historyIdx = mainMenu.items.firstIndex(where: { $0.title == "History" }) {
+                insertIndex = historyIdx
+            } else {
+                insertIndex = mainMenu.items.count
+            }
+            mainMenu.insertItem(menuItem, at: insertIndex)
+        }
+    }
+
+    /// Populates the Spaces submenu from `SpaceManager.shared`. Called from
+    /// `installOrUpdateSpacesMenu` after a main-menu swap and from
+    /// `menuWillOpen` so each open reflects the current Spaces list and the
+    /// active Space of the focused window.
+    /// Appends the active-Space actions (Rename, Change Icon, Edit Theme,
+    /// Change Profile) to `menu`, so other context menus — e.g. the sidebar /
+    /// tab-area menu — can offer the same Space controls as the Spaces menu.
+    /// Items target the controller and act on the currently active Space.
+    func appendActiveSpaceMenuItems(to menu: NSMenu) {
+        let activeSpace = currentActiveSpace()
+
+        let newSpaceItem = NSMenuItem(
+            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            action: #selector(newSpaceFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        newSpaceItem.target = self
+        menu.addItem(newSpaceItem)
+
+        let renameItem = NSMenuItem(
+            title: NSLocalizedString("Rename Space\u{2026}", comment: "Spaces menu - Rename the active Space"),
+            action: #selector(renameActiveSpace(_:)),
+            keyEquivalent: ""
+        )
+        renameItem.target = self
+        menu.addItem(renameItem)
+
+        let changeIconItem = NSMenuItem(
+            title: NSLocalizedString("Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
+            action: #selector(requestActiveSpaceIconPicker(_:)),
+            keyEquivalent: ""
+        )
+        changeIconItem.target = self
+        menu.addItem(changeIconItem)
+
+        let editThemeParent = NSMenuItem(
+            title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpace?.spaceId)
+        menu.addItem(editThemeParent)
+
+        let changeProfileParent = NSMenuItem(
+            title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        changeProfileParent.submenu = makeSpacesProfileSubmenu(for: activeSpace)
+        menu.addItem(changeProfileParent)
+
+        let deleteSpaceItem = NSMenuItem(
+            title: NSLocalizedString("Delete Space\u{2026}", comment: "Spaces menu - Delete the active Space"),
+            action: #selector(deleteActiveSpace(_:)),
+            keyEquivalent: ""
+        )
+        deleteSpaceItem.target = self
+        menu.addItem(deleteSpaceItem)
+    }
+
+    /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
+    /// and a checkmark on the active one — that switches the focused window to
+    /// that Space, plus a trailing "New Space" item. Drives the horizontal tab
+    /// strip's active-Space chip, whose hover / left-click present this as a
+    /// switcher menu (the menu rendition of the old switcher popover). Items
+    /// target the controller and reuse the Spaces menu's activate / create
+    /// actions, so switching here behaves exactly like the menu-bar Spaces menu.
+    func populateSpaceSwitcherMenu(
+        _ menu: NSMenu,
+        excludedSpaceIds: Set<String> = [],
+        includeNewSpace: Bool = true
+    ) {
+        menu.removeAllItems()
+        let activeSpaceId = currentActiveSpace()?.spaceId
+
+        // Iterate the full list so each row keeps its ⌃-number shortcut (⌃1 = the
+        // first Space), skipping any the caller already shows elsewhere — e.g. the
+        // sidebar's pips, leaving only the overflow Spaces in its "…" menu.
+        for (index, space) in SpaceManager.shared.spaces.enumerated() {
+            if excludedSpaceIds.contains(space.spaceId) { continue }
+            let item = NSMenuItem(
+                title: space.name,
+                action: #selector(activateSpaceFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            if let command = CommandWrapper.spaceSelectionCommand(at: index) {
+                applyEffectiveShortcut(command, to: item)
+            }
+            item.target = self
+            item.representedObject = space.spaceId
+            item.state = (space.spaceId == activeSpaceId) ? .on : .off
+            item.image = spaceMenuIcon(for: space.iconName)
+            item.attributedTitle = spaceMenuTitle(name: space.name, profileId: space.profileId)
+            menu.addItem(item)
+        }
+
+        // The sidebar overflow menu suppresses creation (its strip has its own "+"
+        // button); the horizontal chip keeps a "New Space" row.
+        guard includeNewSpace else { return }
+
+        if menu.numberOfItems > 0 {
+            menu.addItem(.separator())
+        }
+        let newSpaceItem = NSMenuItem(
+            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            action: #selector(newSpaceFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        newSpaceItem.target = self
+        newSpaceItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        menu.addItem(newSpaceItem)
+    }
+
+    /// Inline title for a switcher row: the Space name in the label color followed
+    /// by its bound profile in a muted color (`name  —  profile`), so the row shows
+    /// both on one line with the ⌃-number shortcut trailing. An attributed title
+    /// (rather than `NSMenuItem.subtitle`, which is macOS 14.4+ and stacks below)
+    /// keeps it on one line and renders on every supported OS.
+    private func spaceMenuTitle(name: String, profileId: String) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: name,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+        if let profileName = ProfileManager.shared.profile(for: profileId)?.displayName,
+           !profileName.isEmpty {
+            title.append(NSAttributedString(
+                string: "  —  \(profileName)",
+                attributes: [
+                    .font: NSFont.menuFont(ofSize: 0),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]
+            ))
+        }
+        return title
+    }
+
+    /// A menu-ready icon for a Space, shared with the URL rules editor's target
+    /// picker. Always called on the main thread during menu tracking, but this
+    /// synchronous menu-build path isn't `@MainActor`-isolated, so assume the
+    /// isolation `SpaceIconView.menuImage` requires rather than ripple the
+    /// annotation through it.
+    private func spaceMenuIcon(for storedValue: String) -> NSImage? {
+        MainActor.assumeIsolated { SpaceIconView.menuImage(for: storedValue) }
+    }
+
+    private func applyEffectiveShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
+        item.tag = command.rawValue
+        guard let key = Shortcuts.key(for: command) else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = .init(rawValue: 0)
+            return
+        }
+        item.keyEquivalent = key.characters
+        item.keyEquivalentModifierMask = key.modifiers
+    }
+
+    fileprivate func rebuildSpacesMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let activeSpace = currentActiveSpace()
+        let activeSpaceId = activeSpace?.spaceId
+
+        let newSpaceItem = NSMenuItem(
+            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            action: #selector(newSpaceFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        newSpaceItem.tag = AppController.spacesNewSpaceItemTag
+        newSpaceItem.target = self
+        menu.addItem(newSpaceItem)
+
+        let renameItem = NSMenuItem(
+            title: NSLocalizedString("Rename Space\u{2026}", comment: "Spaces menu - Rename the active Space"),
+            action: #selector(renameActiveSpace(_:)),
+            keyEquivalent: ""
+        )
+        renameItem.tag = AppController.spacesRenameItemTag
+        renameItem.target = self
+        menu.addItem(renameItem)
+
+        let changeIconItem = NSMenuItem(
+            title: NSLocalizedString("Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
+            action: #selector(requestActiveSpaceIconPicker(_:)),
+            keyEquivalent: ""
+        )
+        changeIconItem.target = self
+        menu.addItem(changeIconItem)
+
+        let editThemeParent = NSMenuItem(
+            title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        editThemeParent.tag = AppController.spacesChangeThemeParentTag
+        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpaceId)
+        menu.addItem(editThemeParent)
+
+        let changeProfileParent = NSMenuItem(
+            title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        changeProfileParent.tag = AppController.spacesChangeProfileParentTag
+        changeProfileParent.submenu = makeSpacesProfileSubmenu(for: activeSpace)
+        menu.addItem(changeProfileParent)
+
+        let deleteSpaceItem = NSMenuItem(
+            title: NSLocalizedString("Delete Space\u{2026}", comment: "Spaces menu - Delete the active Space"),
+            action: #selector(deleteActiveSpace(_:)),
+            keyEquivalent: ""
+        )
+        deleteSpaceItem.tag = AppController.spacesDeleteSpaceItemTag
+        deleteSpaceItem.target = self
+        menu.addItem(deleteSpaceItem)
+
+        menu.addItem(.separator())
+
+        let nextItem = NSMenuItem(
+            title: NSLocalizedString("Next Space", comment: "Spaces menu - Activate the next Space in the strip"),
+            action: #selector(activateNextSpace(_:)),
+            keyEquivalent: ""
+        )
+        applyEffectiveShortcut(.PHI_SELECT_NEXT_SPACE, to: nextItem)
+        nextItem.target = self
+        menu.addItem(nextItem)
+
+        let prevItem = NSMenuItem(
+            title: NSLocalizedString("Previous Space", comment: "Spaces menu - Activate the previous Space in the strip"),
+            action: #selector(activatePreviousSpace(_:)),
+            keyEquivalent: ""
+        )
+        applyEffectiveShortcut(.PHI_SELECT_PREVIOUS_SPACE, to: prevItem)
+        prevItem.target = self
+        menu.addItem(prevItem)
+
+        let spaces = SpaceManager.shared.spaces
+        if !spaces.isEmpty {
+            menu.addItem(.separator())
+            for (index, space) in spaces.enumerated() {
+                let item = NSMenuItem(
+                    title: space.name,
+                    action: #selector(activateSpaceFromMenu(_:)),
+                    keyEquivalent: ""
+                )
+                if let command = CommandWrapper.spaceSelectionCommand(at: index) {
+                    applyEffectiveShortcut(command, to: item)
+                }
+                item.target = self
+                item.representedObject = space.spaceId
+                item.state = (space.spaceId == activeSpaceId) ? .on : .off
+                item.image = spaceMenuIcon(for: space.iconName)
+                menu.addItem(item)
+            }
+        }
+
+        let urlRulesSeparator = NSMenuItem.separator()
+        urlRulesSeparator.tag = AppController.spacesURLRulesSeparatorTag
+        menu.addItem(urlRulesSeparator)
+
+        let urlRulesItem = NSMenuItem(
+            title: NSLocalizedString("URL Rules\u{2026}", comment: "Spaces menu - Open the universal URL routing rules editor"),
+            action: #selector(openURLRulesEditor(_:)),
+            keyEquivalent: ""
+        )
+        urlRulesItem.tag = AppController.spacesURLRulesItemTag
+        urlRulesItem.target = self
+        menu.addItem(urlRulesItem)
+
+        let profileSeparator = NSMenuItem.separator()
+        profileSeparator.tag = AppController.spacesProfileSeparatorTag
+        menu.addItem(profileSeparator)
+
+        let newProfileItem = NSMenuItem(
+            title: NSLocalizedString("New Profile\u{2026}", comment: "Spaces menu - Create a new browser profile"),
+            action: #selector(newProfile(_:)),
+            keyEquivalent: ""
+        )
+        newProfileItem.tag = AppController.spacesNewProfileItemTag
+        newProfileItem.target = self
+        menu.addItem(newProfileItem)
+
+        let deleteProfileTitle = NSLocalizedString("Delete Profile", comment: "Spaces menu - Submenu listing deletable browser profiles")
+        let deleteProfileParent = NSMenuItem(
+            title: deleteProfileTitle,
+            action: nil,
+            keyEquivalent: ""
+        )
+        deleteProfileParent.tag = AppController.spacesDeleteProfileParentItemTag
+        let deleteSubmenu = NSMenu(title: deleteProfileTitle)
+        deleteSubmenu.identifier = AppController.deleteProfileSubmenuIdentifier
+        deleteSubmenu.delegate = self
+        deleteProfileParent.submenu = deleteSubmenu
+        menu.addItem(deleteProfileParent)
+        rebuildDeleteProfileSubmenu(deleteSubmenu)
+    }
+
+
+    private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
+        let menu = NSMenu(title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"))
+        let pinnedId = spaceId.flatMap { SpaceManager.shared.themeId(forSpaceId: $0) }
+
+        let followGlobal = NSMenuItem(
+            title: NSLocalizedString("Follow Global", comment: "Spaces menu - Theme submenu entry that clears the per-Space override"),
+            action: #selector(selectSpaceTheme(_:)),
+            keyEquivalent: ""
+        )
+        followGlobal.target = self
+        followGlobal.representedObject = nil
+        followGlobal.state = (pinnedId == nil) ? .on : .off
+        followGlobal.image = .themeColorSwatch(for: ThemeManager.shared.currentTheme)
+        menu.addItem(followGlobal)
+
+        let themes = ThemeManager.shared.orderedThemes
+
+        if !themes.isEmpty {
+            menu.addItem(.separator())
+        }
+        for theme in themes {
+            let item = NSMenuItem(
+                title: theme.name,
+                action: #selector(selectSpaceTheme(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = theme.id
+            item.state = (pinnedId == theme.id) ? .on : .off
+            item.image = .themeColorSwatch(for: theme)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
+        let menu = NSMenu(title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"))
+        for profile in ProfileManager.shared.profiles {
+            let item = NSMenuItem(
+                title: profile.displayName,
+                action: #selector(selectSpaceProfile(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = profile.profileId
+            item.state = (profile.profileId == space?.profileId) ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Slot the menu actions should target. Prefers the controller that's
+    /// currently active in this app instance; falls back to the `keySlot`
+    /// (most-recently-key window) when no controller is active — covers the
+    /// menu-bar-from-background-app case.
+    fileprivate func currentSpacesSlot() -> SpaceWindowSlot? {
+        MainBrowserWindowControllersManager.shared.activeWindowController?.slot
+            ?? SpaceManager.shared.keySlot
+    }
+
+    fileprivate func currentActiveSpace() -> SpaceModel? {
+        let slot = currentSpacesSlot()
+        let id = slot?.activeSpaceId ?? SpaceManager.shared.activeSpaceId
+        guard let id else { return nil }
+        return SpaceManager.shared.spaces.first(where: { $0.spaceId == id })
+    }
+
+    private func cycleActiveSpace(by step: Int) {
+        let spaces = SpaceManager.shared.spaces
+        guard !spaces.isEmpty, let slot = currentSpacesSlot() else { return }
+        guard let currentId = slot.activeSpaceId,
+              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else {
+            slot.activate(spaceId: spaces[0].spaceId, userInitiated: true)
+            return
+        }
+        let nextIdx = (currentIdx + step + spaces.count) % spaces.count
+        slot.activate(spaceId: spaces[nextIdx].spaceId, userInitiated: true)
+    }
+
+    @objc func newSpaceFromMenu(_ sender: Any?) {
+        let activeProfileId = currentActiveSpace()?.profileId ?? LocalStore.defaultProfileId
+        CreateSpacePanel.requestCreation(initialProfileId: activeProfileId)
+    }
+
+    @objc func renameActiveSpace(_ sender: Any?) {
+        guard let space = currentActiveSpace() else { return }
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Rename Space", comment: "Title of the rename-Space dialog")
+        alert.informativeText = NSLocalizedString("Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
+        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        textField.stringValue = space.name
+        textField.placeholderString = space.name
+        alert.accessoryView = textField
+        DispatchQueue.main.async {
+            textField.window?.makeFirstResponder(textField)
+            textField.selectText(nil)
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != space.name else { return }
+        SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed)
+    }
+
+    /// Opens the icon/emoji picker for the active Space, anchored below its icon
+    /// in whichever Spaces strip is on screen (the sidebar's active pip or the
+    /// tab strip's chip). Routed through the window's slot because an NSMenu item
+    /// has no view of its own to anchor a SwiftUI popover to.
+    @objc func requestActiveSpaceIconPicker(_ sender: Any?) {
+        currentSpacesSlot()?.requestIconPicker()
+    }
+
+    @objc func selectSpaceTheme(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let space = currentActiveSpace() else { return }
+        let themeId = menuItem.representedObject as? String
+        SpaceManager.shared.setTheme(forSpaceId: space.spaceId, themeId: themeId)
+    }
+
+    @objc func selectSpaceProfile(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let profileId = menuItem.representedObject as? String,
+              let space = currentActiveSpace(),
+              space.spaceId != LocalStore.defaultSpaceId,
+              space.profileId != profileId,
+              let profile = ProfileManager.shared.profile(for: profileId) else { return }
+        // Changing the profile closes and respawns the Space's window (a
+        // window's profile is baked in at spawn); its open tabs are
+        // reopened on the new profile — confirm like Space deletion does.
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(
+            format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
+            profile.displayName
+        )
+        alert.informativeText = NSLocalizedString(
+            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+            comment: "Body of the change-Space-profile confirmation"
+        )
+        alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId)
+    }
+
+    @objc func deleteActiveSpace(_ sender: Any?) {
+        guard let space = currentActiveSpace(),
+              space.spaceId != LocalStore.defaultSpaceId else { return }
+        let alert = NSAlert()
+        alert.messageText = String(
+            format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
+            space.name
+        )
+        alert.informativeText = NSLocalizedString(
+            "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            comment: "Body of the delete-Space confirmation"
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
+    }
+
+    @objc func activateNextSpace(_ sender: Any?) {
+        cycleActiveSpace(by: 1)
+    }
+
+    @objc func activatePreviousSpace(_ sender: Any?) {
+        cycleActiveSpace(by: -1)
+    }
+
+    @objc func activateSpaceFromMenu(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let spaceId = menuItem.representedObject as? String,
+              let slot = currentSpacesSlot() else { return }
+        slot.activate(spaceId: spaceId, userInitiated: true)
+    }
+
+    @objc func openURLRulesEditor(_ sender: Any?) {
+        if let existing = NSApp.windows.first(where: { $0.identifier?.rawValue == "Phi URL Rules" }) {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = NSWindow(
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.identifier = NSUserInterfaceItemIdentifier("Phi URL Rules")
+        window.title = NSLocalizedString("URL Rules", comment: "Window title for the universal URL rules editor")
+        window.isReleasedWhenClosed = false
+        let editor = URLRulesEditor(manager: SpaceManager.shared) { [weak window] in
+            window?.close()
+        }
+        window.contentViewController = ThemedHostingController(rootView: editor)
+        window.setContentSize(NSSize(width: 680, height: 460))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Chromium Menu Actions
@@ -711,6 +1495,80 @@ extension AppController {
                 return true
             }
         }
+        let spacesFeatureEnabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
+        if item.action == #selector(newProfile(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.isHidden = !spacesFeatureEnabled
+            }
+            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+        }
+        if item.action == #selector(deleteSelectedProfile(_:)) {
+            guard spacesFeatureEnabled,
+                  LoginController.shared.isLoggedin(),
+                  let menuItem = item as? NSMenuItem,
+                  let profile = menuItem.representedObject as? PhiBrowserProfile else {
+                return false
+            }
+            return !SpaceManager.shared.spaces.contains(where: { $0.profileId == profile.profileId })
+        }
+        let spacesActions: [Selector] = [
+            #selector(newSpaceFromMenu(_:)),
+            #selector(renameActiveSpace(_:)),
+            #selector(requestActiveSpaceIconPicker(_:)),
+            #selector(selectSpaceTheme(_:)),
+            #selector(selectSpaceProfile(_:)),
+            #selector(deleteActiveSpace(_:)),
+            #selector(activateNextSpace(_:)),
+            #selector(activatePreviousSpace(_:)),
+            #selector(activateSpaceFromMenu(_:)),
+            #selector(openURLRulesEditor(_:)),
+        ]
+        if let action = item.action, spacesActions.contains(action) {
+            guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
+            if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
+                return currentActiveSpace() != nil
+            }
+            if action == #selector(deleteActiveSpace(_:)) {
+                // The default Space can't be deleted — its bookmark root is
+                // shared with the legacy per-profile root.
+                guard let space = currentActiveSpace() else { return false }
+                return space.spaceId != LocalStore.defaultSpaceId
+            }
+            if action == #selector(selectSpaceTheme(_:)) {
+                guard currentActiveSpace() != nil else { return false }
+                if let menuItem = item as? NSMenuItem {
+                    let pinnedId = currentActiveSpace().flatMap {
+                        SpaceManager.shared.themeId(forSpaceId: $0.spaceId)
+                    }
+                    let representedId = menuItem.representedObject as? String
+                    menuItem.state = (pinnedId == representedId) ? .on : .off
+                }
+                return true
+            }
+            if action == #selector(selectSpaceProfile(_:)) {
+                // The default space's profile can't change — its bookmark
+                // root is shared with the legacy per-profile root.
+                guard let space = currentActiveSpace(),
+                      space.spaceId != LocalStore.defaultSpaceId else { return false }
+                if let menuItem = item as? NSMenuItem {
+                    let representedId = menuItem.representedObject as? String
+                    menuItem.state = (representedId == space.profileId) ? .on : .off
+                }
+                return true
+            }
+            if action == #selector(activateNextSpace(_:)) || action == #selector(activatePreviousSpace(_:)) {
+                return SpaceManager.shared.spaces.count > 1 && currentSpacesSlot() != nil
+            }
+            if action == #selector(activateSpaceFromMenu(_:)) {
+                if let menuItem = item as? NSMenuItem,
+                   let spaceId = menuItem.representedObject as? String {
+                    let activeId = currentActiveSpace()?.spaceId
+                    menuItem.state = (spaceId == activeId) ? .on : .off
+                }
+                return currentSpacesSlot() != nil
+            }
+            return true
+        }
         if item.action == #selector(bookmarkThisTab(_:)) {
             return canBookmarkCurrentTab()
         }
@@ -738,6 +1596,7 @@ extension AppController {
                 #selector(clearAllUserData(_:)),
                 #selector(showExtensionInfo(_:)),
                 #selector(exportLogs(_:)),
+                #selector(restoreTimeMachineBackup(_:)),
                 #selector(exportUserData(_:)),
                 #selector(importUserDataFromBackup(_:))
             ]
@@ -753,10 +1612,19 @@ extension AppController {
         // PhiAppController (no-window CommandUpdater: New Tab/New Window enabled,
         // tab-only commands disabled), matching upstream AppController.
         if item.action == #selector(commandDispatch(_:)) {
-            return ChromiumLauncher.sharedInstance().bridge?.validateUserInterfaceItem(fromMenu: item) ?? false
+            return validateChromiumMenuItem(item)
         }
 
         return true
+    }
+
+    private func validateChromiumMenuItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        let selector = NSSelectorFromString("validateUserInterfaceItemFromMenu:")
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge as? NSObject,
+              bridge.responds(to: selector) else {
+            return false
+        }
+        return ChromiumLauncher.sharedInstance().bridge?.validateUserInterfaceItem(fromMenu: item) ?? false
     }
     
     @IBAction @objc func commandDispatch(_ sender: Any?) {
@@ -774,6 +1642,18 @@ extension AppController: NSMenuDelegate {
             rebuildBookmarksMenu(menu)
             return
         }
+        if menu.identifier == AppController.deleteProfileSubmenuIdentifier {
+            rebuildDeleteProfileSubmenu(menu)
+            return
+        }
+        if menu.identifier == AppController.spacesMenuIdentifier {
+            rebuildSpacesMenu(menu)
+            return
+        }
+        if menu.identifier == AppController.timeMachineBackupsMenuIdentifier {
+            rebuildTimeMachineBackupsMenu(menu)
+            return
+        }
 
         let optionKeyPressed = NSEvent.modifierFlags.contains(.option)
         if let extensionInfoItem = menu.item(withTag: AppController.extensionInfoItemTag) {
@@ -781,6 +1661,138 @@ extension AppController: NSMenuDelegate {
         }
         if let exportLogsItem = menu.item(withTag: AppController.exportLogsItemTag) {
             exportLogsItem.isHidden = !optionKeyPressed
+        }
+    }
+}
+
+private final class TimeMachineRestoreProgressModal {
+    private let window: NSPanel
+    private let titleLabel: NSTextField
+    private let backupLabel: NSTextField
+    private let stageLabel: NSTextField
+    private let progressIndicator: NSProgressIndicator
+
+    private(set) var outcome: Result<Void, Error>?
+
+    init(backupTitle: String) {
+        window = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 156),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = NSLocalizedString("Time Machine Restore", comment: "Time Machine restore progress window title")
+        window.level = .modalPanel
+        window.isReleasedWhenClosed = false
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+
+        titleLabel = NSTextField(labelWithString: NSLocalizedString(
+            "Preparing Time Machine Restore",
+            comment: "Time Machine restore progress title"
+        ))
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        backupLabel = NSTextField(labelWithString: backupTitle)
+        backupLabel.font = .systemFont(ofSize: 12)
+        backupLabel.textColor = .secondaryLabelColor
+        backupLabel.lineBreakMode = .byTruncatingMiddle
+        backupLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        stageLabel = NSTextField(labelWithString: Self.message(for: .preparing))
+        stageLabel.font = .systemFont(ofSize: 12)
+        stageLabel.textColor = .secondaryLabelColor
+        stageLabel.lineBreakMode = .byTruncatingTail
+        stageLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        progressIndicator = NSProgressIndicator()
+        progressIndicator.style = .bar
+        progressIndicator.controlSize = .regular
+        progressIndicator.minValue = 0
+        progressIndicator.maxValue = 100
+        progressIndicator.isIndeterminate = true
+        progressIndicator.usesThreadedAnimation = true
+        progressIndicator.translatesAutoresizingMaskIntoConstraints = false
+
+        let contentView = NSView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = contentView
+
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(backupLabel)
+        contentView.addSubview(progressIndicator)
+        contentView.addSubview(stageLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+
+            backupLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            backupLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            backupLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+
+            progressIndicator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            progressIndicator.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            progressIndicator.topAnchor.constraint(equalTo: backupLabel.bottomAnchor, constant: 22),
+
+            stageLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            stageLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            stageLabel.topAnchor.constraint(equalTo: progressIndicator.bottomAnchor, constant: 10)
+        ])
+    }
+
+    func run() -> NSApplication.ModalResponse {
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        progressIndicator.startAnimation(nil)
+        return NSApp.runModal(for: window)
+    }
+
+    func update(_ progress: TimeMachineRestorePreparationProgress) {
+        stageLabel.stringValue = Self.message(for: progress.stage)
+        if let fractionCompleted = progress.fractionCompleted {
+            if progressIndicator.isIndeterminate {
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.isIndeterminate = false
+            }
+            progressIndicator.doubleValue = fractionCompleted * 100
+        } else {
+            if !progressIndicator.isIndeterminate {
+                progressIndicator.isIndeterminate = true
+            }
+            progressIndicator.startAnimation(nil)
+        }
+    }
+
+    func finish(outcome: Result<Void, Error>, response: NSApplication.ModalResponse) {
+        self.outcome = outcome
+        progressIndicator.stopAnimation(nil)
+        NSApp.stopModal(withCode: response)
+        window.orderOut(nil)
+        window.close()
+    }
+
+    private static func message(for stage: TimeMachineRestorePreparationStage) -> String {
+        switch stage {
+        case .preparing:
+            return NSLocalizedString("Preparing restore...", comment: "Time Machine restore progress stage")
+        case .downloadingPackage:
+            return NSLocalizedString("Downloading rollback package...", comment: "Time Machine restore progress stage")
+        case .expandingPackage:
+            return NSLocalizedString("Expanding rollback package...", comment: "Time Machine restore progress stage")
+        case .validatingPackage:
+            return NSLocalizedString("Validating rollback app...", comment: "Time Machine restore progress stage")
+        case .preparingInstaller:
+            return NSLocalizedString("Preparing installer...", comment: "Time Machine restore progress stage")
+        case .launchingInstaller:
+            return NSLocalizedString("Starting restore...", comment: "Time Machine restore progress stage")
+        case .readyToQuit:
+            return NSLocalizedString("Restarting Phi...", comment: "Time Machine restore progress stage")
         }
     }
 }

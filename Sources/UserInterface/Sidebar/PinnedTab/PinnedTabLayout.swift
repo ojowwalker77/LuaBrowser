@@ -151,7 +151,7 @@ private extension PinnedTabLayout {
         if hasContent {
             yOffset += Constants.insets.bottom
         } else {
-            yOffset = Constants.insets.top + Constants.insets.bottom
+            yOffset = 0
         }
 
         contentSize = NSSize(width: input.contentWidth, height: yOffset)
@@ -162,8 +162,7 @@ private extension PinnedTabLayout {
         orderedAttributes.removeAll()
         tabMetrics = .empty
         extensionMetrics = .empty
-        let baseHeight = Constants.insets.top + Constants.insets.bottom
-        contentSize = NSSize(width: width, height: width > 0 ? baseHeight : 0)
+        contentSize = NSSize(width: width, height: 0)
     }
 
     /// Width used for column-limit breakpoints. Parent width grew by the same

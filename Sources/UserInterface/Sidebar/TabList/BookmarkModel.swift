@@ -269,9 +269,9 @@ class BookmarkManager: ObservableObject {
         self.browserState = browseState
         self.rootFolder = Bookmark(folderTitle: "Bookmarks")
         guard !browseState.isIncognito else { return }
-        browseState.localStore.createDefaultRootDir(profileId: browseState.profileId)
+        browseState.localStore.createDefaultRootDir(profileId: browseState.profileId, spaceId: browseState.spaceId)
         Task { @MainActor in
-            browseState.localStore.bookmarksPublisher(profileId: browseState.profileId)
+            browseState.localStore.bookmarksPublisher(profileId: browseState.profileId, spaceId: browseState.spaceId)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] bookmarkModels in
                     guard let self else { return }
@@ -486,11 +486,13 @@ class BookmarkManager: ObservableObject {
                      targetIndex: Int? = nil,
                      faviconData: Data? = nil) {
         guard let profileId = browserState?.profileId else { return }
+        let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
         browserState?.localStore.createBookmark(url: url,
                                                 title: title,
                                                 profileId: profileId,
                                                 parentId: parentGuid,
                                                 index: targetIndex,
+                                                spaceId: spaceId,
                                                 favicon: faviconDataForNewBookmark(url: url, explicitData: faviconData))
     }
 
@@ -506,27 +508,31 @@ class BookmarkManager: ObservableObject {
                           targetIndex: Int? = nil,
                           primaryFaviconData: Data? = nil) {
         guard let profileId = browserState?.profileId else { return }
+        let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
         browserState?.localStore.createBookmark(url: primaryURL,
                                                 title: title,
                                                 profileId: profileId,
                                                 parentId: parent?.guid,
                                                 index: targetIndex,
+                                                spaceId: spaceId,
                                                 secondaryUrl: secondaryURL,
                                                 secondaryTitle: secondaryTitle,
                                                 favicon: faviconDataForNewBookmark(url: primaryURL, explicitData: primaryFaviconData))
     }
-    
+
     func addFolder(title: String, to parent: Bookmark? = nil) {
         guard let profileId = browserState?.profileId else { return }
-        browserState?.localStore.createDirectory(title: title, profileId: profileId, parentId: parent?.guid)
+        let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
+        browserState?.localStore.createDirectory(title: title, profileId: profileId, parentId: parent?.guid, spaceId: spaceId)
     }
-    
+
     /// Creates a new folder and marks it for inline editing.
     func addFolderWithEditing(title: String, to parent: Bookmark? = nil) {
         let newGuid = UUID().uuidString
         pendingEditGuid = newGuid
         guard let profileId = browserState?.profileId else { return }
-        browserState?.localStore.createDirectory(title: title, profileId: profileId, parentId: parent?.guid, guid: newGuid)
+        let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
+        browserState?.localStore.createDirectory(title: title, profileId: profileId, parentId: parent?.guid, guid: newGuid, spaceId: spaceId)
     }
 
     /// Creates a folder and inserts the bookmark without triggering sidebar inline editing.
@@ -538,13 +544,15 @@ class BookmarkManager: ObservableObject {
                               completion: @escaping (Bool, String) -> Void) {
         let newGuid = UUID().uuidString
         guard let profileId = browserState?.profileId else { return }
+        let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
         browserState?.localStore.createDirectoryWithBookmark(folderTitle: title,
                                                              folderGuid: newGuid,
                                                              profileId: profileId,
                                                              parentId: parent?.guid,
                                                              bookmarkTitle: bookmarkTitle,
                                                              bookmarkURL: bookmarkURL,
-                                                             bookmarkFavicon: faviconDataForNewBookmark(url: bookmarkURL, explicitData: bookmarkFaviconData)) { success in
+                                                             bookmarkFavicon: faviconDataForNewBookmark(url: bookmarkURL, explicitData: bookmarkFaviconData),
+                                                             spaceId: spaceId) { success in
             completion(success, newGuid)
         }
     }
@@ -672,12 +680,20 @@ extension BookmarkManager {
             parentBookmark.addChild(bookmark)
         }
         
+        // The publisher already filters by `(profileId, spaceId)` so the
+        // result set contains exactly one Space-local root — the folder
+        // whose `parent == nil`. We identify it structurally instead of
+        // dereferencing `profile.bookmarkRoot` so the same code works
+        // whether the active Space is the default (root shared with the
+        // Profile) or a user-created Space (root owned only by the
+        // SpaceModel).
+        let rootGuid = sortedModels.first { $0.parent == nil && $0.dataType == .bookmarkFolder }?.guid
+
         var topLevel: [Bookmark] = []
         for model in sortedModels {
-            let isRoot = model.profile?.bookmarkRoot?.guid == model.guid
-            guard !isRoot else { continue }
+            if model.guid == rootGuid { continue }
             if let parentGuid = model.parent?.guid {
-                if model.parent?.profile?.bookmarkRoot?.guid == parentGuid {
+                if parentGuid == rootGuid {
                     if let bookmark = bookmarkMap[model.guid] {
                         topLevel.append(bookmark)
                     }

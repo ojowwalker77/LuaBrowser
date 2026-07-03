@@ -23,8 +23,8 @@ actor LocalStoreActor {
 class LocalStore {
     static let defaultProfileId = "Default"
     static let compatibilityConfiguration = LocalStoreCompatibilityConfiguration(
-        currentStoreFormatVersion: 6,
-        readableStoreFormatVersions: 1...6,
+        currentStoreFormatVersion: 8,
+        readableStoreFormatVersions: 1...8,
         storeFilename: "LocalStore.sqlite"
     )
 
@@ -110,6 +110,8 @@ class LocalStore {
             let modelContainer = try ModelContainer(
                 for: TabDataModel.self,
                 ProfileModel.self,
+                SpaceModel.self,
+                SpaceURLRule.self,
                 migrationPlan: TabDataModelMigrationPlan.self,
                 configurations: configuration
             )
@@ -228,7 +230,8 @@ extension LocalStore {
             let sortBy: [SortDescriptor<TabDataModel>] = [SortDescriptor(\.index)]
             let descriptor = FetchDescriptor<TabDataModel>(
                 predicate: #Predicate<TabDataModel> { tab in
-                    tab.type == pinnedRaw && tab.profile?.profileId == profileId
+                    tab.type == pinnedRaw &&
+                    tab.profile?.profileId == profileId
                 },
                 sortBy: sortBy
             )
@@ -489,15 +492,22 @@ extension LocalStore {
         guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
-        
+
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
-        
+
         let fetchPinnedTabs = {
             self.getAllPinnedTabs(for: profileID)
         }
-        
-        subject.send(fetchPinnedTabs())
-        
+
+        // Dedup must compare value snapshots, not the fetched objects: a
+        // refetch returns the same registered instances refreshed in place by
+        // the saving context, so an object-based `removeDuplicates` compared
+        // every object against itself and swallowed field edits — pinned
+        // URL/title edits never reached the per-space subscribers.
+        let initialTabs = fetchPinnedTabs()
+        var lastSnapshot = initialTabs.map(PinnedTabSnapshot.init)
+        subject.send(initialTabs)
+
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
             .publisher(for: .NSManagedObjectContextDidSave)
@@ -511,24 +521,39 @@ extension LocalStore {
             .receive(on: DispatchQueue.main)
             .sink { _ in
                 let updatedTabs = fetchPinnedTabs()
+                let snapshot = updatedTabs.map(PinnedTabSnapshot.init)
+                guard snapshot != lastSnapshot else { return }
+                lastSnapshot = snapshot
                 subject.send(updatedTabs)
             }
-        
+
         return subject
-            .removeDuplicates { oldTabs, newTabs in
-                guard oldTabs.count == newTabs.count else { return false }
-                return zip(oldTabs, newTabs).allSatisfy { old, new in
-                    old.guid == new.guid && 
-                    old.title == new.title && 
-                    old.index == new.index &&
-                    old.lastSeen == new.lastSeen &&
-                    old.updatedDate == new.updatedDate
-                }
-            }
             .handleEvents(receiveCancel: {
                 cancellable.cancel()
             })
             .eraseToAnyPublisher()
+    }
+}
+
+/// Value snapshot of a pinned-tab row used by `pinnedTabsPublisher` for
+/// change detection across saves.
+private struct PinnedTabSnapshot: Equatable {
+    let guid: String
+    let title: String
+    let url: URL
+    let index: Int
+    let lastSeen: Date?
+    let updatedDate: Date
+    let splitPartnerGuid: String?
+
+    init(_ model: TabDataModel) {
+        guid = model.guid
+        title = model.title
+        url = model.url
+        index = model.index
+        lastSeen = model.lastSeen
+        updatedDate = model.updatedDate
+        splitPartnerGuid = model.splitPartnerGuid
     }
 }
 
@@ -537,6 +562,31 @@ extension LocalStore {
     func profile(with profileId: String, createIfNeeded: Bool = true) throws -> ProfileModel? {
         guard let context = mainContext else { return nil }
         return try profile(with: profileId, in: context, createIfNeeded: createIfNeeded)
+    }
+
+    @MainActor
+    func upsertProfileDisplayNames(_ displayNamesByProfileId: [String: String]) {
+        guard let context = mainContext, !displayNamesByProfileId.isEmpty else { return }
+
+        do {
+            var didChange = false
+            for (profileId, rawDisplayName) in displayNamesByProfileId {
+                let displayName = rawDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !profileId.isEmpty, !displayName.isEmpty,
+                      let profile = try profile(with: profileId, in: context, createIfNeeded: true) else {
+                    continue
+                }
+                if profile.displayName != displayName {
+                    profile.displayName = displayName
+                    didChange = true
+                }
+            }
+            if didChange {
+                try context.save()
+            }
+        } catch {
+            AppLogError("[LocalStore] Failed to upsert profile display names: \(error)")
+        }
     }
 
     func removePinnedTab(_ tab: Tab) {
@@ -562,7 +612,10 @@ extension LocalStore {
         }
     }
     
-    func moveOrCreatePinnedTab(_ tab: Tab, after afterGuid: String?, profileId: String, newGuid: String? = nil) {
+    func moveOrCreatePinnedTab(_ tab: Tab,
+                               after afterGuid: String?,
+                               profileId: String,
+                               newGuid: String? = nil) {
         let tabGuid = tab.guidInLocalDB ?? UUID().uuidString
         let tabTitle = tab.title
         let tabURL = tab.url
@@ -574,7 +627,8 @@ extension LocalStore {
                 }
                 let pinnedRaw = TabDataType.pinnedTab.rawValue
                 let pinnedPredicate = #Predicate<TabDataModel> {
-                    $0.type == pinnedRaw && $0.profile?.profileId == profileId
+                    $0.type == pinnedRaw &&
+                    $0.profile?.profileId == profileId
                 }
                 let sortBy: [SortDescriptor<TabDataModel>] = [SortDescriptor(\.index)]
                 let descriptor = FetchDescriptor<TabDataModel>(

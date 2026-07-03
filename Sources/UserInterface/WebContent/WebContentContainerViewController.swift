@@ -826,6 +826,14 @@ class WebContentContainerViewController: NSViewController {
         }
     }
 
+    /// Forces the active tab's new-tab page back to a clean state after a Space
+    /// URL rule routed a new-tab navigation elsewhere. The active
+    /// `WebContentViewController` owns whether that means a Chromium-rendered NTP
+    /// or the native incognito NTP.
+    func refreshActiveNewTab() {
+        currentWebContentController?.resetToCleanNewTab()
+    }
+
     private func handleTabsChanged(_ tabs: [Tab]) {
         guard let state = browserState else { return }
         
@@ -1067,6 +1075,9 @@ class WebContentContainerViewController: NSViewController {
         // Save old controller/view for later cleanup.
         if let current = currentWebContentController, current !== controller {
             pendingViewCleanup = (controller: current, view: current.view)
+            // Outgoing focused VC no longer owns the split host — drop its
+            // partner-crash subscription (its own observers won't re-run).
+            current.cancelPartnerCrashSubscription()
             AppLogDebug("[WebContent] Deferring cleanup of previous controller, waiting for Chromium confirmation")
         }
 
@@ -1105,6 +1116,9 @@ class WebContentContainerViewController: NSViewController {
         controller.refreshContentForCurrentTab()
 
         currentWebContentController = controller
+        // Now the focused split host (if in a split) — watch the partner pane's
+        // crashState so a non-focused-pane crash shows without a focus switch.
+        controller.updatePartnerCrashSubscription()
         // Force a full layout sweep before reading splitViewContainer's frame.
         // Otherwise — if the window was just resized (e.g. titlebar
         // double-click zoom) and a layout pass is still pending — the convert
@@ -1339,6 +1353,7 @@ class WebContentContainerViewController: NSViewController {
         // Save old view for cleanup (scenario 1 logic)
         if let current = currentWebContentController, current !== pending.controller {
             pendingViewCleanup = (controller: current, view: current.view)
+            current.cancelPartnerCrashSubscription()
         }
 
         // Bring new view to front
@@ -1349,6 +1364,10 @@ class WebContentContainerViewController: NSViewController {
         // Update current controller and identifier
         currentWebContentController = pending.controller
         currentTabIdentifier = pending.identifier
+        // Same partner-crash subscription handoff as switchToWebContentController
+        // — this deferred first-paint promotion is the other path that swaps the
+        // focused split host.
+        pending.controller.updatePartnerCrashSubscription()
         // Same reason as switchToWebContentController: force layout so the
         // splitViewContainer frame chain is fresh before computing the path.
         view.layoutSubtreeIfNeeded()

@@ -183,6 +183,11 @@ final class SidebarTabHoverRegionView: NSView {
 
     private var trackingArea: NSTrackingArea?
 
+    // Pass clicks through to the hostingView below. Manually forwarding via
+    // `mouseDown(with:)` doesn't trigger SwiftUI's gesture system (the X
+    // close button never fires), so let AppKit deliver events the normal way.
+    // Hover detection still works because NSTrackingArea fires entered/exited
+    // independent of hit testing.
     override func hitTest(_ point: NSPoint) -> NSView? {
         return nil
     }
@@ -233,6 +238,7 @@ private final class SidebarTabHoverDeadZoneView: NSView {
 
     private var trackingArea: NSTrackingArea?
 
+    // Same hit-transparent strategy as `SidebarTabHoverRegionView`.
     override func hitTest(_ point: NSPoint) -> NSView? {
         return nil
     }
@@ -571,12 +577,10 @@ class SidebarSplitPairCellView: SidebarCellView {
         rightPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         leftPane.clickAction = { [weak self] in
-            guard let self, let tab = self.configuredLeftTab else { return }
-            tab.performAction(with: self.owner)
+            self?.handlePaneClick(isLeft: true)
         }
         rightPane.clickAction = { [weak self] in
-            guard let self, let tab = self.configuredRightTab else { return }
-            tab.performAction(with: self.owner)
+            self?.handlePaneClick(isLeft: false)
         }
 
         // Vertical seam in the gap between the two panes so the pair
@@ -591,6 +595,21 @@ class SidebarSplitPairCellView: SidebarCellView {
             make.width.equalTo(1)
             make.height.equalTo(16)
         }
+    }
+
+    private func handlePaneClick(isLeft: Bool) {
+        guard let tab = (isLeft ? configuredLeftTab : configuredRightTab) else { return }
+        let isCommandClick = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+        if isCommandClick,
+           let leftTab = configuredLeftTab,
+           let rightTab = configuredRightTab,
+           browserState?.toggleMultiSelectionForSplitPair(leftTab: leftTab, rightTab: rightTab) == true {
+            return
+        }
+        if browserState?.multiSelection.isActive == true {
+            browserState?.clearMultiSelection()
+        }
+        tab.performAction(with: owner)
     }
 
     @discardableResult
@@ -822,6 +841,12 @@ class SidebarSplitPairCellView: SidebarCellView {
                     self?.reresolvePairOrderIfNeeded()
                 }
                 .store(in: &cancellables)
+            state.$multiSelection
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.updateSelected()
+                }
+                .store(in: &cancellables)
         }
 
         for tab in [pair.leftTab, pair.rightTab] {
@@ -940,11 +965,16 @@ class SidebarSplitPairCellView: SidebarCellView {
 
     private func updateSelected() {
         guard let pair = item as? SplitPairSidebarItem else { return }
-        // Whole cell flips to the selected pill when *either* pane is the
-        // focusing tab. The HoverableView prioritizes its `selectedColor`
-        // over its hover tint, so the cell-level NSTrackingArea-driven
-        // hover background underneath cleanly yields to the active fill.
-        outerBackground.isSelected = pair.leftTab.isActive || pair.rightTab.isActive
+        // Match SideTabView: active split rows use the regular selected
+        // fill, while temporary multi-selection uses the sub-selected fill.
+        let state = browserState ?? pair.browserState
+        let isMultiSelected = state?.multiSelection.contains(pair.leftTab.guid) == true ||
+            state?.multiSelection.contains(pair.rightTab.guid) == true
+        let isActive = pair.leftTab.isActive || pair.rightTab.isActive
+        outerBackground.selectedColor = NSColor(
+            resource: isActive ? .sidebarTabSelected : .sidebarTabSubSelected
+        )
+        outerBackground.isSelected = isActive || isMultiSelected
     }
 
     /// Re-binds the cell when the pair's membership changed in place — a
@@ -997,11 +1027,206 @@ class SidebarSplitPairCellView: SidebarCellView {
     }
 }
 
+// MARK: - Farringdon Organize Completion
+
+extension Notification.Name {
+    /// Posted (main thread) when a Farringdon "organize tabs" run is triggered by
+    /// the keyboard shortcut (the broom button starts its own animation directly),
+    /// so the broom button can show its in-progress animation.
+    static let farringdonOrganizeDidStart = Notification.Name("farringdonOrganizeDidStart")
+
+    /// Posted (main thread) when the Kensington extension reports that a
+    /// Farringdon "organize tabs" run has finished, so the broom button can stop
+    /// its in-progress animation. Carries no payload — the only animating button
+    /// is the one in the window the user clicked.
+    static let farringdonOrganizeDidFinish = Notification.Name("farringdonOrganizeDidFinish")
+}
+
+/// Single entry point for triggering a Farringdon "organize tabs" run. Posts the
+/// start notification (so any visible broom button animates) and broadcasts the
+/// request to the Kensington extension, which resolves the focused window itself.
+/// Used by the sidebar broom, the horizontal-tab broom, and the keyboard shortcut.
+enum FarringdonOrganizer {
+    @MainActor
+    static func organizeFocusedWindow() {
+        // AI off → Kensington isn't running; do nothing (and don't start the
+        // sweep). The buttons are hidden in this state, this is a backstop.
+        guard PhiPreferences.AISettings.phiAIEnabled.loadValue() else { return }
+        NotificationCenter.default.post(name: .farringdonOrganizeDidStart, object: nil)
+        ExtensionMessaging.shared.broadcast(type: "farringdon.toggleTabs", payload: "{}")
+    }
+}
+
+// MARK: - Broom Button
+
+/// The "organize tabs with AI" (Farringdon) button shown at the trailing edge of
+/// the New Tab row. Owns its own hover feedback (tint + subtle fill) and a
+/// sweeping animation that plays while a run is in progress.
+final class BroomButton: NSButton {
+    private var trackingArea: NSTrackingArea?
+    private var isHovering = false { didSet { updateAppearance() } }
+    private(set) var isOrganizing = false
+    private var organizeStartedAt: Date?
+    private var safetyTimer: Timer?
+
+    private static let sweepKey = "farringdonSweep"
+    private static let minVisibleDuration: TimeInterval = 0.6
+    private static let safetyTimeout: TimeInterval = 8.0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        safetyTimer?.invalidate()
+    }
+
+    private func configure() {
+        isBordered = false
+        bezelStyle = .shadowlessSquare
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyUpOrDown
+        setButtonType(.momentaryChange)
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.cornerCurve = .continuous
+        let broom = NSImage(named: NSImage.Name("farringdon-broom"))
+        broom?.isTemplate = true
+        image = broom
+        toolTip = NSLocalizedString(
+            "Organize tabs with AI",
+            comment: "side bar new tab row - organize tabs button tooltip")
+        updateAppearance()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOrganizeDidStart),
+            name: .farringdonOrganizeDidStart,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOrganizeDidFinish),
+            name: .farringdonOrganizeDidFinish,
+            object: nil)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        isHovering = false
+    }
+
+    private func updateAppearance() {
+        // Prominent (matches the design's solid black broom); adapts to the
+        // theme so it stays visible in dark mode. Hover adds a subtle fill.
+        phi.setContentTintColor(.textPrimary)
+        layer?.backgroundColor = isHovering
+            ? NSColor.labelColor.withAlphaComponent(0.10).cgColor
+            : NSColor.clear.cgColor
+    }
+
+    // MARK: Organizing animation
+
+    func startOrganizing() {
+        guard !isOrganizing else { return }
+        isOrganizing = true
+        organizeStartedAt = Date()
+
+        // Keep in sync with the horizontal-tab broom (TabStripFarringdonButton):
+        // ~16° sweep around the center, ~0.8s full cycle.
+        let sweep = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        sweep.values = [0, -0.28, 0, 0.28, 0]
+        sweep.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        sweep.duration = 0.8
+        sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(sweep, forKey: Self.sweepKey)
+
+        // Stop even if the completion signal never arrives.
+        safetyTimer?.invalidate()
+        safetyTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.safetyTimeout, repeats: false
+        ) { [weak self] _ in
+            self?.stopOrganizing()
+        }
+    }
+
+    func stopOrganizing() {
+        guard isOrganizing else { return }
+        safetyTimer?.invalidate()
+        safetyTimer = nil
+
+        // Keep the sweep visible for a beat so a sub-100ms run still registers.
+        let elapsed = organizeStartedAt.map { Date().timeIntervalSince($0) } ?? Self.minVisibleDuration
+        let remaining = max(0, Self.minVisibleDuration - elapsed)
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+            guard let self, self.isOrganizing else { return }
+            self.isOrganizing = false
+            self.organizeStartedAt = nil
+            self.layer?.removeAnimation(forKey: Self.sweepKey)
+        }
+    }
+
+    @objc private func handleOrganizeDidStart() {
+        // Only the window that triggered the run (the key window) animates.
+        guard !isHidden, window?.isKeyWindow == true else { return }
+        startOrganizing()
+    }
+
+    @objc private func handleOrganizeDidFinish() {
+        stopOrganizing()
+    }
+}
+
 // MARK: - New Tab Button Cell View
 class NewTabButtonCellView: SidebarCellView {
     var clickAction: (() -> Void)?
+    /// Triggers the Farringdon "organize tabs with AI" action. When nil, the
+    /// trailing broom button is hidden.
+    var cleanupAction: (() -> Void)? {
+        didSet { cleanupButton.isHidden = (cleanupAction == nil) }
+    }
     private var iconHoverState = false
     private var didPlayForwardAnimationForCurrentHover = false
+
+    private lazy var cleanupButton: BroomButton = {
+        let button = BroomButton(frame: .zero)
+        button.target = self
+        button.action = #selector(cleanupButtonClicked)
+        button.isHidden = true
+        return button
+    }()
+
+    @objc private func cleanupButtonClicked() {
+        guard !cleanupButton.isOrganizing else { return }
+        // `cleanupAction` triggers the organize run, which posts
+        // `.farringdonOrganizeDidStart`; the button animates via that observer.
+        cleanupAction?()
+    }
 
     private lazy var iconView: LottieAnimationNSView = {
         let config = LottieAnimationViewConfig(
@@ -1014,6 +1239,19 @@ class NewTabButtonCellView: SidebarCellView {
             allowsHitTesting: false
         )
         return LottieAnimationNSView(config: config)
+    }()
+
+    /// Static fallback used only while sidebar Space-switch snapshots are captured.
+    private lazy var snapshotIconView: NSImageView = {
+        let imageView = NSImageView()
+        let image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        image?.isTemplate = true
+        imageView.image = image
+        imageView.imageAlignment = .alignCenter
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.isHidden = true
+        return imageView
     }()
     
     private var titleLabel: NSTextField = {
@@ -1037,9 +1275,30 @@ class NewTabButtonCellView: SidebarCellView {
         super.prepareForReuse()
         iconHoverState = false
         didPlayForwardAnimationForCurrentHover = false
+        cleanupButton.stopOrganizing()
+    }
+
+    func withStaticSnapshotIcon<T>(_ body: () throws -> T) rethrows -> T {
+        let wasLottieHidden = iconView.isHidden
+        let wasSnapshotHidden = snapshotIconView.isHidden
+        snapshotIconView.contentTintColor = ThemedColor.textTertiary.resolve(in: self)
+        iconView.isHidden = true
+        snapshotIconView.isHidden = false
+        defer {
+            iconView.isHidden = wasLottieHidden
+            snapshotIconView.isHidden = wasSnapshotHidden
+        }
+        return try body()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // Let the trailing broom button claim its own clicks before the cell
+        // swallows the whole row (used by the floating new-tab variant where
+        // `clickAction` opens a new tab).
+        if let hit = super.hitTest(point),
+           hit == cleanupButton || hit.isDescendant(of: cleanupButton) {
+            return hit
+        }
         guard clickAction != nil, bounds.contains(point) else {
             return super.hitTest(point)
         }
@@ -1089,17 +1348,29 @@ class NewTabButtonCellView: SidebarCellView {
         }
        
         backgoundView.addSubview(iconView)
+        backgoundView.addSubview(snapshotIconView)
         backgoundView.addSubview(titleLabel)
-        
+        backgoundView.addSubview(cleanupButton)
+
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(6)
             make.centerY.equalToSuperview()
             make.size.equalTo(16)
         }
-        
+
+        snapshotIconView.snp.makeConstraints { make in
+            make.edges.equalTo(iconView)
+        }
+
+        cleanupButton.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(4)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(22)
+        }
+
         titleLabel.snp.makeConstraints { make in
             make.leading.equalTo(iconView.snp.trailing).offset(8)
-            make.trailing.equalToSuperview().inset(8)
+            make.trailing.lessThanOrEqualTo(cleanupButton.snp.leading).offset(-8)
             make.centerY.equalToSuperview()
         }
     }
