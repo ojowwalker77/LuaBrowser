@@ -276,6 +276,7 @@
 		CC2708A62E7A65E500B65AB8 /* TabDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2708A32E7A65E500B65AB8 /* TabDataModel.swift */; };
 		CC2708A92E7A675C00B65AB8 /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2708A72E7A675C00B65AB8 /* Account.swift */; };
 		CC288A692E4F12CB004A6C1C /* SidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC288A662E4F12CB004A6C1C /* SidebarViewController.swift */; };
+		CD4F3A012E56000100FACC01 /* FloatingTrafficLightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4F3A002E56000100FACC01 /* FloatingTrafficLightsView.swift */; };
 		CC288A6B2E4F12EC004A6C1C /* SidebarHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC288A6A2E4F12EC004A6C1C /* SidebarHeaderView.swift */; };
 		CC288A8A2E5333CC004A6C1C /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = CC288A892E5333CC004A6C1C /* main.m */; };
 		CC288A8C2E534230004A6C1C /* AppController+Menu.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC288A8B2E534230004A6C1C /* AppController+Menu.swift */; };
@@ -759,6 +760,7 @@
 		CC2708A32E7A65E500B65AB8 /* TabDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModel.swift; sourceTree = "<group>"; };
 		CC2708A72E7A675C00B65AB8 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		CC288A662E4F12CB004A6C1C /* SidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarViewController.swift; sourceTree = "<group>"; };
+		CD4F3A002E56000100FACC01 /* FloatingTrafficLightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingTrafficLightsView.swift; sourceTree = "<group>"; };
 		CC288A6A2E4F12EC004A6C1C /* SidebarHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarHeaderView.swift; sourceTree = "<group>"; };
 		CC288A892E5333CC004A6C1C /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		CC288A8B2E534230004A6C1C /* AppController+Menu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppController+Menu.swift"; sourceTree = "<group>"; };
@@ -1689,6 +1691,7 @@
 		CC27089A2E7965FE00B65AB8 /* Header */ = {
 			isa = PBXGroup;
 			children = (
+				CD4F3A002E56000100FACC01 /* FloatingTrafficLightsView.swift */,
 				CC288A6A2E4F12EC004A6C1C /* SidebarHeaderView.swift */,
 				CCBF8F332E61AB2A00B9A99E /* AddressBar */,
 			);
@@ -2389,6 +2392,7 @@
 				CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */,
 				37C9E68C2F3F322D00353A03 /* Shimmer.swift in Sources */,
 				CCBF8F4E2E6543E800B9A99E /* SidebarCellViews.swift in Sources */,
+				CD4F3A012E56000100FACC01 /* FloatingTrafficLightsView.swift in Sources */,
 				CC288A6B2E4F12EC004A6C1C /* SidebarHeaderView.swift in Sources */,
 				CC6336032E4EE43200A176DA /* PhiLogging.m in Sources */,
 				CC2708982E7959DF00B65AB8 /* PinnedTabLayout.swift in Sources */,

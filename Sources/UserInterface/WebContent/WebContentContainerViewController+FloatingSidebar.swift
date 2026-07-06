@@ -168,6 +168,7 @@ extension WebContentContainerViewController {
         view.layoutSubtreeIfNeeded()
         panel.isHidden = false
         floatingSidebarLastShownAt = Date()
+        floatingSidebarViewController?.refreshFloatingTrafficLights()
 
         // Handle the case where the panel appears under a stationary cursor and no mouseEntered is emitted.
         refreshFloatingSidebarPointerState()

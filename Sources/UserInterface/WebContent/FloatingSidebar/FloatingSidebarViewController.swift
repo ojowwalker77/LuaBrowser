@@ -148,6 +148,10 @@ class FloatingSidebarViewController: NSViewController {
         bottomBarSwiftUI.bindDownloadsManager(state.downloadsManager)
     }
 
+    func refreshFloatingTrafficLights() {
+        headerView.refreshFloatingTrafficLights()
+    }
+
     deinit {
         tabList.tearDown()
     }

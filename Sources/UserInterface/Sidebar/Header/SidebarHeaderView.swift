@@ -30,6 +30,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     private let defaultSidebarButtonTrailingInset: CGFloat = 5
     private let balancedSidebarButtonTrailingInset: CGFloat = 9
     private var layoutSettleCancellable: AnyCancellable?
+    private var hasSetupConfigObserver = false
     /// Currently available app update version.
     private var availableUpdateVersion: String?
     private var currentWidth: CGFloat = 0
@@ -53,6 +54,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }
 
     private var isFloating: Bool = false
+    private lazy var floatingTrafficLightsView = FloatingTrafficLightsView(browserState: browserState)
     
     private lazy var sidebarButton: HoverableButtonNSView = {
         let config = HoverableButtonConfig(image: .leftSidebarToggle,
@@ -211,6 +213,16 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             make.size.equalTo(NSSize(width: 24, height: 24))
         }
 
+        if isFloating {
+            addSubview(floatingTrafficLightsView)
+            floatingTrafficLightsView.snp.makeConstraints { make in
+                make.leading.equalToSuperview().offset(FloatingTrafficLightMetrics.leading)
+                make.centerY.equalTo(sidebarButton)
+                make.size.equalTo(NSSize(width: FloatingTrafficLightMetrics.width,
+                                         height: FloatingTrafficLightMetrics.size))
+            }
+        }
+
         searchTabsButton.snp.makeConstraints { make in
             make.centerY.equalTo(sidebarButton)
             make.right.equalTo(sidebarButton.snp.left).offset(-2)
@@ -363,9 +375,12 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
 
     /// Observe configuration changes
     private func setupConfigObserver() {
-        guard let browserState else {
+        guard hasSetupConfigObserver == false,
+              let browserState else {
             return
         }
+        hasSetupConfigObserver = true
+
         browserState.$layoutMode
             .receive(on: DispatchQueue.main)
             .sink {  [weak self] mode in
@@ -387,12 +402,37 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                 self.updateLayoutVisibility(layoutMode: PhiPreferences.GeneralSettings.loadLayoutMode())
             }
             .store(in: &cancellables)
+
+        browserState.$isInFullScreenMode
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+                self.updateLayoutVisibility(layoutMode: layoutMode)
+                if self.isSidebarLayout(layoutMode) {
+                    self.updateSidebarButtonLeftConstraint()
+                }
+            }
+            .store(in: &cancellables)
     }
     
+    /// Returns the maxX of the leading chrome controls in this header.
+    private func leadingChromeMaxXRelativeToSelf() -> CGFloat? {
+        if isFloating {
+            if browserState?.isInFullScreenMode == true {
+                return 0
+            }
+            return FloatingTrafficLightMetrics.maxX
+        }
+        return windowButtonMaxXRelativeToSelf(button: .zoomButton)
+            ?? windowButtonMaxXRelativeToSelf(button: .closeButton)
+    }
+
     /// Returns the maxX of a standard window button (e.g. .zoomButton or .fullScreenButton)
     /// in the current view's coordinate space. If the button doesn't exist, returns nil.
     private func windowButtonMaxXRelativeToSelf(button type: NSWindow.ButtonType) -> CGFloat? {
-        if isFloating || browserState?.isInFullScreenMode == true {
+        if browserState?.isInFullScreenMode == true {
             return 0
         }
         
@@ -404,18 +444,13 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         return rectInSelf.maxX
     }
 
-    /// Updates the left constraint for `sidebarButton` based on the right edge of the window's
-    /// green traffic-light button (zoom) or, if not available, the fullscreen button.
+    /// Updates the left constraint for `sidebarButton` based on the right edge of the leading chrome.
     private func updateSidebarButtonLeftConstraint() {
-        // Prefer the zoom (green) button; fall back to the fullscreen button if needed
-        let maxX = windowButtonMaxXRelativeToSelf(button: .zoomButton)
-            ?? windowButtonMaxXRelativeToSelf(button: .closeButton)
-
-        guard let x = maxX else {
+        guard let x = leadingChromeMaxXRelativeToSelf() else {
             AppLogDebug("[SidebarHeader] updateSidebarButtonLeftConstraint maxX=nil (window buttons unavailable)")
             return
         }
-        // Add a small padding (8pt) to keep some space from the system button group
+        // Keep a small gap after the leading chrome group.
         AppLogDebug("[SidebarHeader] updateSidebarButtonLeftConstraint update offset=\(x + 10)")
         sidebarButtonLeftOffset = x + 10
         sidebarButtonLeftConstraint?.update(offset: sidebarButtonLeftOffset)
@@ -515,6 +550,14 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         #if DEBUG
         applyUITestUpdateOverrideIfNeeded()
         #endif
+    }
+
+    func refreshFloatingTrafficLights() {
+        guard isFloating else {
+            return
+        }
+
+        floatingTrafficLightsView.refreshWindowButtons()
     }
 
     #if DEBUG
