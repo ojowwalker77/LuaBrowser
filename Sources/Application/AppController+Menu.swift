@@ -508,7 +508,14 @@ extension AppController {
 
     @MainActor
     @objc func copySelectedTabURLs(_ sender: Any?) {
-        MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.copySelectedTabURLs()
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
+            return
+        }
+        let copiedURLCount = state.selectedTabCountForURLCopy
+        guard state.copySelectedTabURLs() else {
+            return
+        }
+        OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
     }
 
     /// Starts a new AI conversation in the focused tab's sidebar.

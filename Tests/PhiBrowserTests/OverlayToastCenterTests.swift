@@ -145,7 +145,7 @@ final class OverlayToastCenterTests: XCTestCase {
     func testGenericToastTopOffsetFollowsLayoutMode() {
         XCTAssertEqual(OverlayToastViewModel.genericToastTopOffset(for: .comfortable), CGFloat(88))
         XCTAssertEqual(OverlayToastViewModel.genericToastTopOffset(for: .performance), CGFloat(16))
-        XCTAssertEqual(OverlayToastViewModel.genericToastTopOffset(for: .balanced), CGFloat(52))
+        XCTAssertEqual(OverlayToastViewModel.genericToastTopOffset(for: .balanced), CGFloat(56))
     }
 
     private func makeCenter(

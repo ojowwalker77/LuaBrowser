@@ -1643,11 +1643,17 @@
     "URL" : {
       "comment" : "Editor - Label for the URL input field\nFeedback form - Label for URL input field\nURL rule match type: exact host plus a path prefix"
     },
+    "URL Copied" : {
+      "comment" : "Toast shown after copying the selected tab URL to the clipboard"
+    },
     "URL Rules" : {
       "comment" : "Title of the universal URL rules editor\nWindow title for the universal URL rules editor"
     },
     "URL Rules…" : {
       "comment" : "Spaces menu - Open the universal URL routing rules editor\nSpaces settings - button that opens the URL rules editor"
+    },
+    "URLs Copied" : {
+      "comment" : "Toast shown after copying selected tab URLs to the clipboard"
     },
     "URLs matching any rule will open in the assigned Space, no matter where you click or type them." : {
       "comment" : "Subtitle of the universal URL rules editor"

@@ -148,7 +148,11 @@ struct CommandDispatcher {
             FarringdonOrganizer.organizeFocusedWindow()
             return true
         case .PHI_COPY_URL:
-            return windowController.browserState.copySelectedTabURLs()
+            let state = windowController.browserState
+            let copiedURLCount = state.selectedTabCountForURLCopy
+            guard state.copySelectedTabURLs() else { return false }
+            OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
+            return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }
             return activateSpace(at: index, from: windowController)
