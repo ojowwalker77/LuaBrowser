@@ -1722,13 +1722,16 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Closes every slot's Incognito Space window, retreat-first for slots
-    /// currently showing it. The mechanics mirror `deleteSpace`'s two loops —
-    /// see the comments there for why the visible window's close must wait
-    /// for the retreat to settle (`onSwapSettled`) and why windows are
-    /// evicted before closing (a window-driven close would cascade the whole
-    /// slot shut).
+    /// currently showing it — closing the last window is what makes Chromium
+    /// destroy the Space's OTR profile and clear its session. Called by the
+    /// settings toggle's disable path and by the pip's "Close Space" menu
+    /// item (which ends the session without disabling the feature). The
+    /// mechanics mirror `deleteSpace`'s two loops — see the comments there
+    /// for why the visible window's close must wait for the retreat to
+    /// settle (`onSwapSettled`) and why windows are evicted before closing
+    /// (a window-driven close would cascade the whole slot shut).
     @MainActor
-    private func closeIncognitoSpaceWindows() {
+    func closeIncognitoSpaceWindows() {
         let spaceId = Self.incognitoSpaceId
         let retreatingSlots = slots.filter { $0.activeSpaceId == spaceId }
         for slot in retreatingSlots {
@@ -2617,6 +2620,14 @@ final class SpaceWindowSlot: ObservableObject {
                         guard let self,
                               let state = self.windowsBySpaceId[spaceId]?.browserState,
                               state.normalTabs.isEmpty else { return }
+                        // Off-the-record windows render the NATIVE new-tab
+                        // page: mark the arriving tab before creating it,
+                        // exactly like `newBrowserTab` does. Without this the
+                        // Incognito Space's first tab shows the raw web
+                        // chrome://newtab, which is blank for its OTR profile.
+                        if state.isIncognito {
+                            state.enqueueNativeNTP()
+                        }
                         ChromiumLauncher.sharedInstance().bridge?
                             .createQuickLookupTab(withWindowId: wid, customGuid: nil)
                     }

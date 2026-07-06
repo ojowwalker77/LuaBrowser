@@ -903,6 +903,21 @@ extension AppController {
         )
         deleteSpaceItem.target = self
         menu.addItem(deleteSpaceItem)
+
+        // The Incognito Space's own action: close its windows, which ends
+        // (and clears) the private session without touching the feature
+        // toggle. Appended only while it IS the active Space — this builder
+        // runs on every menu open, so the conditional presence stays fresh.
+        if activeSpace?.spaceId == SpaceManager.incognitoSpaceId {
+            menu.addItem(.separator())
+            let closeSpaceItem = NSMenuItem(
+                title: NSLocalizedString("Close Space", comment: "Spaces menu - close the Incognito Space's windows and clear the private session"),
+                action: #selector(closeIncognitoSpaceFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            closeSpaceItem.target = self
+            menu.addItem(closeSpaceItem)
+        }
     }
 
     /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
@@ -1310,6 +1325,20 @@ extension AppController {
         SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
     }
 
+    /// Closes the Incognito Space's windows across all slots — ending, and
+    /// thereby clearing, its private session — while leaving the feature
+    /// enabled so the pip stays in the strip. No confirmation, matching how
+    /// closing a window never prompts. Reachable only while the Incognito
+    /// Space is active (`appendActiveSpaceMenuItems` gates the item).
+    @objc func closeIncognitoSpaceFromMenu(_ sender: Any?) {
+        // Menu actions always arrive on the main thread; assume isolation
+        // rather than annotating the @objc selector (same pattern as
+        // SpaceManager.applyTheme).
+        MainActor.assumeIsolated {
+            SpaceManager.shared.closeIncognitoSpaceWindows()
+        }
+    }
+
     @objc func activateNextSpace(_ sender: Any?) {
         cycleActiveSpace(by: 1)
     }
@@ -1530,6 +1559,7 @@ extension AppController {
             #selector(selectSpaceTheme(_:)),
             #selector(selectSpaceProfile(_:)),
             #selector(deleteActiveSpace(_:)),
+            #selector(closeIncognitoSpaceFromMenu(_:)),
             #selector(activateNextSpace(_:)),
             #selector(activatePreviousSpace(_:)),
             #selector(activateSpaceFromMenu(_:)),

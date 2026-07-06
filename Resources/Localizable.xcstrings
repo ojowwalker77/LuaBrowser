@@ -431,6 +431,9 @@
     "Close Other Tabs" : {
       "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
     },
+    "Close Space" : {
+      "comment" : "Spaces menu - close the Incognito Space's windows and clear the private session"
+    },
     "Close Tab" : {
       "comment" : "Search Tabs - Close open tab button tooltip\nTab group overview - Accessibility label for the button that closes one tab card"
     },
