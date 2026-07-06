@@ -41,7 +41,8 @@ final class SentinelIPCClient: Sendable {
 
     /// Resolves the runner IPC socket path.
     /// The socket lives at /tmp/phi-sentinel-<hash>/runner.sock where hash is
-    /// derived from the Sentinel's user-specific storage path.
+    /// derived from the Sentinel's user-specific storage path. Falls back to the
+    /// legacy $TMPDIR-rooted path when only a pre-migration Sentinel is running.
     private func socketPath() -> String? {
         guard let storagePath = sentinelStoragePath() else { return nil }
         return ipcSocketPath(for: storagePath)
@@ -95,13 +96,22 @@ final class SentinelIPCClient: Sendable {
         return result
     }
 
-    /// Mirrors FileSystemUtils.ipcSocketPath from Sentinel.
+    /// Mirrors FileSystemUtils.ipcSocketPath from Sentinel: the current path is
+    /// rooted at a fixed /tmp (keeps the UDS path under the 104-byte limit).
+    /// Falls back to the legacy NSTemporaryDirectory()/$TMPDIR root so a browser
+    /// updated ahead of Sentinel can still reach a pre-migration runner.
     private func ipcSocketPath(for storagePath: String) -> String {
         let data = Data(storagePath.utf8)
         let hash = SHA256.hash(data: data)
         let shortHash = hash.prefix(8).map { String(format: "%02x", $0) }.joined()
-        let socketDir = (NSTemporaryDirectory() as NSString).appendingPathComponent("phi-sentinel-\(shortHash)")
-        return (socketDir as NSString).appendingPathComponent("runner.sock")
+        let dirName = "phi-sentinel-\(shortHash)"
+        let current = (("/tmp" as NSString).appendingPathComponent(dirName) as NSString)
+            .appendingPathComponent("runner.sock")
+        if FileManager.default.fileExists(atPath: current) { return current }
+        let legacy = ((NSTemporaryDirectory() as NSString).appendingPathComponent(dirName) as NSString)
+            .appendingPathComponent("runner.sock")
+        if FileManager.default.fileExists(atPath: legacy) { return legacy }
+        return current
     }
 
     // MARK: - IPC Transport
