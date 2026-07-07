@@ -379,7 +379,7 @@ extension AppController {
     private func configureBookmarksMenuItem(_ menuItem: NSMenuItem) {
         menuItem.title = NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar")
         menuItem.tag = AppController.bookmarksMenuItemTag
-        menuItem.isHidden = false
+        menuItem.isHidden = isActiveWindowIncognito()
 
         let submenu = menuItem.submenu ?? NSMenu(title: menuItem.title)
         submenu.identifier = AppController.bookmarksMenuIdentifier
@@ -457,6 +457,18 @@ extension AppController {
 
     private func isActiveWindowIncognito() -> Bool {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.isIncognito == true
+    }
+
+    /// Re-evaluates the menu-bar "Bookmarks" top-level item's visibility
+    /// against the focused window. Called when the active window changes (see
+    /// `.activeBrowserWindowDidChange`) so the menu drops out for off-the-record
+    /// windows — standalone incognito and the Incognito Space — and returns
+    /// for normal ones. Mirrors `refreshSpacesMenuVisibility`.
+    @objc func refreshBookmarksMenuVisibility() {
+        guard let item = NSApp.mainMenu?.items.first(where: {
+            $0.tag == AppController.bookmarksMenuItemTag
+        }) else { return }
+        item.isHidden = isActiveWindowIncognito()
     }
 
     private func canBookmarkCurrentTab() -> Bool {

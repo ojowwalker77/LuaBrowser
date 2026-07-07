@@ -30,20 +30,24 @@ final class TabAreaContextMenuHelper: NSObject {
             keyEquivalent: "t"
         ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
 
-        menu.addItem(.separator())
+        // Bookmark writes are unavailable off-the-record, so incognito
+        // windows skip the folder/bookmark block entirely.
+        if browserState?.isIncognito != true {
+            menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem(
-            title: NSLocalizedString("New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
-            action: #selector(newFolder),
-            keyEquivalent: ""
-        ).configured { $0.target = self })
+            menu.addItem(NSMenuItem(
+                title: NSLocalizedString("New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
+                action: #selector(newFolder),
+                keyEquivalent: ""
+            ).configured { $0.target = self })
 
-        let hasBookmarkableTabs = browserState?.normalTabs.contains { !$0.isLocalPage } ?? false
-        menu.addItem(NSMenuItem(
-            title: NSLocalizedString("Bookmark All Tabs", comment: "Tab area context menu - Bookmark all open tabs"),
-            action: hasBookmarkableTabs ? #selector(bookmarkAllTabs) : nil,
-            keyEquivalent: "d"
-        ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
+            let hasBookmarkableTabs = browserState?.normalTabs.contains { !$0.isLocalPage } ?? false
+            menu.addItem(NSMenuItem(
+                title: NSLocalizedString("Bookmark All Tabs", comment: "Tab area context menu - Bookmark all open tabs"),
+                action: hasBookmarkableTabs ? #selector(bookmarkAllTabs) : nil,
+                keyEquivalent: "d"
+            ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
+        }
 
         menu.addItem(.separator())
 

@@ -65,33 +65,40 @@ extension Tab: ContextMenuRepresentable {
         let splitMembership = browserStateForMenu?.splitMembership(forCellTab: self)
         let isPinnedSplitCell = splitMembership?.isPinned == true
 
-        let pinItem: NSMenuItem
-        if let membership = splitMembership, let liveGroup = membership.liveGroup {
-            let title = liveGroup.isPinned
-                ? NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab")
-                : NSLocalizedString("Pin Split", comment: "Tab context menu - Pin the split that contains this tab")
-            pinItem = NSMenuItem(title: title,
-                                 action: #selector(MainBrowserWindowController.togglePinSplit(_:)),
-                                 keyEquivalent: "")
-            pinItem.representedObject = liveGroup.id
-        } else if let pair = splitMembership?.pinnedDBPair {
-            // Closed pinned split — both panes are closed so there's no live
-            // splitId. Route through the persistence-aware unpin path that
-            // drops the pairing and reopens both URLs as a fresh non-pinned
-            // split.
-            pinItem = NSMenuItem(title: NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab"),
-                                 action: #selector(MainBrowserWindowController.unpinClosedPinnedSplit(_:)),
-                                 keyEquivalent: "")
-            pinItem.representedObject = [pair.left, pair.right]
-        } else {
-            pinItem = NSMenuItem(title: NSLocalizedString("Pin", comment: "Tab context menu - Menu item to pin the selected tab"),
-                                 action: #selector(MainBrowserWindowController.togglePin(_:)),
-                                 keyEquivalent: "")
-            if isPinned {
-                pinItem.title = NSLocalizedString("Unpin", comment: "Tab context menu - Menu item to unpin the selected tab")
+        // Off-the-record windows (standalone incognito and the Incognito
+        // Space) have no pinned tabs and no bookmark writes, so every
+        // pin/bookmark item is dropped from the menu rather than disabled.
+        let isIncognitoWindow = browserStateForMenu?.isIncognito == true
+
+        if !isIncognitoWindow {
+            let pinItem: NSMenuItem
+            if let membership = splitMembership, let liveGroup = membership.liveGroup {
+                let title = liveGroup.isPinned
+                    ? NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab")
+                    : NSLocalizedString("Pin Split", comment: "Tab context menu - Pin the split that contains this tab")
+                pinItem = NSMenuItem(title: title,
+                                     action: #selector(MainBrowserWindowController.togglePinSplit(_:)),
+                                     keyEquivalent: "")
+                pinItem.representedObject = liveGroup.id
+            } else if let pair = splitMembership?.pinnedDBPair {
+                // Closed pinned split — both panes are closed so there's no live
+                // splitId. Route through the persistence-aware unpin path that
+                // drops the pairing and reopens both URLs as a fresh non-pinned
+                // split.
+                pinItem = NSMenuItem(title: NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab"),
+                                     action: #selector(MainBrowserWindowController.unpinClosedPinnedSplit(_:)),
+                                     keyEquivalent: "")
+                pinItem.representedObject = [pair.left, pair.right]
+            } else {
+                pinItem = NSMenuItem(title: NSLocalizedString("Pin", comment: "Tab context menu - Menu item to pin the selected tab"),
+                                     action: #selector(MainBrowserWindowController.togglePin(_:)),
+                                     keyEquivalent: "")
+                if isPinned {
+                    pinItem.title = NSLocalizedString("Unpin", comment: "Tab context menu - Menu item to unpin the selected tab")
+                }
             }
+            items.append(pinItem)
         }
-        items.append(pinItem)
         
         // Resolve the live non-pinned split URL pair (if any) so the
         // duplicate / copy blocks can flip to split-aware variants when the
@@ -223,6 +230,7 @@ extension Tab: ContextMenuRepresentable {
         // offer one-click actions that persist both panes together. The
         // `splitMembership` lookup above already covers all three shapes.
         if let splitState = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState,
+           !isIncognitoWindow,
            splitMembership != nil {
             let addSplitItem = NSMenuItem(
                 title: NSLocalizedString("Add Split to Bookmark", comment: "Tab context menu - Save both panes of the split as a bookmark folder"),
@@ -268,7 +276,7 @@ extension Tab: ContextMenuRepresentable {
         // entries — those would persist only one pane and lose the pairing.
         // "Add Split to Bookmark" above already covers the split case for
         // both pinned and non-pinned splits.
-        if !isSplitCell {
+        if !isSplitCell && !isIncognitoWindow {
             let isLegacy = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.layoutMode == .comfortable
             let title = isLegacy ? NSLocalizedString("Add to Bookmark Bar", comment: "Tab context menu - Add current tab to root bookmark bar") :
                                    NSLocalizedString("Add to Bookmark", comment: "Tab context menu - Add current tab to root bookmark bar in sidebar")
@@ -297,7 +305,11 @@ extension Tab: ContextMenuRepresentable {
             items.append(addToBookmark)
         }
 
-        items.append(.separator())
+        // In incognito the whole bookmark block above is skipped, so the
+        // previous item may already be a separator — don't stack another.
+        if items.last?.isSeparatorItem == false {
+            items.append(.separator())
+        }
 
         let countBeforeTabGroupBlock = items.count
         appendTabGroupMenuItems(into: &items)

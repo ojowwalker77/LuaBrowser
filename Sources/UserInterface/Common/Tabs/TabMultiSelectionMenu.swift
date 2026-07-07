@@ -44,42 +44,46 @@ enum TabMultiSelectionMenu {
 
         items.append(.separator())
 
-        let addToBookmarkItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Add to Bookmark",
-                comment: "Tab multi-selection context menu - add selected tabs to the root bookmark location"),
-            action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
-            keyEquivalent: "")
-        addToBookmarkItem.target = controller
-        items.append(addToBookmarkItem)
+        // Bookmark writes are unavailable off-the-record, so incognito
+        // windows drop the whole bookmark block instead of disabling it.
+        if !browserState.isIncognito {
+            let addToBookmarkItem = NSMenuItem(
+                title: NSLocalizedString(
+                    "Add to Bookmark",
+                    comment: "Tab multi-selection context menu - add selected tabs to the root bookmark location"),
+                action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
+                keyEquivalent: "")
+            addToBookmarkItem.target = controller
+            items.append(addToBookmarkItem)
 
-        let addToFolderItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Add to Folder",
-                comment: "Tab multi-selection context menu - submenu to add selected tabs to a bookmark folder"),
-            action: nil,
-            keyEquivalent: "")
-        let bookmarkSubmenu = NSMenu()
+            let addToFolderItem = NSMenuItem(
+                title: NSLocalizedString(
+                    "Add to Folder",
+                    comment: "Tab multi-selection context menu - submenu to add selected tabs to a bookmark folder"),
+                action: nil,
+                keyEquivalent: "")
+            let bookmarkSubmenu = NSMenu()
 
-        let folders = browserState.bookmarkManager.getAllFolderWithHierarchy()
-        if !folders.isEmpty {
-            buildFolderMenuItems(from: folders, into: bookmarkSubmenu, controller: controller)
-            bookmarkSubmenu.addItem(.separator())
+            let folders = browserState.bookmarkManager.getAllFolderWithHierarchy()
+            if !folders.isEmpty {
+                buildFolderMenuItems(from: folders, into: bookmarkSubmenu, controller: controller)
+                bookmarkSubmenu.addItem(.separator())
+            }
+
+            let newFolderItem = NSMenuItem(
+                title: NSLocalizedString(
+                    "New Folder",
+                    comment: "Tab multi-selection context menu - bookmark selected tabs into a newly created folder"),
+                action: #selector(TabMultiSelectionMenuController.createNewFolder),
+                keyEquivalent: "")
+            newFolderItem.target = controller
+            bookmarkSubmenu.addItem(newFolderItem)
+
+            addToFolderItem.submenu = bookmarkSubmenu
+            items.append(addToFolderItem)
+
+            items.append(.separator())
         }
-
-        let newFolderItem = NSMenuItem(
-            title: NSLocalizedString(
-                "New Folder",
-                comment: "Tab multi-selection context menu - bookmark selected tabs into a newly created folder"),
-            action: #selector(TabMultiSelectionMenuController.createNewFolder),
-            keyEquivalent: "")
-        newFolderItem.target = controller
-        bookmarkSubmenu.addItem(newFolderItem)
-
-        addToFolderItem.submenu = bookmarkSubmenu
-        items.append(addToFolderItem)
-
-        items.append(.separator())
 
         let createGroupItem = NSMenuItem(
             title: NSLocalizedString(

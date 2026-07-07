@@ -167,6 +167,14 @@ struct CommandDispatcher {
             windowController.showFeedbackWindow()
             return true
         case .IDC_IMPORT_SETTINGS:
+            // Import targets the active Space's profile; off-the-record
+            // windows (standalone incognito and the Incognito Space) have
+            // no importable profile — tell the user instead of opening the
+            // import window.
+            guard !windowController.browserState.isIncognito else {
+                windowController.presentImportUnavailableInIncognitoAlert()
+                return true
+            }
             windowController.showImportDataWindow()
             return true
         case .IDC_BOOKMARK_THIS_TAB:
