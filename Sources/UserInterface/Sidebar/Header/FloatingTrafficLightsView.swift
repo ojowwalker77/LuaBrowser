@@ -466,7 +466,7 @@ private final class FloatingTrafficLightDrawingView: NSView {
     private func drawGlyph(in rect: NSRect, color: NSColor) {
         color.setStroke()
         let path = NSBezierPath()
-        path.lineWidth = 1.15
+        path.lineWidth = 2
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
 
@@ -477,15 +477,34 @@ private final class FloatingTrafficLightDrawingView: NSView {
             path.move(to: NSPoint(x: rect.maxX - 3.6, y: rect.minY + 3.6))
             path.line(to: NSPoint(x: rect.minX + 3.6, y: rect.maxY - 3.6))
         case .minimize:
-            path.move(to: NSPoint(x: rect.minX + 3.2, y: rect.midY))
-            path.line(to: NSPoint(x: rect.maxX - 3.2, y: rect.midY))
+            path.move(to: NSPoint(x: rect.minX + 3.8, y: rect.midY))
+            path.line(to: NSPoint(x: rect.maxX - 3.8, y: rect.midY))
         case .zoom:
-            path.move(to: NSPoint(x: rect.midX, y: rect.minY + 3.2))
-            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 3.2))
-            path.move(to: NSPoint(x: rect.minX + 3.2, y: rect.midY))
-            path.line(to: NSPoint(x: rect.maxX - 3.2, y: rect.midY))
+            drawZoomGlyph(in: rect, color: color)
+            return
         }
 
         path.stroke()
+    }
+
+    private func drawZoomGlyph(in rect: NSRect, color: NSColor) {
+        color.setFill()
+
+        let iconRect = rect.insetBy(dx: 3.8, dy: 3.8)
+        let gap: CGFloat = 1.0
+
+        let upperLeft = NSBezierPath()
+        upperLeft.move(to: NSPoint(x: iconRect.minX, y: iconRect.maxY))
+        upperLeft.line(to: NSPoint(x: iconRect.maxX - gap, y: iconRect.maxY))
+        upperLeft.line(to: NSPoint(x: iconRect.minX, y: iconRect.minY + gap))
+        upperLeft.close()
+        upperLeft.fill()
+
+        let lowerRight = NSBezierPath()
+        lowerRight.move(to: NSPoint(x: iconRect.maxX, y: iconRect.minY))
+        lowerRight.line(to: NSPoint(x: iconRect.maxX, y: iconRect.maxY - gap))
+        lowerRight.line(to: NSPoint(x: iconRect.minX + gap, y: iconRect.minY))
+        lowerRight.close()
+        lowerRight.fill()
     }
 }
