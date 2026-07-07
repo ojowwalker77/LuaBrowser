@@ -214,8 +214,9 @@ final class SpaceManager: ObservableObject {
     /// off-the-record profile (in-memory only; destroyed when its last window
     /// closes or the app quits). Detached from SwiftData by construction
     /// (never inserted into a model context), so nothing about it persists
-    /// through the store. Rebuilt on every spaces emission; `sortOrder` pins
-    /// it after all user Spaces.
+    /// through the store. Rebuilt on every spaces emission; it sits after all
+    /// user Spaces until dragged, then at the AccountUserDefaults-persisted
+    /// index (see `reorder`).
     private func makeIncognitoSpace(sortOrder: Int) -> SpaceModel {
         SpaceModel(
             spaceId: Self.incognitoSpaceId,
@@ -1131,10 +1132,24 @@ final class SpaceManager: ObservableObject {
     /// order other than the one the user produced.
     func reorder(spaceIds: [String]) {
         guard let account = boundAccount else { return }
+        // The Incognito Space has no SpaceModel row to renumber; its position
+        // persists as a list index in AccountUserDefaults (like its icon) and
+        // the store write gets the remaining ids. The explicit refresh
+        // republishes the arrangement right away — a drag that only moved the
+        // Incognito Space may leave every user Space's sortOrder unchanged,
+        // so the store emission alone can't be relied on.
+        var ordered = spaceIds
+        if let incognitoIndex = ordered.firstIndex(of: Self.incognitoSpaceId) {
+            account.userDefaults.setIncognitoSpaceSortIndex(incognitoIndex)
+            ordered.remove(at: incognitoIndex)
+        }
         let known = Set(spaces.map(\.spaceId))
         account.localStorage.reorderSpaces(
-            orderedSpaceIds: spaceIds.filter { known.contains($0) }
+            orderedSpaceIds: ordered.filter { known.contains($0) }
         )
+        if ordered.count != spaceIds.count {
+            refreshIncognitoSpacePresence()
+        }
     }
 
     // MARK: - Per-Space theme
@@ -1794,13 +1809,17 @@ final class SpaceManager: ObservableObject {
         // shadowing the synthetic Space.
         var updated = storeSpaces.filter { $0.spaceId != Self.incognitoSpaceId }
         lastStoreSpaces = updated
-        // The Incognito Space is appended last, after every user Space, and
-        // only while the feature is enabled. Because it flows through
-        // `spaces` (and thus `validIds`), a slot sitting on it survives
-        // unrelated store writes; on disable it drops out of `validIds` and
-        // the reconciliation below switches those slots back to a real Space.
+        // The Incognito Space joins the list only while the feature is
+        // enabled, at its persisted position — after every user Space until
+        // it's dragged, clamped in case Spaces were deleted since. Because
+        // it flows through `spaces` (and thus `validIds`), a slot sitting on
+        // it survives unrelated store writes; on disable it drops out of
+        // `validIds` and the reconciliation below switches those slots back
+        // to a real Space.
         if PhiPreferences.GeneralSettings.incognitoSpaceEnabled.loadValue() {
-            updated.append(makeIncognitoSpace(sortOrder: updated.count))
+            let stored = boundAccount?.userDefaults.incognitoSpaceSortIndex() ?? updated.count
+            let index = min(max(stored, 0), updated.count)
+            updated.insert(makeIncognitoSpace(sortOrder: index), at: index)
         }
         spaces = updated
         let validIds = Set(updated.map(\.spaceId))

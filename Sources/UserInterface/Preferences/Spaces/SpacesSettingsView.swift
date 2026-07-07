@@ -36,38 +36,41 @@ struct SpacesSettingsView: View {
     @State private var incognitoSpaceOn: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            incognitoSpaceCard
-            HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(spacing: 16) {
+                incognitoSpaceCard
                 spaceListPanel
-                    .frame(width: 300)
                     .frame(maxHeight: .infinity)
-                detailPanel
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            .frame(width: 300)
+            detailPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(20)
         .onAppear {
             profileManager.refresh()
             incognitoSpaceOn = PhiPreferences.GeneralSettings.incognitoSpaceEnabled.loadValue()
-            orderedIds = userSpaces.map(\.spaceId)
+            orderedIds = listedSpaces.map(\.spaceId)
             if selectedSpaceId == nil { selectInitialSpace() }
         }
         // Re-sync the local order when Spaces change elsewhere (never mid-drag),
-        // and keep the selection valid as Spaces are created/deleted.
-        .onChange(of: userSpaces.map(\.spaceId)) { ids in
+        // and keep the selection valid as Spaces are created/deleted — the
+        // Incognito Space's row included, so flipping its toggle off moves the
+        // selection back to a Space that is still listed.
+        .onChange(of: listedSpaces.map(\.spaceId)) { ids in
             if draggingSpaceId == nil { orderedIds = ids }
             if let sel = selectedSpaceId, ids.contains(sel) { return }
             selectInitialSpace()
         }
     }
 
-    /// The manageable Space list: every user Space, without the built-in
-    /// Incognito Space. The Incognito Space has no editable identity (fixed
-    /// name/icon, no profile binding, nothing persisted) — the toggle card
-    /// above the list is its entire settings surface.
-    private var userSpaces: [SpaceModel] {
-        spaceManager.spaces.filter { $0.spaceId != SpaceManager.incognitoSpaceId }
+    /// Every Space the list manages, in the manager's published order: the
+    /// user Spaces plus, while the toggle is on, the built-in Incognito
+    /// Space. All rows drag-reorder alike — the Incognito Space's position
+    /// persists as an AccountUserDefaults index (see `SpaceManager.reorder`)
+    /// since it has no SpaceModel row.
+    private var listedSpaces: [SpaceModel] {
+        spaceManager.spaces
     }
 
     // MARK: - Incognito Space toggle
@@ -152,7 +155,7 @@ struct SpacesSettingsView: View {
                 toolbarDivider
                 toolbarButton(systemName: "pencil",
                               help: NSLocalizedString("Rename selected Space", comment: "Spaces settings - rename Space tooltip"),
-                              disabled: selectedSpace == nil,
+                              disabled: !canRenameSelected,
                               action: renameSelected)
                 Spacer()
             }
@@ -176,17 +179,18 @@ struct SpacesSettingsView: View {
     /// drag hovers across rows), with any Space the snapshot doesn't know yet
     /// appended in the manager's order. Mirrors SpacesStripView.orderedSpaces.
     private var orderedSpaces: [SpaceModel] {
-        guard !orderedIds.isEmpty else { return userSpaces }
-        let byId = Dictionary(uniqueKeysWithValues: userSpaces.map { ($0.spaceId, $0) })
+        guard !orderedIds.isEmpty else { return listedSpaces }
+        let byId = Dictionary(uniqueKeysWithValues: listedSpaces.map { ($0.spaceId, $0) })
         var result = orderedIds.compactMap { byId[$0] }
         let known = Set(orderedIds)
-        result.append(contentsOf: userSpaces.filter { !known.contains($0.spaceId) })
+        result.append(contentsOf: listedSpaces.filter { !known.contains($0.spaceId) })
         return result
     }
 
     private func spaceListRow(_ space: SpaceModel) -> some View {
         let isSelected = space.spaceId == selectedSpaceId
         let isDefault = space.spaceId == LocalStore.defaultSpaceId
+        let isIncognito = space.spaceId == SpaceManager.incognitoSpaceId
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
@@ -208,15 +212,19 @@ struct SpacesSettingsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Picker("", selection: profileBinding(space.spaceId)) {
-                ForEach(profileManager.profiles, id: \.profileId) { profile in
-                    Text(profile.displayName).tag(profile.profileId)
+            // The Incognito Space's OTR profile is synthetic — never one of
+            // ProfileManager's — so it gets no profile picker.
+            if !isIncognito {
+                Picker("", selection: profileBinding(space.spaceId)) {
+                    ForEach(profileManager.profiles, id: \.profileId) { profile in
+                        Text(profile.displayName).tag(profile.profileId)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(isDefault)
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .disabled(isDefault)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -278,6 +286,7 @@ struct SpacesSettingsView: View {
     /// dimmed in-list row and blanked the dragged item.
     private func spaceDragPreview(_ space: SpaceModel) -> some View {
         let isDefault = space.spaceId == LocalStore.defaultSpaceId
+        let isIncognito = space.spaceId == SpaceManager.incognitoSpaceId
         let profileName = profileManager.profile(for: space.profileId)?.displayName ?? ""
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
@@ -294,14 +303,17 @@ struct SpacesSettingsView: View {
             Spacer(minLength: 4)
             // Static stand-in for the row's profile picker (a drag image is
             // never interactive); matches its label and trailing chevron.
-            HStack(spacing: 4) {
-                Text(profileName)
-                    .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .themedForeground(.textSecondary)
+            // The Incognito Space's row carries no picker to stand in for.
+            if !isIncognito {
+                HStack(spacing: 4) {
+                    Text(profileName)
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .medium))
+                        .themedForeground(.textSecondary)
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -395,6 +407,14 @@ struct SpacesSettingsView: View {
                             .themedForeground(.textSecondary)
                             .padding(.leading, 2)
                     }
+
+                    if space.spaceId == SpaceManager.incognitoSpaceId {
+                        Text(NSLocalizedString("The Incognito Space browses in a private session. Its name and profile are fixed; the toggle above the list turns it off.",
+                                               comment: "Spaces settings - Incognito Space limits note"))
+                            .font(.system(size: 11))
+                            .themedForeground(.textSecondary)
+                            .padding(.leading, 2)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -443,11 +463,20 @@ struct SpacesSettingsView: View {
     private var canDeleteSelected: Bool {
         guard let space = selectedSpace else { return false }
         return space.spaceId != LocalStore.defaultSpaceId
+            && space.spaceId != SpaceManager.incognitoSpaceId
+    }
+
+    /// False for the built-in Incognito Space, whose name is fixed (a rename
+    /// would be a silent store no-op on its sentinel id), as in the strip's
+    /// picker rows.
+    private var canRenameSelected: Bool {
+        guard let space = selectedSpace else { return false }
+        return space.spaceId != SpaceManager.incognitoSpaceId
     }
 
     private func selectInitialSpace() {
-        let preferred = userSpaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })
-            ?? userSpaces.first
+        let preferred = listedSpaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })
+            ?? listedSpaces.first
         if let space = preferred {
             select(space.spaceId)
         } else {
@@ -556,7 +585,10 @@ struct SpacesSettingsView: View {
     // both entry points stay identical (and share the same localized strings).
 
     private func newSpace() {
-        let activeProfileId = selectedSpace?.profileId
+        // The Incognito Space's synthetic profileId is not one of
+        // ProfileManager's, so it can't seed the creation form.
+        let activeProfileId = selectedSpace
+            .flatMap { $0.spaceId == SpaceManager.incognitoSpaceId ? nil : $0.profileId }
             ?? spaceManager.spaces.first(where: { $0.spaceId == LocalStore.defaultSpaceId })?.profileId
             ?? LocalStore.defaultProfileId
         // Always present the floating popup here. `requestCreation` would route
