@@ -1293,6 +1293,9 @@
     "Privacy and Security" : {
       "comment" : "Profiles settings - data link to privacy settings"
     },
+    "Private AI" : {
+      "comment" : "AI settings - Row that opens Phi Sentinel's Private AI page"
+    },
     "Profile" : {
       "comment" : "Label for the profile picker in the create-Space panel"
     },
