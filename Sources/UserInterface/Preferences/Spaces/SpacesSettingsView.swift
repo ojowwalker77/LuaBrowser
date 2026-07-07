@@ -84,6 +84,7 @@ struct SpacesSettingsView: View {
                     set: { setIncognitoSpace(enabled: $0) }
                 ))
                 .toggleStyle(.switch)
+                .controlSize(.mini)
                 .labelsHidden()
             }
         }
