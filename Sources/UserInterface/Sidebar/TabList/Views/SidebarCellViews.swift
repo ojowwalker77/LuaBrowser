@@ -1047,11 +1047,45 @@ extension Notification.Name {
 /// request to the Kensington extension, which resolves the focused window itself.
 /// Used by the sidebar broom, the horizontal-tab broom, and the keyboard shortcut.
 enum FarringdonOrganizer {
+    /// Organizing a handful of pages isn't worth a Farringdon run, so the broom
+    /// only appears once the current Space has more eligible pages than this.
+    static let minimumEligibleTabCount = 7
+
+    static func isTabCountEligible(_ tabCount: Int) -> Bool {
+        tabCount > minimumEligibleTabCount
+    }
+
+    static func eligibleTabCount(in tabs: [Tab]) -> Int {
+        tabs.lazy.filter { !$0.isLocalPage }.count
+    }
+
+    static func canOrganizeTabs(phiAIEnabled: Bool,
+                                isIncognito: Bool,
+                                eligibleTabCount: Int) -> Bool {
+        phiAIEnabled && !isIncognito && isTabCountEligible(eligibleTabCount)
+    }
+
+    static func canOrganizeTabs(in browserState: BrowserState) -> Bool {
+        canOrganizeTabs(
+            phiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+            isIncognito: browserState.isIncognito,
+            eligibleTabCount: eligibleTabCount(in: browserState.normalTabs)
+        )
+    }
+
     @MainActor
-    static func organizeFocusedWindow() {
-        // AI off → Kensington isn't running; do nothing (and don't start the
-        // sweep). The buttons are hidden in this state, this is a backstop.
-        guard PhiPreferences.AISettings.phiAIEnabled.loadValue() else { return }
+    static func organizeFocusedWindow(eligibleTabCount: Int? = nil) {
+        // Buttons and shortcuts share the same eligibility gate; this is the
+        // backstop for hidden UI and direct command dispatch.
+        guard let state = MainBrowserWindowControllersManager.shared.getActiveWindowState() else {
+            return
+        }
+        let count = eligibleTabCount ?? Self.eligibleTabCount(in: state.normalTabs)
+        guard canOrganizeTabs(
+            phiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+            isIncognito: state.isIncognito,
+            eligibleTabCount: count
+        ) else { return }
         NotificationCenter.default.post(name: .farringdonOrganizeDidStart, object: nil)
         ExtensionMessaging.shared.broadcast(type: "farringdon.toggleTabs", payload: "{}")
     }
@@ -1069,7 +1103,12 @@ final class BroomButton: NSButton {
     private var organizeStartedAt: Date?
     private var safetyTimer: Timer?
 
+    static let buttonSize: CGFloat = 24
+
+    private static let iconSize: CGFloat = 22
+    private static let cornerRadius: CGFloat = 6
     private static let sweepKey = "farringdonSweep"
+    private static let sweepAmplitude: CGFloat = 10 * .pi / 180
     private static let minVisibleDuration: TimeInterval = 0.6
     private static let safetyTimeout: TimeInterval = 8.0
 
@@ -1091,14 +1130,18 @@ final class BroomButton: NSButton {
     private func configure() {
         isBordered = false
         bezelStyle = .shadowlessSquare
+        title = ""
+        attributedTitle = NSAttributedString(string: "")
+        alternateTitle = ""
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyUpOrDown
         setButtonType(.momentaryChange)
         wantsLayer = true
-        layer?.cornerRadius = 5
+        layer?.cornerRadius = Self.cornerRadius
         layer?.cornerCurve = .continuous
-        let broom = NSImage(named: NSImage.Name("farringdon-broom"))
+        let broom = NSImage(named: NSImage.Name("farringdon-broom"))?.copy() as? NSImage
         broom?.isTemplate = true
+        broom?.size = NSSize(width: Self.iconSize, height: Self.iconSize)
         image = broom
         toolTip = NSLocalizedString(
             "Organize tabs with AI",
@@ -1130,6 +1173,13 @@ final class BroomButton: NSButton {
         trackingArea = area
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isEnabled, !isHidden, alphaValue > 0, bounds.contains(point) else {
+            return nil
+        }
+        return self
+    }
+
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
         isHovering = true
@@ -1141,11 +1191,9 @@ final class BroomButton: NSButton {
     }
 
     private func updateAppearance() {
-        // Prominent (matches the design's solid black broom); adapts to the
-        // theme so it stays visible in dark mode. Hover adds a subtle fill.
         phi.setContentTintColor(.textPrimary)
         layer?.backgroundColor = isHovering
-            ? NSColor.labelColor.withAlphaComponent(0.10).cgColor
+            ? NSColor(resource: .sidebarTabHovered).cgColor
             : NSColor.clear.cgColor
     }
 
@@ -1156,10 +1204,8 @@ final class BroomButton: NSButton {
         isOrganizing = true
         organizeStartedAt = Date()
 
-        // Keep in sync with the horizontal-tab broom (TabStripFarringdonButton):
-        // ~16° sweep around the center, ~0.8s full cycle.
         let sweep = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        sweep.values = [0, -0.28, 0, 0.28, 0]
+        sweep.values = [0, -Self.sweepAmplitude, 0, Self.sweepAmplitude, 0]
         sweep.keyTimes = [0, 0.25, 0.5, 0.75, 1]
         sweep.duration = 0.8
         sweep.repeatCount = .infinity
@@ -1295,6 +1341,12 @@ class NewTabButtonCellView: SidebarCellView {
         // Let the trailing broom button claim its own clicks before the cell
         // swallows the whole row (used by the floating new-tab variant where
         // `clickAction` opens a new tab).
+        if cleanupAction != nil, !cleanupButton.isHidden {
+            let backgroundPoint = backgoundView.convert(point, from: self)
+            if cleanupButton.frame.contains(backgroundPoint) {
+                return cleanupButton
+            }
+        }
         if let hit = super.hitTest(point),
            hit == cleanupButton || hit.isDescendant(of: cleanupButton) {
             return hit
@@ -1313,6 +1365,13 @@ class NewTabButtonCellView: SidebarCellView {
 
         let point = convert(event.locationInWindow, from: nil)
         guard bounds.contains(point) else { return }
+        if cleanupAction != nil, !cleanupButton.isHidden {
+            let backgroundPoint = backgoundView.convert(point, from: self)
+            if cleanupButton.frame.contains(backgroundPoint) {
+                cleanupButtonClicked()
+                return
+            }
+        }
         clickAction()
     }
     
@@ -1365,7 +1424,7 @@ class NewTabButtonCellView: SidebarCellView {
         cleanupButton.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(4)
             make.centerY.equalToSuperview()
-            make.size.equalTo(22)
+            make.size.equalTo(BroomButton.buttonSize)
         }
 
         titleLabel.snp.makeConstraints { make in

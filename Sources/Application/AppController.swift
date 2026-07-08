@@ -97,6 +97,10 @@ import PostHog
                                                selector: #selector(refreshSpacesMenuVisibility),
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(refreshBookmarksMenuVisibility),
+                                               name: .activeBrowserWindowDidChange,
+                                               object: nil)
         
         if PhiPreferences.AISettings.launchSentinelOnLogin.loadValue() {
             SentinelHelper.register()

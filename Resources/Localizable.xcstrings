@@ -218,6 +218,9 @@
     "Additional info (optional)" : {
       "comment" : "Feedback form - Section header for optional additional information"
     },
+    "Adds a built-in Space that browses in a private session. URL rules can route sites into it; everything it browsed is cleared when its windows close or Phi quits." : {
+      "comment" : "Spaces settings - Incognito Space toggle tooltip"
+    },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
     },
@@ -316,6 +319,9 @@
     },
     "Bookmarks Bar" : {
       "comment" : "Bookmark editor - Root bookmark folder display name in folder picker"
+    },
+    "Bookmarks belonging to this Space will also be removed. This action cannot be undone." : {
+      "comment" : "Body of the delete-Space confirmation"
     },
     "Bot Token" : {
       "comment" : "Phi Link - Custom bot token label"
@@ -441,6 +447,9 @@
     "Close Other Tabs" : {
       "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
     },
+    "Close Space" : {
+      "comment" : "Spaces menu - close the Incognito Space's windows and clear the private session"
+    },
     "Close Tab" : {
       "comment" : "Search Tabs - Close open tab button tooltip\nTab group overview - Accessibility label for the button that closes one tab card"
     },
@@ -480,6 +489,9 @@
     "Confirm Logout" : {
       "comment" : "Account settings - Logout confirmation dialog title"
     },
+    "Confirm logout in the opened browser." : {
+      "comment" : "Account settings - Status shown while waiting for logout to finish"
+    },
     "Conflicts with: %@" : {
       "comment" : "Shortcuts settings - Warning text showing conflicting shortcuts"
     },
@@ -515,6 +527,12 @@
     },
     "Copy Right URL" : {
       "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
+    },
+    "Copy URL" : {
+      "comment" : "Edit menu - Copy the selected tab URL to the clipboard"
+    },
+    "Copy URLs" : {
+      "comment" : "Edit menu - Copy the selected tab URLs to the clipboard"
     },
     "Coral" : {
       "comment" : "Coral theme color name"
@@ -880,7 +898,10 @@
       "comment" : "Browser data importer - Status message while importing Safari browser data"
     },
     "Incognito" : {
-      "comment" : "Incognito label in the native new tab page"
+      "comment" : "Built-in Incognito Space name\nIncognito label in the native new tab page"
+    },
+    "Incognito Space" : {
+      "comment" : "Spaces settings - Incognito Space toggle label"
     },
     "Install and Restart" : {
       "comment" : "Update alert - Button to install update and restart the app"
@@ -908,6 +929,9 @@
     },
     "Item 2" : {
 
+    },
+    "Its open tabs will close and its browsing data will be cleared." : {
+      "comment" : "Body of the confirmation shown when disabling the Incognito Space with open tabs"
     },
     "Just now" : {
       "comment" : "Download item row - Relative time when download completed less than a minute ago"
@@ -1269,6 +1293,9 @@
     "Privacy and Security" : {
       "comment" : "Profiles settings - data link to privacy settings"
     },
+    "Private AI" : {
+      "comment" : "AI settings - Row that opens Phi Sentinel's Private AI page"
+    },
     "Profile" : {
       "comment" : "Label for the profile picker in the create-Space panel"
     },
@@ -1560,6 +1587,9 @@
     "The default Space can't be moved to another profile or deleted." : {
       "comment" : "Spaces settings - default Space limits note"
     },
+    "The Incognito Space browses in a private session. Its name and profile are fixed; the toggle above the list turns it off." : {
+      "comment" : "Spaces settings - Incognito Space limits note"
+    },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
     },
@@ -1606,13 +1636,16 @@
       "comment" : "IM Channels - Custom bot verify success"
     },
     "Turn Off" : {
-      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors"
+      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors\nConfirm disabling the Incognito Space"
     },
     "Turn Off AI Features?" : {
       "comment" : "AI settings - Confirmation alert title when disabling all AI features"
     },
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
+    },
+    "Turn off Incognito Space?" : {
+      "comment" : "Title of the confirmation shown when disabling the Incognito Space with open tabs"
     },
     "Unable to open connector authorization." : {
       "comment" : "AI settings - OAuth authorization open error"
@@ -1665,11 +1698,17 @@
     "URL" : {
       "comment" : "Editor - Label for the URL input field\nFeedback form - Label for URL input field\nURL rule match type: exact host plus a path prefix"
     },
+    "URL Copied" : {
+      "comment" : "Toast shown after copying the selected tab URL to the clipboard"
+    },
     "URL Rules" : {
       "comment" : "Title of the universal URL rules editor\nWindow title for the universal URL rules editor"
     },
     "URL Rules…" : {
       "comment" : "Spaces menu - Open the universal URL routing rules editor\nSpaces settings - button that opens the URL rules editor"
+    },
+    "URLs Copied" : {
+      "comment" : "Toast shown after copying selected tab URLs to the clipboard"
     },
     "URLs matching any rule will open in the assigned Space, no matter where you click or type them." : {
       "comment" : "Subtitle of the universal URL rules editor"

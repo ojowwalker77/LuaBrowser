@@ -521,6 +521,28 @@ extension MainBrowserWindowController: NSMenuItemValidation {
     /// window, so a re-invocation can retarget it (see `objc_setAssociatedObject`).
     private static var importVCAssociationKey: UInt8 = 0
 
+    /// Shown when "Import Bookmarks and Settings..." is invoked from an
+    /// off-the-record window: import writes into a Space's profile, which
+    /// neither a standalone incognito window nor the Incognito Space has.
+    func presentImportUnavailableInIncognitoAlert() {
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString(
+            "Can't Import Browser Data",
+            comment: "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
+        )
+        alert.informativeText = NSLocalizedString(
+            "Browser data can't be imported into Incognito. Switch to a regular Space or window, then try again.",
+            comment: "Import browser data - Alert body explaining import is unavailable off-the-record"
+        )
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
     func showImportDataWindow() {
         let identifier = NSUserInterfaceItemIdentifier("Phi Import Data Window")
         // The import window is a singleton. Re-invoking import from another Space

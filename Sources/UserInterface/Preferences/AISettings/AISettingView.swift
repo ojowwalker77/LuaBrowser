@@ -142,11 +142,23 @@ private struct PhiSentinelSectionView: View {
                     isOn: $launchSentinelOnLogin,
                     enabled: enabled
                 )
+
+                Divider()
+
+                AINavigationRow(
+                    title: NSLocalizedString("Private AI", comment: "AI settings - Row that opens Phi Sentinel's Private AI page"),
+                    enabled: enabled,
+                    action: openPrivateAI
+                )
             }
         }
         .onChange(of: launchSentinelOnLogin) {
             notifyNativeSettingsChanged()
         }
+    }
+
+    private func openPrivateAI() {
+        SentinelHelper.openDashboard(section: "experimental")
     }
 }
 

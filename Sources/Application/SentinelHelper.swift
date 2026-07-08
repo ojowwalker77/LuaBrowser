@@ -8,6 +8,66 @@ import Foundation
 import ServiceManagement
 import CocoaLumberjackSwift
 
+struct SentinelBrowserUpdateTerminationRequest: Equatable {
+    static let notificationName = Notification.Name("com.phibrowser.sentinel.prepareForBrowserUpdate")
+    static let reason = "browser_update_install"
+
+    let requestID: String
+    let sentinelBundleID: String
+    let browserBundleID: String
+
+    var userInfo: [String: String] {
+        [
+            "requestID": requestID,
+            "browserBundleID": browserBundleID,
+            "reason": Self.reason
+        ]
+    }
+
+    static func make(
+        sentinelBundleID: String,
+        browserBundleID: String,
+        requestID: String = UUID().uuidString
+    ) -> SentinelBrowserUpdateTerminationRequest {
+        SentinelBrowserUpdateTerminationRequest(
+            requestID: requestID,
+            sentinelBundleID: sentinelBundleID,
+            browserBundleID: browserBundleID
+        )
+    }
+}
+
+struct SentinelOpenDashboardRequest: Equatable {
+    static let notificationName = Notification.Name("com.phibrowser.sentinel.openDashboard.request")
+
+    let requestID: String
+    let sentinelBundleID: String
+    let browserBundleID: String
+    let section: String
+
+    var userInfo: [String: String] {
+        [
+            "requestID": requestID,
+            "browserBundleID": browserBundleID,
+            "section": section
+        ]
+    }
+
+    static func make(
+        sentinelBundleID: String,
+        browserBundleID: String,
+        section: String,
+        requestID: String = UUID().uuidString
+    ) -> SentinelOpenDashboardRequest {
+        SentinelOpenDashboardRequest(
+            requestID: requestID,
+            sentinelBundleID: sentinelBundleID,
+            browserBundleID: browserBundleID,
+            section: section
+        )
+    }
+}
+
 enum SentinelHelper {
     struct RunningInfo: Equatable {
         let bundleID: String
@@ -92,6 +152,71 @@ enum SentinelHelper {
             app.terminate()
             AppLogInfo("Sent terminate signal to Sentinel (pid \(app.processIdentifier), bundleID \(app.bundleIdentifier ?? ""))")
         }
+    }
+
+    static func requestTerminationForBrowserUpdate(timeout: TimeInterval = 8) {
+        let identifier = loginItemIdentifier()
+        guard runningApplication(identifier: identifier) != nil else {
+            AppLogInfo("Sentinel is not running; no browser update termination request needed")
+            return
+        }
+
+        let request = SentinelBrowserUpdateTerminationRequest.make(
+            sentinelBundleID: identifier,
+            browserBundleID: Bundle.main.bundleIdentifier ?? ""
+        )
+        DistributedNotificationCenter.default().postNotificationName(
+            SentinelBrowserUpdateTerminationRequest.notificationName,
+            object: request.sentinelBundleID,
+            userInfo: request.userInfo,
+            deliverImmediately: true
+        )
+        AppLogInfo("Requested Sentinel termination for browser update (requestID \(request.requestID), bundleID \(identifier))")
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if runningApplication(identifier: identifier) == nil {
+                AppLogInfo("Sentinel exited before browser update installation (requestID \(request.requestID))")
+                return
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+
+        AppLogWarn("Timed out waiting for Sentinel to exit before browser update installation (requestID \(request.requestID))")
+    }
+
+    static func openDashboard(section: String) {
+        let identifier = loginItemIdentifier()
+
+        // Launch Sentinel if needed; ensureRunning no-ops when it is already running.
+        launch()
+
+        let request = SentinelOpenDashboardRequest.make(
+            sentinelBundleID: identifier,
+            browserBundleID: Bundle.main.bundleIdentifier ?? "",
+            section: section
+        )
+
+        // Post immediately, then re-post the same requestID on a short backoff to
+        // cover the cold-launch window before Sentinel registers its observer.
+        // Sentinel dedups on requestID, so the retries are idempotent.
+        postOpenDashboard(request)
+        for delay in [0.5, 1.0, 2.0, 4.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                postOpenDashboard(request)
+            }
+        }
+
+        AppLogInfo("Requested Sentinel dashboard open (requestID \(request.requestID), section \(section), bundleID \(identifier))")
+    }
+
+    private static func postOpenDashboard(_ request: SentinelOpenDashboardRequest) {
+        DistributedNotificationCenter.default().postNotificationName(
+            SentinelOpenDashboardRequest.notificationName,
+            object: request.sentinelBundleID,
+            userInfo: request.userInfo,
+            deliverImmediately: true
+        )
     }
 
     private static func loginItemIdentifier() -> String {

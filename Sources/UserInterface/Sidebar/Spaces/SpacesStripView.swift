@@ -502,6 +502,12 @@ struct SpacesStripView: View {
         // stays on screen for the animation).
         let isActive = space.spaceId == slot.activeSpaceId
         return Button {
+            // While the Create-a-Space overlay is open the strip stays visible
+            // for reference only: a click must NOT switch Spaces (that swaps
+            // away the very window hosting the form). Hover still shows the
+            // pip's info card — see `isHoverCardPresented`. Guarding the action
+            // (rather than `.disabled`) keeps `.onHover` live so the card works.
+            guard !slot.isCreatingSpace else { return }
             // A click means "switch", not "hover": drop this pip's hover card
             // and keep it down — across the window swap, in the target Space
             // window's strip too — until the pointer leaves the pip. Without
@@ -554,13 +560,15 @@ struct SpacesStripView: View {
     }
 
     /// A pip's hover card shows while it (and only it) is hovered, and never
-    /// during a reorder drag, while its icon picker is open, while the
-    /// Create-a-Space overlay covers the strip, or while the pip is
+    /// during a reorder drag, while its icon picker is open, or while the pip is
     /// click-suppressed (the user just clicked it to switch Spaces) — so the
-    /// card doesn't trail the cursor, fight the picker, linger over the form,
-    /// or blink back after a switch. `.onHover` drives `hoveredSpaceId`.
+    /// card doesn't trail the cursor, fight the picker, or blink back after a
+    /// switch. It DOES show while the Create-a-Space overlay is open: the strip
+    /// stays visible beside the form there and its clicks are disabled, so the
+    /// hover card is the only way to read a pip's info. `.onHover` drives
+    /// `hoveredSpaceId`.
     private func isHoverCardPresented(for space: SpaceModel) -> Bool {
-        hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil && !slot.isCreatingSpace
+        hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil
             && slot.hoverCardSuppressedSpaceId != space.spaceId
     }
 
@@ -916,7 +924,14 @@ private struct SpacePickerPopup: View {
                         SpacePickerRow(
                             space: space,
                             isActive: space.spaceId == slot.activeSpaceId,
-                            isDeletable: space.spaceId != LocalStore.defaultSpaceId,
+                            // Neither the default Space nor the built-in
+                            // Incognito Space can be deleted, and the
+                            // Incognito Space's name is fixed (toggle it off
+                            // in Spaces settings instead). Icon and theme
+                            // remain user-changeable for it.
+                            isDeletable: space.spaceId != LocalStore.defaultSpaceId
+                                && space.spaceId != SpaceManager.incognitoSpaceId,
+                            isRenamable: space.spaceId != SpaceManager.incognitoSpaceId,
                             tint: iconColor(for: space),
                             profileName: profileDisplayName(for: space.profileId),
                             onActivate: { onActivate(space.spaceId) },
@@ -1171,6 +1186,11 @@ private struct SpacePickerRow: View {
     let space: SpaceModel
     let isActive: Bool
     let isDeletable: Bool
+    /// False for the built-in Incognito Space, whose NAME is fixed (a rename
+    /// would be a silent store no-op on its sentinel id). Icon and theme stay
+    /// editable everywhere — `SpaceManager.changeIcon`/`setTheme` persist the
+    /// sentinel's choices outside SwiftData.
+    var isRenamable: Bool = true
     let tint: Color
     let profileName: String
     let onActivate: () -> Void
@@ -1233,7 +1253,9 @@ private struct SpacePickerRow: View {
             )
         }
         .contextMenu {
-            Button(NSLocalizedString("Rename\u{2026}", comment: "")) { onRename() }
+            if isRenamable {
+                Button(NSLocalizedString("Rename\u{2026}", comment: "")) { onRename() }
+            }
             Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
                 showsIconPicker = true
             }

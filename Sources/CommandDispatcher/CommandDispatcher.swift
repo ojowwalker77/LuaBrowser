@@ -33,6 +33,7 @@ struct CommandDispatcher {
         .PHI_SELECT_NEXT_SPACE,
         .PHI_SELECT_PREVIOUS_SPACE,
         .PHI_FARRINGDON_TOGGLE,
+        .PHI_COPY_URL,
     ] + CommandWrapper.spaceSelectionCommands
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -142,9 +143,16 @@ struct CommandDispatcher {
         case .PHI_SELECT_PREVIOUS_SPACE:
             return activateSpace(by: -1, from: windowController)
         case .PHI_FARRINGDON_TOGGLE:
-            // AI off → Kensington isn't running; let the key fall through.
-            guard PhiPreferences.AISettings.phiAIEnabled.loadValue() else { return false }
+            guard FarringdonOrganizer.canOrganizeTabs(in: windowController.browserState) else {
+                return false
+            }
             FarringdonOrganizer.organizeFocusedWindow()
+            return true
+        case .PHI_COPY_URL:
+            let state = windowController.browserState
+            let copiedURLCount = state.selectedTabCountForURLCopy
+            guard state.copySelectedTabURLs() else { return false }
+            OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
             return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }
@@ -159,6 +167,14 @@ struct CommandDispatcher {
             windowController.showFeedbackWindow()
             return true
         case .IDC_IMPORT_SETTINGS:
+            // Import targets the active Space's profile; off-the-record
+            // windows (standalone incognito and the Incognito Space) have
+            // no importable profile — tell the user instead of opening the
+            // import window.
+            guard !windowController.browserState.isIncognito else {
+                windowController.presentImportUnavailableInIncognitoAlert()
+                return true
+            }
             windowController.showImportDataWindow()
             return true
         case .IDC_BOOKMARK_THIS_TAB:

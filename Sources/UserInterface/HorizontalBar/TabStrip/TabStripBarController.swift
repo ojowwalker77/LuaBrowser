@@ -257,6 +257,7 @@ final class TabStripBarController: NSViewController {
     private func setupUI() {
         let rightButtons = TabStripRightButtons(
             cardManager: NotificationCardManager.shared,
+            browserState: browserState,
             onCardEntryTap: { [weak self] in
                 self?.handleCardEntryTap()
             },
@@ -360,11 +361,13 @@ final class TabStripBarController: NSViewController {
     /// strip starts right after it. When the feature is off the picker
     /// collapses to zero width and the tab strip reclaims the leading inset.
     /// Whether the active-Space picker should appear in this window: the master
-    /// Spaces flag must be on AND the window must not be Incognito. Off-the-record
-    /// sessions are a single ephemeral context with no Spaces, so the chip and its
-    /// swipe-to-switch gesture are suppressed (mirroring the sidebar layout).
+    /// Spaces flag must be on AND the window must participate in Spaces.
+    /// Standalone incognito windows are a single ephemeral context with no
+    /// Spaces, so the chip and its swipe-to-switch gesture are suppressed
+    /// (mirroring the sidebar layout); the Incognito Space's window IS
+    /// a Space and keeps the picker so the user can switch back.
     private var spacesPickerEligible: Bool {
-        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() && !browserState.isIncognito
+        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() && browserState.participatesInSpaces
     }
 
     private func applySpacesPickerVisibility() {
@@ -429,7 +432,7 @@ final class TabStripBarController: NSViewController {
             }
             .store(in: &cancellables)
     }
-    
+
     // MARK: - Card Entry Handling
 
     /// Shows the notification card entry in the legacy overlay container.

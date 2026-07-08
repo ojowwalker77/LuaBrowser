@@ -177,6 +177,10 @@ extension AppController {
                 }
             } else
             
+            if menuItem.title == "Edit", let subMenu = menuItem.submenu {
+                installOrUpdateCopyURLMenuItem(in: subMenu)
+            } else
+
             if menuItem.title == "File", let subMenu = menuItem.submenu {
                 subMenu.items.forEach { item in
                     if item.tag == CommandWrapper.IDC_SAVE_PAGE.rawValue {
@@ -375,7 +379,7 @@ extension AppController {
     private func configureBookmarksMenuItem(_ menuItem: NSMenuItem) {
         menuItem.title = NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar")
         menuItem.tag = AppController.bookmarksMenuItemTag
-        menuItem.isHidden = false
+        menuItem.isHidden = isActiveWindowIncognito()
 
         let submenu = menuItem.submenu ?? NSMenu(title: menuItem.title)
         submenu.identifier = AppController.bookmarksMenuIdentifier
@@ -455,6 +459,18 @@ extension AppController {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.isIncognito == true
     }
 
+    /// Re-evaluates the menu-bar "Bookmarks" top-level item's visibility
+    /// against the focused window. Called when the active window changes (see
+    /// `.activeBrowserWindowDidChange`) so the menu drops out for off-the-record
+    /// windows — standalone incognito and the Incognito Space — and returns
+    /// for normal ones. Mirrors `refreshSpacesMenuVisibility`.
+    @objc func refreshBookmarksMenuVisibility() {
+        guard let item = NSApp.mainMenu?.items.first(where: {
+            $0.tag == AppController.bookmarksMenuItemTag
+        }) else { return }
+        item.isHidden = isActiveWindowIncognito()
+    }
+
     private func canBookmarkCurrentTab() -> Bool {
         guard !isActiveWindowIncognito() else { return false }
         guard let state = MainBrowserWindowControllersManager.shared
@@ -473,6 +489,26 @@ extension AppController {
         let bookmarkableTabsCount = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.normalTabs.filter { !$0.isLocalPage }.count ?? 0
         return bookmarkableTabsCount > 1
     }
+
+    private func installOrUpdateCopyURLMenuItem(in menu: NSMenu) {
+        menu.items.removeAll { $0.tag == CommandWrapper.PHI_COPY_URL.rawValue }
+
+        let item = NSMenuItem(
+            title: NSLocalizedString("Copy URL", comment: "Edit menu - Copy the selected tab URL to the clipboard"),
+            action: #selector(copySelectedTabURLs(_:)),
+            keyEquivalent: ""
+        )
+        applyEffectiveShortcut(.PHI_COPY_URL, to: item)
+        item.target = self
+
+        if let copyIndex = menu.items.firstIndex(where: {
+            $0.tag == CommandWrapper.IDC_CONTENT_CONTEXT_COPY.rawValue || $0.title == "Copy"
+        }) {
+            menu.insertItem(item, at: copyIndex + 1)
+        } else {
+            menu.addItem(item)
+        }
+    }
     
     @objc func toggleSidebar(_ sender: Any?) {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleSidebar()
@@ -480,6 +516,18 @@ extension AppController {
     
     @objc func toggleChatbar(_ sendar: Any?) {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleAIChat()
+    }
+
+    @MainActor
+    @objc func copySelectedTabURLs(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
+            return
+        }
+        let copiedURLCount = state.selectedTabCountForURLCopy
+        guard state.copySelectedTabURLs() else {
+            return
+        }
+        OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
     }
 
     /// Starts a new AI conversation in the focused tab's sidebar.
@@ -779,12 +827,17 @@ extension AppController {
     // MARK: - Spaces top-level menu
 
     /// Whether the menu-bar "Spaces" top-level menu should be visible. Hidden
-    /// when the Spaces feature is off, and hidden when the focused window is
-    /// incognito — incognito windows expose no Spaces, matching the suppressed
-    /// sidebar strip and the off-the-record "Open Link In Space" menu.
+    /// when the Spaces feature is off, and hidden when the focused window
+    /// doesn't participate in Spaces — standalone incognito windows expose no
+    /// Spaces, matching the suppressed sidebar strip and the off-the-record
+    /// "Open Link In Space" menu. The Incognito Space's window IS a
+    /// Space, so the menu stays (its mutating items are disabled separately
+    /// in `validateUserInterfaceItem`). `!= false` keeps the no-window case
+    /// showing the menu, as before.
     private var shouldShowSpacesMenu: Bool {
         PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-            && !isActiveWindowIncognito()
+            && MainBrowserWindowControllersManager.shared
+                .activeWindowController?.browserState.participatesInSpaces != false
     }
 
     /// Re-evaluates the menu-bar "Spaces" top-level item's visibility against
@@ -898,6 +951,21 @@ extension AppController {
         )
         deleteSpaceItem.target = self
         menu.addItem(deleteSpaceItem)
+
+        // The Incognito Space's own action: close its windows, which ends
+        // (and clears) the private session without touching the feature
+        // toggle. Appended only while it IS the active Space — this builder
+        // runs on every menu open, so the conditional presence stays fresh.
+        if activeSpace?.spaceId == SpaceManager.incognitoSpaceId {
+            menu.addItem(.separator())
+            let closeSpaceItem = NSMenuItem(
+                title: NSLocalizedString("Close Space", comment: "Spaces menu - close the Incognito Space's windows and clear the private session"),
+                action: #selector(closeIncognitoSpaceFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            closeSpaceItem.target = self
+            menu.addItem(closeSpaceItem)
+        }
     }
 
     /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
@@ -1305,6 +1373,20 @@ extension AppController {
         SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
     }
 
+    /// Closes the Incognito Space's windows across all slots — ending, and
+    /// thereby clearing, its private session — while leaving the feature
+    /// enabled so the pip stays in the strip. No confirmation, matching how
+    /// closing a window never prompts. Reachable only while the Incognito
+    /// Space is active (`appendActiveSpaceMenuItems` gates the item).
+    @objc func closeIncognitoSpaceFromMenu(_ sender: Any?) {
+        // Menu actions always arrive on the main thread; assume isolation
+        // rather than annotating the @objc selector (same pattern as
+        // SpaceManager.applyTheme).
+        MainActor.assumeIsolated {
+            SpaceManager.shared.closeIncognitoSpaceWindows()
+        }
+    }
+
     @objc func activateNextSpace(_ sender: Any?) {
         cycleActiveSpace(by: 1)
     }
@@ -1525,6 +1607,7 @@ extension AppController {
             #selector(selectSpaceTheme(_:)),
             #selector(selectSpaceProfile(_:)),
             #selector(deleteActiveSpace(_:)),
+            #selector(closeIncognitoSpaceFromMenu(_:)),
             #selector(activateNextSpace(_:)),
             #selector(activatePreviousSpace(_:)),
             #selector(activateSpaceFromMenu(_:)),
@@ -1532,6 +1615,22 @@ extension AppController {
         ]
         if let action = item.action, spacesActions.contains(action) {
             guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
+            // The built-in Incognito Space's name, profile binding and
+            // existence are fixed: rename would be a silent store no-op on
+            // its sentinel id, its OTR profile can't be re-bound, and the
+            // Space is removed via its settings toggle, not delete. Icon and
+            // theme stay enabled — `changeIcon`/`setTheme` persist the
+            // sentinel's choices outside SwiftData. Navigation and the rules
+            // editor stay available too.
+            let mutatingSpaceActions: [Selector] = [
+                #selector(renameActiveSpace(_:)),
+                #selector(selectSpaceProfile(_:)),
+                #selector(deleteActiveSpace(_:)),
+            ]
+            if mutatingSpaceActions.contains(action),
+               currentActiveSpace()?.spaceId == SpaceManager.incognitoSpaceId {
+                return false
+            }
             if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
                 return currentActiveSpace() != nil
             }
@@ -1575,6 +1674,17 @@ extension AppController {
                 return currentSpacesSlot() != nil
             }
             return true
+        }
+        if item.action == #selector(copySelectedTabURLs(_:)) {
+            guard let state = MainBrowserWindowControllersManager.shared.getActiveWindowState() else {
+                return false
+            }
+            if let menuItem = item as? NSMenuItem {
+                menuItem.title = state.selectedTabCountForURLCopy > 1
+                    ? NSLocalizedString("Copy URLs", comment: "Edit menu - Copy the selected tab URLs to the clipboard")
+                    : NSLocalizedString("Copy URL", comment: "Edit menu - Copy the selected tab URL to the clipboard")
+            }
+            return state.hasCopyableSelectedTabURLs
         }
         if item.action == #selector(bookmarkThisTab(_:)) {
             return canBookmarkCurrentTab()

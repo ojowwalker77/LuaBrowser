@@ -48,6 +48,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
     
     private weak var avatarWindowController: AccountWebWindowController?
     private var cancellables = Set<AnyCancellable>()
+    private var settingsWindowCloseObserver: NSObjectProtocol?
 
     private var avatarEditURL: String {
         #if DEBUG
@@ -77,6 +78,12 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         super.init(coder: coder)
     }
 
+    deinit {
+        if let settingsWindowCloseObserver {
+            NotificationCenter.default.removeObserver(settingsWindowCloseObserver)
+        }
+    }
+
     override func loadView() {
         view = NSView()
         view.wantsLayer = true
@@ -92,6 +99,10 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         bindViewModel()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        registerSettingsWindowCloseObserverIfNeeded()
+    }
 
     override func viewWillAppear() {
         super.viewWillAppear()
@@ -253,6 +264,23 @@ class AccountSettingViewController: NSViewController, SettingsPane {
             isVisible: AuthManager.shared.requiresReauthentication
         )
     }
+
+    private func registerSettingsWindowCloseObserverIfNeeded() {
+        guard settingsWindowCloseObserver == nil,
+              let window = view.window else {
+            return
+        }
+
+        settingsWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.accountViewModel.cancelOngoingLogoutSession(reason: "settings_window_closed")
+            }
+        }
+    }
 }
 
 
@@ -320,13 +348,19 @@ class DefaultBrowserViewModel: ObservableObject {
 }
 
 class AccountViewModel: ObservableObject {
+    private static let logoutTimeoutSeconds = 90
+
     @Published var userName: String = ""
     @Published var userEmail: String = ""
     @Published var avatarURL: String = ""
     @Published var isLoading: Bool = true
     @Published var canEditUserName: Bool = false
+    @Published var isLogoutInProgress: Bool = false
 
     var cancellables = Set<AnyCancellable>()
+    private var activeLogoutAttemptID: UUID?
+    private var logoutTimeoutWorkItem: DispatchWorkItem?
+    private var cancelledLogoutAttemptIDs = Set<UUID>()
     
     /// Loads the cached profile from user defaults.
     private func loadCachedProfile() -> Profile? {
@@ -420,6 +454,11 @@ class AccountViewModel: ObservableObject {
     @MainActor
     func logout() async {
         AppLogDebug("🚪 [Logout] Starting logout flow")
+
+        guard !isLogoutInProgress else {
+            AppLogDebug("🚪 [Logout] Ignoring logout request while another logout is in progress")
+            return
+        }
         
         // Step 1: confirm logout.
         AppLogDebug("🚪 [Logout] Step 1: Showing confirmation dialog")
@@ -429,13 +468,26 @@ class AccountViewModel: ObservableObject {
         }
         
         AppLogDebug("🚪 [Logout] User confirmed logout, proceeding...")
+        let logoutAttemptID = UUID()
+        activeLogoutAttemptID = logoutAttemptID
+        isLogoutInProgress = true
+        armLogoutTimeout(for: logoutAttemptID)
         
         // Step 3: clear the Auth0 session and credentials.
         AppLogDebug("🚪 [Logout] Step 3: Clearing Auth0 session and credentials")
         let success = await AuthManager.shared.logOut()
+        let wasCancelled = finishLogoutAttempt(logoutAttemptID)
         guard success else {
+            if wasCancelled {
+                AppLogWarn("🚪 [Logout] Auth0 logout was cancelled")
+                return
+            }
             AppLogError("🚪 [Logout] Auth0 logout failed")
             showLogoutFailedAlert()
+            return
+        }
+        guard !wasCancelled else {
+            AppLogWarn("🚪 [Logout] Ignoring logout completion after cancellation")
             return
         }
         AppLogDebug("🚪 [Logout] Auth0 session cleared")
@@ -464,6 +516,46 @@ class AccountViewModel: ObservableObject {
         AppLogDebug("🚪 [Logout] Step 7: Showing login window for OOBE")
         LoginController.shared.showLoginWindow()
         AppLogDebug("🚪 [Logout] ✅ Logout flow completed successfully")
+    }
+
+    @MainActor
+    private func armLogoutTimeout(for attemptID: UUID) {
+        logoutTimeoutWorkItem?.cancel()
+        let timeoutWorkItem = DispatchWorkItem { [weak self] in
+            guard let self, self.activeLogoutAttemptID == attemptID else { return }
+            AppLogWarn("🚪 [Logout] Auth0 logout timed out after \(Self.logoutTimeoutSeconds)s")
+            self.cancelOngoingLogoutSession(reason: "timeout")
+        }
+        logoutTimeoutWorkItem = timeoutWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Self.logoutTimeoutSeconds), execute: timeoutWorkItem)
+    }
+
+    @MainActor
+    func cancelOngoingLogoutSession(reason: String) {
+        guard let attemptID = activeLogoutAttemptID else {
+            return
+        }
+
+        AppLogDebug("🚪 [Logout] Cancelling pending logout session reason=\(reason)")
+        cancelledLogoutAttemptIDs.insert(attemptID)
+        logoutTimeoutWorkItem?.cancel()
+        logoutTimeoutWorkItem = nil
+        activeLogoutAttemptID = nil
+        isLogoutInProgress = false
+        AuthManager.shared.cancelOngoingWebAuthentication()
+    }
+
+    @MainActor
+    private func finishLogoutAttempt(_ attemptID: UUID) -> Bool {
+        let wasCancelled = cancelledLogoutAttemptIDs.remove(attemptID) != nil
+        guard activeLogoutAttemptID == attemptID else {
+            return wasCancelled
+        }
+        logoutTimeoutWorkItem?.cancel()
+        logoutTimeoutWorkItem = nil
+        activeLogoutAttemptID = nil
+        isLogoutInProgress = false
+        return wasCancelled
     }
 
     func updateUserName(_ newName: String) async {
@@ -818,6 +910,22 @@ class AccountCardView: SettingItemBackgroundView {
         return tf
     }()
 
+    private let logoutStatusLabel: NSTextField = {
+        let tf = NSTextField(labelWithString: NSLocalizedString(
+            "Confirm logout in the opened browser.",
+            comment: "Account settings - Status shown while waiting for logout to finish"
+        ))
+        tf.font = .systemFont(ofSize: 11, weight: .medium)
+        tf.textColor = .secondaryLabelColor
+        tf.lineBreakMode = .byTruncatingTail
+        tf.maximumNumberOfLines = 1
+        tf.isEditable = false
+        tf.isBordered = false
+        tf.drawsBackground = false
+        tf.isHidden = true
+        return tf
+    }()
+
     private let logoutButton: NSButton = {
         let btn = NSButton()
         btn.title = NSLocalizedString("Logout", comment: "Account settings - Logout button")
@@ -845,6 +953,7 @@ class AccountCardView: SettingItemBackgroundView {
     private var isNameHovered = false
     private var canEdit = false
     private var showsReauthenticationWarning = false
+    private var isLogoutInProgress = false
     private var avatarRevalidateTask: DownloadTask?
 
     private static let maxUserNameLength = 100
@@ -956,6 +1065,14 @@ class AccountCardView: SettingItemBackgroundView {
             make.right.lessThanOrEqualTo(logoutButton.snp.left).offset(-8)
         }
 
+        addSubview(logoutStatusLabel)
+        logoutStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        logoutStatusLabel.snp.makeConstraints { make in
+            make.left.equalTo(emailLabel)
+            make.top.equalTo(emailLabel.snp.bottom).offset(2)
+            make.right.lessThanOrEqualToSuperview().offset(-12)
+        }
+
         addSubview(reauthenticationWarningLabel)
         reauthenticationWarningLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         reauthenticationWarningLabel.snp.makeConstraints { make in
@@ -1043,6 +1160,13 @@ class AccountCardView: SettingItemBackgroundView {
                 self?.canEdit = canEdit
             }
             .store(in: &cancellables)
+
+        viewModel.$isLogoutInProgress
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isLogoutInProgress in
+                self?.updateLogoutButtonState(isLogoutInProgress)
+            }
+            .store(in: &cancellables)
     }
 
     private func updateLoadingState(_ isLoading: Bool) {
@@ -1052,6 +1176,7 @@ class AccountCardView: SettingItemBackgroundView {
             logoutButton.isHidden = true
             nameLabel.isHidden = true
             emailLabel.isHidden = true
+            logoutStatusLabel.isHidden = true
             reauthenticationWarningLabel.isHidden = true
         } else {
             loadingIndicator.stopAnimation(nil)
@@ -1059,13 +1184,26 @@ class AccountCardView: SettingItemBackgroundView {
             logoutButton.isHidden = false
             nameLabel.isHidden = false
             emailLabel.isHidden = false
-            reauthenticationWarningLabel.isHidden = !showsReauthenticationWarning
+            updateStatusLineVisibility()
         }
     }
 
     func updateReauthenticationWarning(isVisible: Bool) {
         showsReauthenticationWarning = isVisible
-        reauthenticationWarningLabel.isHidden = !isVisible || !loadingIndicator.isHidden
+        updateStatusLineVisibility()
+    }
+
+    private func updateLogoutButtonState(_ isInProgress: Bool) {
+        isLogoutInProgress = isInProgress
+        logoutButton.isEnabled = !isInProgress
+        logoutButton.alphaValue = isInProgress ? 0.5 : 1.0
+        updateStatusLineVisibility()
+    }
+
+    private func updateStatusLineVisibility() {
+        let isLoading = !loadingIndicator.isHidden
+        logoutStatusLabel.isHidden = isLoading || !isLogoutInProgress
+        reauthenticationWarningLabel.isHidden = isLoading || isLogoutInProgress || !showsReauthenticationWarning
     }
 
     // MARK: Avatar revalidation
@@ -1221,6 +1359,7 @@ class AccountCardView: SettingItemBackgroundView {
     // MARK: Logout
 
     @objc private func logoutTapped() {
+        guard !isLogoutInProgress else { return }
         logoutAction?()
     }
 }
