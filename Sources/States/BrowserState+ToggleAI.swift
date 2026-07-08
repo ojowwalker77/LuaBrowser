@@ -22,7 +22,7 @@ extension BrowserState {
                 await SentinelHelper.unregister()
             }
 
-            SentinelHelper.terminateAll()
+            SentinelHelper.requestTerminationForBrowserUpdate()
             closeAllAIContent()
         }
     }
