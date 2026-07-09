@@ -2206,7 +2206,10 @@ final class SpaceWindowSlot: ObservableObject {
     /// `unregisterWindow` to decide whether to switch to a sibling
     /// Space (tab-driven) or cascade-close every Space (window-driven,
     /// the default). Note ⌘W is intentionally NOT tagged: it is treated
-    /// as window-driven so it tears the whole slot down like ⇧⌘W.
+    /// as window-driven so it tears the whole slot down like ⇧⌘W —
+    /// except in the Incognito Space, whose ⌘W last-tab close IS tagged
+    /// (see `CommandDispatcher.IDC_CLOSE_TAB`) so it reads as "close the
+    /// Incognito Space", not as closing the user-perceived window.
     ///
     /// Stored as spaceId → expiration deadline rather than a plain
     /// set: when the dispatched `IDC_CLOSE_TAB` is vetoed (typically
@@ -4306,7 +4309,10 @@ final class SpaceWindowSlot: ObservableObject {
     /// about to drop to zero. ⌘W (`CommandDispatcher` IDC_CLOSE_TAB)
     /// deliberately does NOT call this: closing the last tab with ⌘W
     /// tears the whole slot down like ⇧⌘W instead of switching to a
-    /// sibling Space.
+    /// sibling Space. The Incognito Space is the one exception — its
+    /// ⌘W last-tab close is tagged too, so it ends the incognito
+    /// session and retreats to a sibling instead of taking the whole
+    /// user-perceived window with it.
     func markTabDrivenClose(for spaceId: String) {
         pendingTabDrivenCloseDeadlines[spaceId] = Date().addingTimeInterval(Self.tabDrivenCloseTTL)
         // Capture the closing window's pixels now, while the WebContents
