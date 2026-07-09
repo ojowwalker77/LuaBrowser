@@ -8,6 +8,24 @@ import SnapKit
 import SwiftUI
 import Combine
 
+private final class SidebarSpacesStripHostingView: ThemedHostingView {
+    // Native AppKit tab groups can temporarily adjust titlebar/safe-area metrics
+    // while their NSTabView/NSTabBar accessory is created or hidden. The Space
+    // row is already positioned by SidebarHeaderView's fixed constraints, so its
+    // SwiftUI content should ignore those transient safe-area changes.
+    override var safeAreaInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+
+    override var safeAreaRect: NSRect {
+        bounds
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+}
+
 class SidebarViewController: NSViewController {
     private static let defaultFavoriteHeight: CGFloat = 0
     private static let pinnedHeightPersistenceThreshold: CGFloat = 20
@@ -122,8 +140,8 @@ class SidebarViewController: NSViewController {
         ?? SpaceManager.shared.keySlot
         ?? SpaceManager.shared.createSlot(initialSpaceId: nil)
 
-    private lazy var spacesStripHostingController: ThemedHostingController<SpacesStripView> = {
-        let hostingController = ThemedHostingController(
+    private lazy var spacesStripHostingView: SidebarSpacesStripHostingView = {
+        let hostingView = SidebarSpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
                 slot: spacesStripSlot,
@@ -133,10 +151,10 @@ class SidebarViewController: NSViewController {
             themeSource: state.themeContext
         )
         if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = [.intrinsicContentSize]
+            hostingView.sizingOptions = []
         }
-        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-        return hostingController
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        return hostingView
     }()
 
     /// The Spaces strip row's AppKit view, resolved live by the slot's
@@ -415,9 +433,8 @@ class SidebarViewController: NSViewController {
         // Incognito Space's window DOES mount the strip — it lives in a
         // slot and the strip is how the user switches back out of it.
         if state.participatesInSpaces {
-            addChild(spacesStripHostingController)
-            headerView.mountSpaceSwitch(spacesStripHostingController.view)
-            spacesStripRowView = spacesStripHostingController.view
+            headerView.mountSpaceSwitch(spacesStripHostingView)
+            spacesStripRowView = spacesStripHostingView
         }
 
         mainStackView.addArrangedSubview(tabList.view)
@@ -707,7 +724,7 @@ class SidebarViewController: NSViewController {
     /// header layout is untouched. No-op in Incognito, which mounts no strip.
     func setSpacesStripHidden(_ hidden: Bool) {
         guard state.participatesInSpaces else { return }
-        spacesStripHostingController.view.alphaValue = hidden ? 0 : 1
+        spacesStripHostingView.alphaValue = hidden ? 0 : 1
     }
 
     private func shouldActivateSidebarContent() -> Bool { state.layoutMode != .comfortable }

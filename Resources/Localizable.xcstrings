@@ -329,6 +329,9 @@
     "Browser data" : {
       "comment" : "Import browser data page - Page title"
     },
+    "Browser data can't be imported into Incognito. Switch to a regular Space or window, then try again." : {
+      "comment" : "Import browser data - Alert body explaining import is unavailable off-the-record"
+    },
     "Browser memory" : {
       "comment" : "AI settings - Section title for browser memory management"
     },
@@ -346,6 +349,9 @@
     },
     "Can’t delete this Space yet" : {
       "comment" : "Title shown when deleting a Space is blocked by an in-progress import"
+    },
+    "Can't Import Browser Data" : {
+      "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
     },
     "Cancel" : {
       "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
