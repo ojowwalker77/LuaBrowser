@@ -107,6 +107,7 @@ import PostHog
         }
         if PhiPreferences.AISettings.phiAIEnabled.loadValue() {
             SentinelHelper.launch()
+            SentinelWatchdog.shared.start()
         }
         Task.detached(priority: .utility) {
             await SentinelVersionGuard.shared.runStartupCheck()
