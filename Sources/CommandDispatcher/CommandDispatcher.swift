@@ -110,6 +110,9 @@ struct CommandDispatcher {
             }
             return false
         case .IDC_CLOSE_TAB:
+            if windowController.handleCloseTab() {
+                return true
+            }
             // ⌘W closing the last tab in a Space tears the whole window
             // slot down — same as ⇧⌘W / the red ✕ — rather than switching
             // to a sibling Space. It therefore deliberately does NOT tag
@@ -117,7 +120,20 @@ struct CommandDispatcher {
             // `Tab.close()`, still does): an untagged close reaches
             // `unregisterWindow` as window-driven and cascades every
             // remaining Space in the slot shut.
-            return windowController.handleCloseTab()
+            //
+            // The INCOGNITO Space is the exception: it is an ephemeral
+            // session inside the slot, not a user-perceived window of its
+            // own, so ⌘W on its last tab must read as "close the Incognito
+            // Space" — retreat to a sibling Space and close only the
+            // incognito window (closing the last one is what makes Chromium
+            // destroy the OTR profile) — never as tearing the whole slot
+            // down. Tagging the close routes `unregisterWindow` into the
+            // same switch-to-sibling branch the tab-row ✕ takes.
+            let state = windowController.browserState
+            if state.isIncognitoSpace, state.tabs.count <= 1 {
+                windowController.slot?.markTabDrivenClose(for: windowController.spaceId)
+            }
+            return false
         case .IDC_FOCUS_LOCATION:
             windowController.openLocationBar(nil)
             return true
