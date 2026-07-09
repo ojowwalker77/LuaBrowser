@@ -219,7 +219,7 @@ enum SentinelHelper {
         )
     }
 
-    private static func loginItemIdentifier() -> String {
+    static func loginItemIdentifier() -> String {
         let mainBundleID = Bundle.main.bundleIdentifier?.lowercased() ?? ""
         if mainBundleID.contains("canary") {
             return "com.phibrowser.canary.Sentinel"
