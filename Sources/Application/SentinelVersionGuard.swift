@@ -52,6 +52,9 @@ final class SentinelVersionGuard {
     /// Seconds to wait between confirming whether Sentinel adopted the expected version.
     private let confirmInterval: TimeInterval
     /// Maximum number of confirm-and-re-post cycles before giving up on convergence.
+    /// The total budget (interval × retries) must cover Sentinel's worst-case relaunch:
+    /// its runner stop allows a 45s SIGTERM grace before the new instance comes up, so
+    /// a short budget would emit false "did not converge" warnings on healthy relaunches.
     private let maxConfirmationRetries: Int
 
     private let lastMismatchKeyDefaultsKey = "SentinelVersionGuard.lastMismatchKey"
@@ -79,8 +82,8 @@ final class SentinelVersionGuard {
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
         },
-        confirmInterval: TimeInterval = 3,
-        maxConfirmationRetries: Int = 3
+        confirmInterval: TimeInterval = 5,
+        maxConfirmationRetries: Int = 10
     ) {
         self.userDefaults = userDefaults
         self.cooldown = cooldown
@@ -116,14 +119,29 @@ final class SentinelVersionGuard {
     /// After a restart request, waits for the running Sentinel to report the expected
     /// version. Re-posts the request on each unconverged check, up to
     /// `maxConfirmationRetries` times, then logs a warning if convergence never happened.
+    ///
+    /// Two distinct "no version" states must not be conflated (`SentinelHelper.runningInfo`):
+    /// a `nil` info means the *process is gone* — nothing will bring Sentinel back until
+    /// the next browser launch, so launch it (mirroring `evaluateCurrentState`'s
+    /// `.launchSentinel`); an info with a `nil`/empty version means the process is up but
+    /// has not (re)written its runtime-info file yet — the expected transient window in
+    /// the middle of a self-relaunch, so keep waiting.
     private func confirmConvergence(_ snapshot: SentinelVersionGuardSnapshot) async {
         for attempt in 1...maxConfirmationRetries {
             await sleep(confirmInterval)
 
-            guard let info = sentinelInfoProvider(snapshot.sentinelBundleID),
-                  let running = info.version, !running.isEmpty else {
-                logger("convergence check: Sentinel not reporting a version; stopping confirmation")
+            guard let info = sentinelInfoProvider(snapshot.sentinelBundleID) else {
+                // Process gone (relaunch failed, or it exited and nothing respawned it).
+                // Launching a duplicate is safe: Sentinel's single-instance guard makes
+                // the loser abort, and ensureRunning no-ops if it is already back up.
+                logger("convergence check: Sentinel is not running; launching it")
+                sentinelLauncher()
                 return
+            }
+
+            guard let running = info.version, !running.isEmpty else {
+                logger("convergence check: Sentinel running but not reporting a version yet (\(attempt)/\(maxConfirmationRetries))")
+                continue
             }
 
             if running == snapshot.browserVersion {
