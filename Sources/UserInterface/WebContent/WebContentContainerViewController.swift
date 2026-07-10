@@ -203,6 +203,11 @@ class WebContentContainerViewController: NSViewController {
     var floatingSidebarEnableWorkItem: DispatchWorkItem?
     var floatingSidebarLastShownAt: Date?
     var floatingSidebarShownFromRightToLeft = false
+    /// Hides the panel when its window leaves the screen (a Space switch
+    /// orders the leaving window out with its panel still up) — without
+    /// this the stale panel would greet the user when that window next
+    /// surfaces. See `ensureFloatingSidebarOcclusionObserver`.
+    var floatingSidebarOcclusionObserver: NSObjectProtocol?
     var isPointerInsideFloatingSidebar = false
     var isPointerInsideFloatingSidebarTrigger = false
     /// Tracks the last non-zero sidebar width so the floating panel can match it after collapse.
@@ -222,6 +227,9 @@ class WebContentContainerViewController: NSViewController {
     deinit {
         if let hostController = sharedBookmarkBarHostController {
             hostController.detachBookmarkBarIfAttached()
+        }
+        if let observer = floatingSidebarOcclusionObserver {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
     
@@ -867,6 +875,35 @@ class WebContentContainerViewController: NSViewController {
         }
     }
     
+    /// Resolve the controller owning `tab`'s content WITHOUT the
+    /// `updateAssociatedTab` side effects of the focus-switch path. Used by a
+    /// focused split pane's controller to borrow its PARTNER pane's content
+    /// view — the native incognito NTP view is owned by the partner tab's
+    /// controller, unlike `Tab.webContentView` which lives on the Tab itself.
+    ///
+    /// MUST stay side-effect-free with respect to mounting: it is called from
+    /// inside `installSplitContent`, and running `updateAssociatedTab` here
+    /// re-enters the partner's own mount path — with two native-NTP panes the
+    /// two controllers then remount each other forever (stack overflow).
+    /// Creating a missing controller is safe (init only stores the tab); the
+    /// cascade lives in `updateAssociatedTab`, which this never calls.
+    /// Deliberately does not read `currentWebContentController` (see the NB
+    /// in `switchToWebContentController` about lookups reachable from
+    /// `refreshContentForCurrentTab`).
+    func splitPaneCompanionController(for tab: Tab) -> WebContentViewController? {
+        guard let state = browserState else { return nil }
+        let identifier = state.getTabIdentifier(for: tab)
+        if let existing = webContentControllers[identifier] {
+            return existing
+        }
+        if let byGuid = webContentControllers.first(where: { $0.value.associatedTab?.guid == tab.guid })?.value {
+            return byGuid
+        }
+        let controller = WebContentViewController(state: state, tab: tab)
+        webContentControllers[identifier] = controller
+        return controller
+    }
+
     private func getOrCreateWebContentController(for tab: Tab, identifier: String) -> WebContentViewController {
         // Return existing controller if available
         if let existing = webContentControllers[identifier] {

@@ -16,12 +16,16 @@ extension BrowserState {
         if enabled {
             UserDefaults.standard.set(true, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
             updateSentinelRegistration(sentinelOnLogin)
+            MainActor.assumeIsolated { SentinelWatchdog.shared.start() }
         } else {
             UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
             Task {
                 await SentinelHelper.unregister()
             }
 
+            // Stop the watchdog BEFORE requesting termination so it does not
+            // resurrect the Sentinel we are intentionally shutting down.
+            MainActor.assumeIsolated { SentinelWatchdog.shared.stop() }
             SentinelHelper.requestTerminationForBrowserUpdate()
             closeAllAIContent()
         }
