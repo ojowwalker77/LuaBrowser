@@ -480,9 +480,11 @@ extension AppController {
             bookmarks: bookmarks,
             canBookmarkCurrentTab: canBookmarkCurrentTab(),
             canBookmarkAllTabs: canBookmarkAllTabs(),
+            canExportBookmarks: canExportBookmarks(),
             target: self,
             bookmarkThisTabAction: #selector(bookmarkThisTab(_:)),
             bookmarkAllTabsAction: #selector(bookmarkAllTabs(_:)),
+            exportBookmarksAction: #selector(exportBookmarks(_:)),
             openBookmarkAction: #selector(openBookmarkMenuItem(_:))
         )
     }
@@ -520,6 +522,16 @@ extension AppController {
         guard !isActiveWindowIncognito() else { return false }
         let bookmarkableTabsCount = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.normalTabs.filter { !$0.isLocalPage }.count ?? 0
         return bookmarkableTabsCount > 1
+    }
+
+    /// Export is meaningful only when the active window's Space has at least
+    /// one bookmark. Incognito windows never load a bookmark tree, so the
+    /// empty-tree check disables them too.
+    private func canExportBookmarks() -> Bool {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
+            return false
+        }
+        return !state.bookmarkManager.rootFolder.children.isEmpty
     }
 
     private func installOrUpdateCopyURLMenuItem(in menu: NSMenu) {
@@ -641,6 +653,70 @@ extension AppController {
         }
 
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.openBookmark(bookmark)
+    }
+
+    /// Bookmark-export writes still running on the background queue, and
+    /// whether app termination is parked on them (`.terminateLater`).
+    /// Main-thread only.
+    static var inFlightBookmarkExportWrites = 0
+    static var bookmarkExportTerminationPending = false
+
+    /// Exports the active window's current Space's bookmark tree to a
+    /// Netscape-format HTML file. The system save panel handles the
+    /// same-name replace confirmation; the write is atomic so a mid-write
+    /// failure leaves any existing file intact.
+    @objc func exportBookmarks(_ sender: Any?) {
+        guard let windowController = MainBrowserWindowControllersManager.shared.activeWindowController,
+              let window = windowController.window else { return }
+        let state = windowController.browserState
+        guard !state.bookmarkManager.rootFolder.children.isEmpty else { return }
+
+        // Menu actions are dispatched on the main thread.
+        let spaceName = MainActor.assumeIsolated {
+            state.localStore.getAllSpaces()
+                .first { $0.spaceId == state.spaceId }?.name ?? "Default"
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = BookmarkHTMLExporter.defaultFilename(spaceName: spaceName,
+                                                                          date: Date())
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            // Read the tree at confirmation time, not when the sheet was
+            // presented — edits made while the panel was open must export.
+            let bookmarks = state.bookmarkManager.rootFolder.children
+            guard !bookmarks.isEmpty else { return }
+            // Serialize on the main thread (the Bookmark tree is main-thread
+            // state), but write off it — the destination may be a slow
+            // network or cloud volume and must not block the UI.
+            let html = BookmarkHTMLExporter.htmlDocument(for: bookmarks)
+            AppController.inFlightBookmarkExportWrites += 1
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Result { try Data(html.utf8).write(to: url, options: .atomic) }
+                DispatchQueue.main.async {
+                    AppController.inFlightBookmarkExportWrites -= 1
+                    // Resume termination before handling the result: when a
+                    // quit is parked on this write, a failure is deliberately
+                    // silent (log only) — quitting must not stay blocked on
+                    // an alert nobody will see.
+                    if AppController.bookmarkExportTerminationPending,
+                       AppController.inFlightBookmarkExportWrites == 0 {
+                        AppController.bookmarkExportTerminationPending = false
+                        NSApp.reply(toApplicationShouldTerminate: true)
+                    }
+                    if case .failure(let error) = result {
+                        AppLogError("Bookmark export failed: \(error.localizedDescription)")
+                        let alert = NSAlert()
+                        alert.alertStyle = .critical
+                        alert.messageText = NSLocalizedString("Could Not Export Bookmarks", comment: "Export bookmarks failure alert - title shown when writing the exported HTML file fails")
+                        alert.informativeText = error.localizedDescription
+                        alert.beginSheetModal(for: window)
+                    }
+                }
+            }
+        }
     }
 
     @objc func selectLayoutMode(_ sender: Any?) {
@@ -1859,6 +1935,9 @@ extension AppController {
         }
         if item.action == #selector(bookmarkAllTabs(_:)) {
             return canBookmarkAllTabs()
+        }
+        if item.action == #selector(exportBookmarks(_:)) {
+            return canExportBookmarks()
         }
         if item.action == #selector(openBookmarkMenuItem(_:)) {
             guard let menuItem = item as? NSMenuItem,

@@ -28,7 +28,12 @@ class Bookmark: WebContentRepresentable {
     /// Whether the bookmark is currently in inline-edit mode.
     @Published var isEditing: Bool = false
     @Published var lastSeen: Date?
-    
+    /// Persisted creation/modification times, mirroring `TabDataModel`.
+    /// Not published — only read by the Netscape HTML export
+    /// (ADD_DATE / LAST_MODIFIED), never rendered.
+    var createdDate: Date?
+    var updatedDate: Date?
+
     let isFolder: Bool
     
     weak var parent: Bookmark?
@@ -52,6 +57,8 @@ class Bookmark: WebContentRepresentable {
          profileId: String? = nil,
          faviconData: Data? = nil,
          lastSeen: Date? = nil,
+         createdDate: Date? = nil,
+         updatedDate: Date? = nil,
          isFolder: Bool = false) {
         self.guid = guid
         self.profileId = profileId
@@ -61,6 +68,8 @@ class Bookmark: WebContentRepresentable {
         self.secondaryTitle = secondaryTitle
         self.cachedFaviconData = faviconData
         self.lastSeen = lastSeen
+        self.createdDate = createdDate
+        self.updatedDate = updatedDate
         self.isFolder = isFolder
     }
     
@@ -757,6 +766,8 @@ extension Bookmark {
                   profileId: model.profile?.profileId ?? model.profileId,
                   faviconData: model.favicon,
                   lastSeen: isFolder ? nil : model.lastSeen,
+                  createdDate: model.createdDate,
+                  updatedDate: model.updatedDate,
                   isFolder: isFolder)
     }
 
@@ -767,6 +778,8 @@ extension Bookmark {
         secondaryTitle = isFolder ? nil : model.secondaryTitle
         cachedFaviconData = model.favicon
         lastSeen = isFolder ? nil : model.lastSeen
+        createdDate = model.createdDate
+        updatedDate = model.updatedDate
     }
 
     private static func sidebarTitle(from model: TabDataModel) -> String {

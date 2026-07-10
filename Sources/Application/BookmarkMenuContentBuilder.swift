@@ -11,18 +11,22 @@ struct BookmarkMenuContentBuilder {
     static func makeMenu(bookmarks: [Bookmark],
                          canBookmarkCurrentTab: Bool,
                          canBookmarkAllTabs: Bool,
+                         canExportBookmarks: Bool,
                          target: AnyObject,
                          bookmarkThisTabAction: Selector,
                          bookmarkAllTabsAction: Selector,
+                         exportBookmarksAction: Selector,
                          openBookmarkAction: Selector) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar"))
         populate(menu: menu,
                  bookmarks: bookmarks,
                  canBookmarkCurrentTab: canBookmarkCurrentTab,
                  canBookmarkAllTabs: canBookmarkAllTabs,
+                 canExportBookmarks: canExportBookmarks,
                  target: target,
                  bookmarkThisTabAction: bookmarkThisTabAction,
                  bookmarkAllTabsAction: bookmarkAllTabsAction,
+                 exportBookmarksAction: exportBookmarksAction,
                  openBookmarkAction: openBookmarkAction)
         return menu
     }
@@ -31,9 +35,11 @@ struct BookmarkMenuContentBuilder {
                          bookmarks: [Bookmark],
                          canBookmarkCurrentTab: Bool,
                          canBookmarkAllTabs: Bool,
+                         canExportBookmarks: Bool,
                          target: AnyObject,
                          bookmarkThisTabAction: Selector,
                          bookmarkAllTabsAction: Selector,
+                         exportBookmarksAction: Selector,
                          openBookmarkAction: Selector) {
         menu.removeAllItems()
 
@@ -60,6 +66,16 @@ struct BookmarkMenuContentBuilder {
         bookmarkAllTabsItem.target = target
         bookmarkAllTabsItem.isEnabled = canBookmarkAllTabs
         menu.addItem(bookmarkAllTabsItem)
+
+        menu.addItem(.separator())
+        let exportBookmarksItem = NSMenuItem(
+            title: NSLocalizedString("Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"),
+            action: exportBookmarksAction,
+            keyEquivalent: ""
+        )
+        exportBookmarksItem.target = target
+        exportBookmarksItem.isEnabled = canExportBookmarks
+        menu.addItem(exportBookmarksItem)
 
         guard !bookmarks.isEmpty else {
             return

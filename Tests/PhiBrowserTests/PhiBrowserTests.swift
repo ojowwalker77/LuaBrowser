@@ -161,9 +161,11 @@ final class PhiBrowserTests: XCTestCase {
             bookmarks: [rootBookmark, folder],
             canBookmarkCurrentTab: true,
             canBookmarkAllTabs: true,
+            canExportBookmarks: true,
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
 
@@ -182,7 +184,12 @@ final class PhiBrowserTests: XCTestCase {
             "The Bookmarks menu should enable the Bookmark This Tab item when the active window has a focusable tab URL."
         )
         XCTAssertTrue(menu.items.dropFirst(2).first?.isSeparatorItem == true)
-        XCTAssertEqual(menu.items.dropFirst(3).map(\.title), ["Phi", "Favorites"])
+        XCTAssertEqual(
+            menu.items.dropFirst(3).first?.title,
+            NSLocalizedString("Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file")
+        )
+        XCTAssertTrue(menu.items.dropFirst(4).first?.isSeparatorItem == true)
+        XCTAssertEqual(menu.items.dropFirst(5).map(\.title), ["Phi", "Favorites"])
         XCTAssertEqual(menu.items.last?.submenu?.items.map(\.title), ["Docs"])
     }
 
@@ -193,9 +200,11 @@ final class PhiBrowserTests: XCTestCase {
             bookmarks: [],
             canBookmarkCurrentTab: false,
             canBookmarkAllTabs: false,
+            canExportBookmarks: false,
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
 
@@ -207,7 +216,11 @@ final class PhiBrowserTests: XCTestCase {
             menu.items.dropFirst().first?.isEnabled == true,
             "The Bookmarks menu should disable the Bookmark All Tabs item when the active window does not have more than one bookmarkable open tab."
         )
-        XCTAssertEqual(menu.items.count, 2)
+        XCTAssertFalse(
+            menu.items.dropFirst(3).first?.isEnabled == true,
+            "The Bookmarks menu should disable the Export Bookmarks item when the current Space has no bookmarks to export."
+        )
+        XCTAssertEqual(menu.items.count, 4)
     }
 
     func testBookmarkMenuContentBuilderShowsDisabledEmptyItemForEmptyFolders() {
@@ -218,13 +231,15 @@ final class PhiBrowserTests: XCTestCase {
             bookmarks: [emptyFolder],
             canBookmarkCurrentTab: true,
             canBookmarkAllTabs: true,
+            canExportBookmarks: true,
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
 
-        let folderItem = menu.items[3]
+        let folderItem = menu.items[5]
         let emptyItem = try? XCTUnwrap(folderItem.submenu?.items.first)
 
         XCTAssertEqual(folderItem.title, "Empty Folder")
@@ -245,9 +260,11 @@ final class PhiBrowserTests: XCTestCase {
             bookmarks: [],
             canBookmarkCurrentTab: true,
             canBookmarkAllTabs: false,
+            canExportBookmarks: true,
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
 

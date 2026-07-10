@@ -173,6 +173,14 @@ import PostHog
         // snapshot is frozen earlier, in phiWillTryToTerminateApplicationNotification.
         // Re-assert here as a backstop for any quit path that reaches this hook.
         SpaceManager.shared.markTerminating()
+        // A bookmark-export write may still be running on a background queue
+        // (slow network/cloud destination); dying now would silently drop a
+        // save the user already confirmed. The write's completion handler
+        // resumes termination via reply(toApplicationShouldTerminate:).
+        if Self.inFlightBookmarkExportWrites > 0 {
+            Self.bookmarkExportTerminationPending = true
+            return .terminateLater
+        }
         return .terminateNow
     }
     
