@@ -21,7 +21,8 @@ import PostHog
     var settingsWindowController: SettingsWindowController?
     
     var container: ModelContainer?
-    var updaterController: SPUStandardUpdaterController?
+    var updater: SPUUpdater?
+    var sparkleUserDriver: PhiSparkleUserDriver?
     /// Sparkle update state
     var updateState: UpdateState = .idle {
         didSet {

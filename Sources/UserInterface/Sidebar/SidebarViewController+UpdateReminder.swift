@@ -26,11 +26,8 @@ extension SidebarViewController: ReminderViewDelegate {
     }
     
     func confirmToDownload(_ view: ReminderView) {
-        let response = AppController.shared.showInstallAvailableAlert(version: view.version)
-        if response == .alertFirstButtonReturn {
-            hideUpdateReminder()
-            AppController.shared.installUpdateImmediately()
-        }
+        hideUpdateReminder()
+        AppController.shared.checkForUpdate(nil)
     }
 }
 

@@ -186,11 +186,20 @@
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
+    "A new version of Phi is available" : {
+      "comment" : "Sparkle update window - Title"
+    },
+    "A new version of Phi is ready to install" : {
+      "comment" : "Sparkle update window - Ready to install title"
+    },
     "A profile with this name already exists." : {
       "comment" : "Validation shown when a new or renamed profile name duplicates an existing profile"
     },
     "Active" : {
       "comment" : "Search Tabs - Trailing label for the active tab result"
+    },
+    "Add Download" : {
+
     },
     "Add Left Split" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the left third of the page"
@@ -285,9 +294,6 @@
     "Aqua" : {
       "comment" : "Aqua theme color name"
     },
-    "Are you sure you want to install version %@ and restart Phi?" : {
-      "comment" : "Update alert - Message asking user to confirm update installation with version number"
-    },
     "Ask every time" : {
       "comment" : "Special target in the URL rule Space picker: prompt for a Space on each match"
     },
@@ -299,6 +305,9 @@
     },
     "Automatically add External Data Connectors as context to new conversation" : {
       "comment" : "AI settings - Toggle to auto-add connector data as context to new AI conversation"
+    },
+    "Automatically download and install updates in the future" : {
+      "comment" : "Sparkle update window - Automatic update download checkbox"
     },
     "Back" : {
       "comment" : "Web content header - Accessibility description for back navigation button"
@@ -376,13 +385,26 @@
       "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
     },
     "Cancel" : {
-      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
+      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
+    },
+    "Cancel First" : {
+
     },
     "Canceled" : {
       "comment" : "Download item row - Status label when download was cancelled"
     },
     "Cancelled" : {
       "comment" : "Download state"
+    },
+    "Card %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Card %1$lld of %2$lld"
+          }
+        }
+      }
     },
     "Certificate is invalid" : {
       "comment" : "Address bar menu - Certificate validity status"
@@ -485,6 +507,12 @@
     },
     "Comfortable" : {
       "comment" : "Layout option - Horizontal tabs\nOnboarding layout selection - Comfortable option"
+    },
+    "Complete First" : {
+
+    },
+    "Complete First In-Progress" : {
+
     },
     "Completed" : {
       "comment" : "Download state"
@@ -594,6 +622,9 @@
     "Dark" : {
       "comment" : "Appearance choice: always dark mode"
     },
+    "DEBUG Test Mode" : {
+
+    },
     "Default" : {
       "comment" : "Settings - badge marking the default Space or Profile"
     },
@@ -653,6 +684,9 @@
     },
     "Download location" : {
       "comment" : "Profiles settings - download location row label"
+    },
+    "Download Test Controls" : {
+
     },
     "Downloading" : {
       "comment" : "Download state"
@@ -789,6 +823,9 @@
     "External Data Connectors help to provide additional context for better AI experience" : {
       "comment" : "AI settings - Description explaining external data connectors purpose"
     },
+    "Fail First In-Progress" : {
+
+    },
     "Failed" : {
       "comment" : "Download item row - Status label when download failed\nDownload state"
     },
@@ -915,14 +952,17 @@
     "Incognito %d" : {
       "comment" : "Incognito Space name when several are open; %d is its number"
     },
-    "Install and Restart" : {
-      "comment" : "Update alert - Button to install update and restart the app"
+    "Install and Relaunch" : {
+      "comment" : "Sparkle update window - Install downloaded update and relaunch button"
+    },
+    "Install on Quit" : {
+      "comment" : "Sparkle update window - Install downloaded update on quit button"
     },
     "Install the phi-browser skill" : {
       "comment" : "Developer settings - Title for installing the phi-browser agent skill"
     },
     "Install Update" : {
-      "comment" : "Update alert - Title for install update confirmation dialog"
+      "comment" : "Sparkle update window - Install update button"
     },
     "Invalid image source" : {
       "comment" : "Image preview error"
@@ -996,8 +1036,14 @@
     "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect." : {
       "comment" : "Developer settings - Explanation for the phi-browser skill installer"
     },
+    "Living Downloads Test" : {
+
+    },
     "Loading image…" : {
       "comment" : "Image preview loading"
+    },
+    "Loading release notes..." : {
+      "comment" : "Sparkle update window - Release notes loading placeholder"
     },
     "Log in" : {
       "comment" : "Onboarding Login button title"
@@ -1039,7 +1085,7 @@
       "comment" : "Tab context menu - Submenu to move this tab to another Space"
     },
     "Mute" : {
-      "comment" : "Notification menu option - Disable auto popup for notification cards"
+      "comment" : "Notification menu option - Disable auto popup for notification cards\nTab mute button tooltip - mute"
     },
     "Name" : {
       "comment" : "Editor - Label for the title/name input field"
@@ -1119,6 +1165,9 @@
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
     },
+    "Next Test (%lld items)" : {
+
+    },
     "No Backups Available" : {
       "comment" : "Help menu - Time Machine submenu placeholder when no completed backups exist"
     },
@@ -1142,6 +1191,9 @@
     },
     "No Profiles to Delete" : {
       "comment" : "Spaces menu - Delete Profile submenu empty state"
+    },
+    "No release notes available." : {
+      "comment" : "Sparkle update window - Missing release notes placeholder"
     },
     "No Results" : {
       "comment" : "Shortcuts settings - Empty state text when no shortcuts match search"
@@ -1368,6 +1420,9 @@
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
     },
+    "Remind Me Later" : {
+      "comment" : "Sparkle update window - Remind later button"
+    },
     "Remote debugging" : {
       "comment" : "Developer settings - Remote debugging section title"
     },
@@ -1442,6 +1497,9 @@
     },
     "Replace Top" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it"
+    },
+    "Reset" : {
+
     },
     "Restarting Phi..." : {
       "comment" : "Time Machine restore progress stage"
@@ -1563,6 +1621,9 @@
     "Skip Backup" : {
       "comment" : "Debug clear data - Alert button to clear data without creating a backup zip"
     },
+    "Skip This Version" : {
+      "comment" : "Sparkle update window - Skip update button"
+    },
     "Some account and system information may be sent to Phinomenon. We will use the information you give us to help address technical issues and to improve our services, subject to our Privacy Policy and Terms of Service." : {
       "comment" : "Feedback form - Legal disclaimer text explaining data usage, contains links to Privacy Policy and Terms of Service"
     },
@@ -1586,6 +1647,9 @@
     },
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
+    },
+    "Start Test" : {
+
     },
     "Starting restore..." : {
       "comment" : "Time Machine restore progress stage"
@@ -1709,6 +1773,9 @@
     },
     "Unlink" : {
       "comment" : "Phi Link - Official bot unlink button"
+    },
+    "Unmute" : {
+      "comment" : "Tab mute button tooltip - unmute"
     },
     "Unpin" : {
       "comment" : "Tab context menu - Menu item to unpin the selected tab"

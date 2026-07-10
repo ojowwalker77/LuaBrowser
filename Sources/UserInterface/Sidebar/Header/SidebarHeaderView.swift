@@ -547,6 +547,13 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: .sparkleDidSkipUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.hideUpgradeButton()
+            }
+            .store(in: &cancellables)
+
         #if DEBUG
         applyUITestUpdateOverrideIfNeeded()
         #endif
@@ -619,11 +626,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }
 
     private func upgradeButtonClicked() {
-        guard let version = availableUpdateVersion else { return }
-        let response = AppController.shared.showInstallAvailableAlert(version: version)
-        if response == .alertFirstButtonReturn {
-            AppController.shared.installUpdateImmediately()
-        }
+        guard availableUpdateVersion != nil else { return }
+        AppController.shared.checkForUpdate(nil)
     }
 
     /// Shows the upgrade button for a downloaded update.

@@ -1685,6 +1685,8 @@ extension AppController {
         }
         
         if item.action == #selector(checkForUpdate(_:)) {
+            guard updater?.canCheckForUpdates == true else { return false }
+
             switch updateState {
             case .downloading, .checking:
                 return false
