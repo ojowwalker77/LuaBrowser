@@ -121,17 +121,21 @@ struct CommandDispatcher {
             // `unregisterWindow` as window-driven and cascades every
             // remaining Space in the slot shut.
             //
-            // The INCOGNITO Space is the exception: it is an ephemeral
+            // An INCOGNITO Space is the exception: it is an ephemeral
             // session inside the slot, not a user-perceived window of its
-            // own, so ⌘W on its last tab must read as "close the Incognito
-            // Space" — retreat to a sibling Space and close only the
-            // incognito window (closing the last one is what makes Chromium
-            // destroy the OTR profile) — never as tearing the whole slot
-            // down. Tagging the close routes `unregisterWindow` into the
-            // same switch-to-sibling branch the tab-row ✕ takes.
+            // own, so ⌘W on its last tab reads as "close this Incognito
+            // Space". That teardown is confirmed first ("Do not ask again"
+            // suppressible) and then closes the Space's windows in every
+            // slot, retreat-first — closing the last incognito window is
+            // what makes Chromium destroy the shared OTR profile. Swallow
+            // the command either way: on confirm the window close takes the
+            // tab with it, on cancel nothing must close.
             let state = windowController.browserState
             if state.isIncognitoSpace, state.tabs.count <= 1 {
-                windowController.slot?.markTabDrivenClose(for: windowController.spaceId)
+                MainActor.assumeIsolated {
+                    SpaceManager.shared.requestCloseIncognitoSpace(spaceId: windowController.spaceId)
+                }
+                return true
             }
             return false
         case .IDC_FOCUS_LOCATION:

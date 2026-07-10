@@ -194,46 +194,116 @@ private extension NSView {
 final class SpaceManager: ObservableObject {
     static let shared = SpaceManager()
 
-    /// Sentinel spaceId of the built-in Incognito Space. Never persisted —
-    /// the Space itself is a detached `SpaceModel` appended in
-    /// `handleSpacesUpdate`, so store mutations keyed by this id are no-ops.
-    static let incognitoSpaceId = "space.incognito"
+    /// spaceId prefix shared by every Incognito Space. Their ids are minted
+    /// at creation (`createIncognitoSpace`) and never persisted — each Space
+    /// is a detached `SpaceModel` appended in `handleSpacesUpdate`, so store
+    /// mutations keyed by such an id are no-ops. The prefix also matches the
+    /// pre-multi-Space sentinel id ("space.incognito"), keeping legacy
+    /// persisted references (URL rules, restore snapshots) classified as
+    /// incognito.
+    static let incognitoSpaceIdPrefix = "space.incognito"
+
+    /// Whether `spaceId` names an Incognito Space (live or already gone).
+    static func isIncognitoSpaceId(_ spaceId: String) -> Bool {
+        spaceId.hasPrefix(incognitoSpaceIdPrefix)
+    }
+
     /// The synthetic wire profileId Chromium reports for Incognito Space
     /// windows (see PhiChromiumBridgeHeader's ChromiumBrowserTypeIncognitoSpace
-    /// note — the Space's OTR profile has no on-disk identity of its own).
-    /// Binding the synthetic Space to it keeps `spaceId(boundTo:preferring:)`
-    /// a pass-through on the spawn path.
+    /// note — the Spaces' shared OTR profile has no on-disk identity of its
+    /// own). Binding every Incognito Space to it keeps
+    /// `spaceId(boundTo:preferring:)` a pass-through on the spawn path.
     static let incognitoProfileId = "PhiIncognitoSpace"
-    /// Default icon of the built-in Incognito Space (the ninja emoji, in the
-    /// IconPicker emoji storage scheme). The user can change it like any
-    /// Space's icon; the choice persists in AccountUserDefaults because the
-    /// synthetic Space has no SpaceModel row (see `changeIcon`).
+    /// Default icon of an Incognito Space (the ninja emoji, in the IconPicker
+    /// emoji storage scheme). The user can change it like any Space's icon;
+    /// the choice lives on the runtime descriptor and dies with the Space.
     static let incognitoSpaceDefaultIcon = "emoji:1F977"
 
-    /// The built-in Incognito Space, backed by a dedicated Chromium
-    /// off-the-record profile (in-memory only; destroyed when its last window
-    /// closes or the app quits). Detached from SwiftData by construction
-    /// (never inserted into a model context), so nothing about it persists
-    /// through the store. Rebuilt on every spaces emission; it sits after all
-    /// user Spaces until dragged, then at the AccountUserDefaults-persisted
-    /// index (see `reorder`).
-    private func makeIncognitoSpace(sortOrder: Int) -> SpaceModel {
+    /// Runtime record of one live Incognito Space. All descriptors share the
+    /// single Chromium OTR profile (`incognitoProfileId`); the Space itself
+    /// exists only while this record does — nothing about it is persisted.
+    private struct IncognitoSpaceDescriptor {
+        let spaceId: String
+        /// 1-based display number, the lowest free at creation time. Stable
+        /// for the Space's lifetime so siblings don't get renamed when
+        /// another Incognito Space closes.
+        let ordinal: Int
+        var iconName: String
+        /// Position in the strip captured by `reorder`; nil = after every
+        /// other Space, in ordinal order.
+        var sortIndex: Int?
+    }
+
+    /// Live Incognito Spaces, in creation order. Appended by
+    /// `createIncognitoSpace`, removed by `closeIncognitoSpace` and
+    /// `reapIncognitoSpaceIfWindowless` (a window-driven teardown that took
+    /// the Space's last window with it).
+    private var incognitoSpaces: [IncognitoSpaceDescriptor] = []
+
+    /// Builds the detached `SpaceModel` for one live Incognito Space,
+    /// backed by the shared Chromium off-the-record profile (in-memory only;
+    /// destroyed when the last Incognito Space window closes or the app
+    /// quits). Detached from SwiftData by construction (never inserted into
+    /// a model context), so nothing about it persists through the store.
+    /// Rebuilt on every spaces emission. A single Incognito Space is plainly
+    /// "Incognito"; siblings are told apart by their ordinal ("Incognito 1",
+    /// "Incognito 2", …).
+    private func makeIncognitoSpace(descriptor: IncognitoSpaceDescriptor, sortOrder: Int) -> SpaceModel {
+        let name: String
+        if incognitoSpaces.count > 1 {
+            name = String(
+                format: NSLocalizedString("Incognito %d", comment: "Incognito Space name when several are open; %d is its number"),
+                descriptor.ordinal
+            )
+        } else {
+            name = NSLocalizedString("Incognito", comment: "Built-in Incognito Space name")
+        }
+        return SpaceModel(
+            spaceId: descriptor.spaceId,
+            profileId: Self.incognitoProfileId,
+            name: name,
+            colorHex: "#5F6368",
+            iconName: descriptor.iconName,
+            sortOrder: sortOrder
+        )
+    }
+
+    /// Stable target id for URL rules that route into Incognito. Rules
+    /// persist across launches while Incognito Spaces don't, so rules carry
+    /// this generic id (the bare prefix — also the pre-multi-Space sentinel,
+    /// which revives legacy incognito rules) instead of a runtime Space id;
+    /// `routeAskedURL` resolves it to a live Incognito Space, created on
+    /// demand.
+    static let incognitoRuleTargetId = incognitoSpaceIdPrefix
+
+    /// Whether a persisted URL rule with this target should route: user-Space
+    /// targets and the generic Incognito target do; any other id under the
+    /// incognito prefix is a stale runtime Space id and stays inert.
+    static func isRoutableRuleTarget(_ spaceId: String) -> Bool {
+        !isIncognitoSpaceId(spaceId) || spaceId == incognitoRuleTargetId
+    }
+
+    /// Detached stand-in for the generic Incognito rule target, shown as ONE
+    /// "Incognito" entry — regardless of how many Incognito Spaces are live —
+    /// by the rules editor's target picker and the ask-rule Space chooser.
+    /// Never inserted into a model context and never part of `spaces`.
+    func incognitoRuleTargetSpace() -> SpaceModel {
         SpaceModel(
-            spaceId: Self.incognitoSpaceId,
+            spaceId: Self.incognitoRuleTargetId,
             profileId: Self.incognitoProfileId,
             name: NSLocalizedString("Incognito", comment: "Built-in Incognito Space name"),
             colorHex: "#5F6368",
-            iconName: boundAccount?.userDefaults.incognitoSpaceIconName()
-                ?? Self.incognitoSpaceDefaultIcon,
-            sortOrder: sortOrder
+            iconName: Self.incognitoSpaceDefaultIcon,
+            sortOrder: spaces.count
         )
     }
 
     @Published private(set) var spaces: [SpaceModel] = []
 
     /// Raw store emission backing `spaces`, without the synthetic Incognito
-    /// Space. Kept so `refreshIncognitoSpacePresence()` can recompute when
-    /// the toggle flips without waiting for the next SwiftData write.
+    /// Spaces. Kept so `refreshIncognitoSpacePresence()` can recompute when
+    /// an Incognito Space is created or closed without waiting for the next
+    /// SwiftData write.
     private var lastStoreSpaces: [SpaceModel] = []
 
     /// Live slots, one per user-perceived browser window. A slot is created
@@ -660,12 +730,12 @@ final class SpaceManager: ObservableObject {
         guard let userDefaults = boundAccount?.userDefaults else { return }
         var dicts: [[String: Any]] = []
         for slot in slots {
-            // The Incognito Space is excluded from the snapshot wholesale: its
-            // session intentionally dies with its windows, so restoring its
-            // window would surface an empty Space (and a sentinel activeSpaceId
-            // would point restore at a Space that may be disabled by then).
+            // Incognito Spaces are excluded from the snapshot wholesale: their
+            // sessions intentionally die with their windows, so restoring one
+            // would surface an empty Space (and its runtime-only spaceId would
+            // point restore at a Space that no longer exists by then).
             let windowMap = slot.snapshotWindowMap()
-                .filter { $0.value != SpaceManager.incognitoSpaceId }
+                .filter { !SpaceManager.isIncognitoSpaceId($0.value) }
             guard !windowMap.isEmpty else { continue }
             var dict: [String: Any] = [:]
             // Plist keys must be strings; convert the windowId map.
@@ -673,7 +743,7 @@ final class SpaceManager: ObservableObject {
                 uniqueKeysWithValues: windowMap.map { (String($0.key), $0.value) }
             )
             if let active = slot.activeSpaceId {
-                dict["activeSpaceId"] = active == SpaceManager.incognitoSpaceId
+                dict["activeSpaceId"] = SpaceManager.isIncognitoSpaceId(active)
                     ? LocalStore.defaultSpaceId
                     : active
             }
@@ -921,11 +991,12 @@ final class SpaceManager: ObservableObject {
     }
 
     func changeIcon(spaceId: String, iconName: String) {
-        // The Incognito Space has no SpaceModel row — persist its icon next
-        // to the theme overrides and rebuild the synthetic entry so the
-        // strip updates immediately.
-        if spaceId == Self.incognitoSpaceId {
-            boundAccount?.userDefaults.setIncognitoSpaceIconName(iconName)
+        // An Incognito Space has no SpaceModel row — its icon lives on the
+        // runtime descriptor; rebuild the synthetic entry so the strip
+        // updates immediately.
+        if Self.isIncognitoSpaceId(spaceId) {
+            guard let index = incognitoSpaces.firstIndex(where: { $0.spaceId == spaceId }) else { return }
+            incognitoSpaces[index].iconName = iconName
             refreshIncognitoSpacePresence()
             return
         }
@@ -933,6 +1004,13 @@ final class SpaceManager: ObservableObject {
     }
 
     func deleteSpace(spaceId: String) {
+        // Incognito Spaces have no store rows to delete — "delete" for them
+        // is closing the Space. No UI offers delete for them; this redirect
+        // is a safety net for stray callers.
+        if Self.isIncognitoSpaceId(spaceId) {
+            MainActor.assumeIsolated { closeIncognitoSpace(spaceId: spaceId) }
+            return
+        }
         guard spaceId != LocalStore.defaultSpaceId else {
             AppLogWarn("[SpaceManager] refusing to delete the default space")
             return
@@ -1132,17 +1210,19 @@ final class SpaceManager: ObservableObject {
     /// order other than the one the user produced.
     func reorder(spaceIds: [String]) {
         guard let account = boundAccount else { return }
-        // The Incognito Space has no SpaceModel row to renumber; its position
-        // persists as a list index in AccountUserDefaults (like its icon) and
-        // the store write gets the remaining ids. The explicit refresh
-        // republishes the arrangement right away — a drag that only moved the
-        // Incognito Space may leave every user Space's sortOrder unchanged,
-        // so the store emission alone can't be relied on.
+        // Incognito Spaces have no SpaceModel rows to renumber; each one's
+        // position is captured on its runtime descriptor (as an index into
+        // the full list) and the store write gets the remaining ids. The
+        // explicit refresh republishes the arrangement right away — a drag
+        // that only moved an Incognito Space may leave every user Space's
+        // sortOrder unchanged, so the store emission alone can't be relied on.
         var ordered = spaceIds
-        if let incognitoIndex = ordered.firstIndex(of: Self.incognitoSpaceId) {
-            account.userDefaults.setIncognitoSpaceSortIndex(incognitoIndex)
-            ordered.remove(at: incognitoIndex)
+        for (index, spaceId) in spaceIds.enumerated() where Self.isIncognitoSpaceId(spaceId) {
+            if let descriptorIndex = incognitoSpaces.firstIndex(where: { $0.spaceId == spaceId }) {
+                incognitoSpaces[descriptorIndex].sortIndex = index
+            }
         }
+        ordered.removeAll { Self.isIncognitoSpaceId($0) }
         let known = Set(spaces.map(\.spaceId))
         account.localStorage.reorderSpaces(
             orderedSpaceIds: ordered.filter { known.contains($0) }
@@ -1225,7 +1305,7 @@ final class SpaceManager: ObservableObject {
         let mapping = currentSpaceWindowMap()
 
         var rulesPayload: [[String: Any]] = []
-        for (spaceId, drafts) in byTargetSpaceId {
+        for (spaceId, drafts) in byTargetSpaceId where Self.isRoutableRuleTarget(spaceId) {
             for (index, draft) in drafts.enumerated() {
                 let host = draft.host.lowercased()
                 guard !host.isEmpty else { continue }
@@ -1290,7 +1370,8 @@ final class SpaceManager: ObservableObject {
         let mapping = currentSpaceWindowMap()
 
         var rulesPayload: [[String: Any]] = cachedURLRules.compactMap { rule in
-            guard rule.spaceId != spaceId else { return nil }
+            guard rule.spaceId != spaceId,
+                  Self.isRoutableRuleTarget(rule.spaceId) else { return nil }
             var entry: [String: Any] = [
                 "targetSpaceId": rule.spaceId,
                 "host": rule.host,
@@ -1337,13 +1418,11 @@ final class SpaceManager: ObservableObject {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
         let mapping = currentSpaceWindowMap()
 
-        // Rules targeting the Incognito Space stay persisted while the
-        // feature is off but must not route — filter them out of the push so
-        // they're inert, and reappear on re-enable without re-authoring.
-        var effectiveRules = cachedURLRules
-        if !PhiPreferences.GeneralSettings.incognitoSpaceEnabled.loadValue() {
-            effectiveRules = effectiveRules.filter { $0.spaceId != Self.incognitoSpaceId }
-        }
+        // User-Space rules and the generic Incognito target route; any other
+        // id under the incognito prefix would be a stale runtime Space id —
+        // keep such a row inert instead of routing into a Space that no
+        // longer exists.
+        let effectiveRules = cachedURLRules.filter { Self.isRoutableRuleTarget($0.spaceId) }
         var rulesPayload: [[String: Any]] = effectiveRules.map { rule in
             var entry: [String: Any] = [
                 "targetSpaceId": rule.spaceId,
@@ -1431,6 +1510,14 @@ final class SpaceManager: ObservableObject {
         let sourceController = MainBrowserWindowControllersManager.shared
             .controller(for: Int(sourceWindowId))
         let currentSpaceId = sourceController?.spaceId
+        // An incognito target — the rules' generic Incognito id, or a Space
+        // that closed since the chooser was shown — resolves to a live
+        // Incognito Space here, created on demand.
+        let spaceId = spaceId.map {
+            Self.isIncognitoSpaceId($0)
+                ? resolveIncognitoRouteTarget($0, currentSpaceId: currentSpaceId)
+                : $0
+        }
         // Whether the source is a stranded new tab / NTP. The Chromium-side
         // `sourceIsNewTab` covers the regular web NTP path, and the Swift
         // focusing-tab fallback covers the native incognito NTP path.
@@ -1572,6 +1659,16 @@ final class SpaceManager: ObservableObject {
                   result[controller.spaceId] == nil else { continue }
             result[controller.spaceId] = controller.windowId
         }
+        // Alias the generic Incognito rule target to the first (strip-order)
+        // Incognito Space's visible window, so the C++ router surfaces it
+        // directly exactly as it would any other Space with an on-screen
+        // window. With no live window the id stays unmapped and the router
+        // hands the navigation to `routeAskedURL`, which resolves the target
+        // — creating the Space when none exists.
+        if let first = spaces.first(where: { Self.isIncognitoSpaceId($0.spaceId) }),
+           let windowId = result[first.spaceId] {
+            result[Self.incognitoRuleTargetId] = windowId
+        }
         return result
     }
 
@@ -1631,9 +1728,9 @@ final class SpaceManager: ObservableObject {
     /// initialize newly created slots (cold launch, additional windows
     /// without a pending spawn intent).
     fileprivate func persistActiveSpaceId(_ spaceId: String) {
-        // Never remember the Incognito Space as last-active: cold launch and
+        // Never remember an Incognito Space as last-active: cold launch and
         // new slots must always land on a persistent Space.
-        guard spaceId != Self.incognitoSpaceId else { return }
+        guard !Self.isIncognitoSpaceId(spaceId) else { return }
         boundAccount?.userDefaults.set(spaceId, forKey: .activeSpaceId)
     }
 
@@ -1696,65 +1793,154 @@ final class SpaceManager: ObservableObject {
         }
     }
 
-    /// Re-derives `spaces` from the last store emission after the Incognito
-    /// Space toggle flips. Reuses `handleSpacesUpdate` wholesale so the
-    /// slot reconciliation (switch slots off a disabled Incognito Space)
-    /// runs exactly as it would for a store-driven change.
+    /// Re-derives `spaces` from the last store emission after the set of
+    /// Incognito Spaces changes (create, close, icon, reorder). Reuses
+    /// `handleSpacesUpdate` wholesale so the slot reconciliation (switch
+    /// slots off a closed Incognito Space) runs exactly as it would for a
+    /// store-driven change.
     func refreshIncognitoSpacePresence() {
         handleSpacesUpdate(lastStoreSpaces)
     }
 
-    /// Whether any slot currently holds an Incognito Space window — i.e.
-    /// whether disabling the feature would close live tabs. Drives the
-    /// settings toggle's confirmation prompt.
-    var hasIncognitoSpaceWindows: Bool {
-        slots.contains { $0.windowController(for: Self.incognitoSpaceId) != nil }
+    /// Creates a new Incognito Space and puts it in the strip. All Incognito
+    /// Spaces share the single Chromium OTR profile; the parent profile is
+    /// warmed here so the first activation doesn't pay the load. The Space
+    /// lives until `closeIncognitoSpace` tears it down or its last window
+    /// closes (`reapIncognitoSpaceIfWindowless`); nothing about it persists.
+    /// Bringing it to the front is the caller's job, as with `createSpace`.
+    @MainActor
+    @discardableResult
+    func createIncognitoSpace() -> String {
+        // The lowest display number not in use, so a fresh Space never
+        // shadows a live sibling and numbering restarts once all are closed.
+        let usedOrdinals = Set(incognitoSpaces.map(\.ordinal))
+        let ordinal = (1...).first { !usedOrdinals.contains($0) } ?? incognitoSpaces.count + 1
+        let descriptor = IncognitoSpaceDescriptor(
+            spaceId: "\(Self.incognitoSpaceIdPrefix).\(UUID().uuidString)",
+            ordinal: ordinal,
+            iconName: Self.incognitoSpaceDefaultIcon,
+            sortIndex: nil
+        )
+        incognitoSpaces.append(descriptor)
+        ChromiumLauncher.sharedInstance().bridge?.ensureIncognitoSpaceProfileLoaded { success in
+            if !success {
+                AppLogWarn("[SpaceManager] Incognito Space profile warm-up failed; first activation will retry")
+            }
+        }
+        refreshIncognitoSpacePresence()
+        pushSpaceStateToChromium()
+        return descriptor.spaceId
     }
 
-    /// Flips the Incognito Space feature. Enabling warms the Space's parent
-    /// profile so the first pip click doesn't pay the load; disabling closes
-    /// every Incognito Space window FIRST — closing the last one is what
-    /// makes Chromium destroy the Space's OTR profile and clear its session —
-    /// and only then removes the Space from the strip, so the reconciliation
-    /// in `handleSpacesUpdate` sees no slot left on it.
+    /// Resolves an incognito route target to a live Incognito Space, creating
+    /// one when none exists. An exact live id routes to itself (the "Open
+    /// Link In Space" submenu names specific Incognito Spaces); the generic
+    /// rule target (`incognitoRuleTargetId`, or a Space that closed since the
+    /// chooser was shown) prefers the Space the navigation started in when
+    /// that is already incognito — every Incognito Space shares one session,
+    /// so hopping between them buys nothing — then the first live one in
+    /// strip order.
     @MainActor
-    func setIncognitoSpaceEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(
-            enabled,
-            forKey: PhiPreferences.GeneralSettings.incognitoSpaceEnabled.rawValue
-        )
-        if enabled {
-            ChromiumLauncher.sharedInstance().bridge?.ensureIncognitoSpaceProfileLoaded { success in
-                if !success {
-                    AppLogWarn("[SpaceManager] Incognito Space profile warm-up failed; first activation will retry")
-                }
+    private func resolveIncognitoRouteTarget(_ spaceId: String, currentSpaceId: String?) -> String {
+        if spaces.contains(where: { $0.spaceId == spaceId }) {
+            return spaceId
+        }
+        if let currentSpaceId, Self.isIncognitoSpaceId(currentSpaceId),
+           spaces.contains(where: { $0.spaceId == currentSpaceId }) {
+            return currentSpaceId
+        }
+        if let first = spaces.first(where: { Self.isIncognitoSpaceId($0.spaceId) }) {
+            return first.spaceId
+        }
+        return createIncognitoSpace()
+    }
+
+    /// Asks the user to confirm closing the Incognito Space `spaceId` — the
+    /// close also ends the Space itself — then tears it down. The prompt is
+    /// skipped once "Do not ask again" has been checked. Returns true when
+    /// the Space was closed. Called by the "Close Incognito Space" menu item
+    /// and by both last-tab close paths (⌘W and the tab-row ✕).
+    @MainActor
+    @discardableResult
+    func requestCloseIncognitoSpace(spaceId: String) -> Bool {
+        guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }) else { return false }
+        if !PhiPreferences.GeneralSettings.suppressCloseIncognitoSpaceWarning.loadValue() {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString(
+                "This will also close this Incognito Space, are you sure?",
+                comment: "Title of the confirmation shown when a close would tear down an Incognito Space")
+            alert.alertStyle = .warning
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = NSLocalizedString(
+                "Do not ask again",
+                comment: "Suppression checkbox of the close-Incognito-Space confirmation")
+            alert.addButton(withTitle: NSLocalizedString("Close", comment: "Confirm closing an Incognito Space"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            if alert.suppressionButton?.state == .on {
+                UserDefaults.standard.set(
+                    true,
+                    forKey: PhiPreferences.GeneralSettings.suppressCloseIncognitoSpaceWarning.rawValue
+                )
             }
-        } else {
-            closeIncognitoSpaceWindows()
+        }
+        closeIncognitoSpace(spaceId: spaceId)
+        return true
+    }
+
+    /// Tears down the Incognito Space `spaceId`: closes its windows in every
+    /// slot (retreat-first for slots currently showing it), then removes it
+    /// from the strip. Closing the last Incognito Space window overall is
+    /// what makes Chromium destroy the shared OTR profile and clear the
+    /// private session — with another Incognito Space still open, the session
+    /// data lives on in it.
+    @MainActor
+    func closeIncognitoSpace(spaceId: String) {
+        guard Self.isIncognitoSpaceId(spaceId) else { return }
+        closeIncognitoSpaceWindows(spaceId: spaceId)
+        removeIncognitoSpaceDescriptor(spaceId)
+    }
+
+    /// Retires the Incognito Space `spaceId` once no slot holds a window for
+    /// it anymore. Called (a runloop turn deferred) from
+    /// `SpaceWindowSlot.unregisterWindow` so close paths that bypass
+    /// `closeIncognitoSpace` — a window-driven slot cascade, a scripted
+    /// window.close, the tab-driven hand-off — still take the Space with
+    /// them instead of stranding an empty pip in the strip.
+    fileprivate func reapIncognitoSpaceIfWindowless(_ spaceId: String) {
+        guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }),
+              !slots.contains(where: { $0.windowController(for: spaceId) != nil }) else { return }
+        removeIncognitoSpaceDescriptor(spaceId)
+    }
+
+    /// Drops the runtime record of an Incognito Space and republishes the
+    /// strip. Its per-Space theme override is cleared too — the id is
+    /// runtime-only, so a leftover entry could never be read again.
+    private func removeIncognitoSpaceDescriptor(_ spaceId: String) {
+        guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }) else { return }
+        incognitoSpaces.removeAll { $0.spaceId == spaceId }
+        if themeId(forSpaceId: spaceId) != nil {
+            setTheme(forSpaceId: spaceId, themeId: nil)
         }
         refreshIncognitoSpacePresence()
         pushSpaceStateToChromium()
     }
 
-    /// Closes every slot's Incognito Space window, retreat-first for slots
-    /// currently showing it — closing the last window is what makes Chromium
-    /// destroy the Space's OTR profile and clear its session. Called by the
-    /// settings toggle's disable path and by the pip's "Close Space" menu
-    /// item (which ends the session without disabling the feature). The
-    /// mechanics mirror `deleteSpace`'s two loops — see the comments there
-    /// for why the visible window's close must wait for the retreat to
-    /// settle (`onSwapSettled`) and why windows are evicted before closing
-    /// (a window-driven close would cascade the whole slot shut).
+    /// Closes every slot's window for the Incognito Space `spaceId`,
+    /// retreat-first for slots currently showing it. The mechanics mirror
+    /// `deleteSpace`'s two loops — see the comments there for why the
+    /// visible window's close must wait for the retreat to settle
+    /// (`onSwapSettled`) and why windows are evicted before closing (a
+    /// window-driven close would cascade the whole slot shut).
     @MainActor
-    func closeIncognitoSpaceWindows() {
-        let spaceId = Self.incognitoSpaceId
+    private func closeIncognitoSpaceWindows(spaceId: String) {
         let retreatingSlots = slots.filter { $0.activeSpaceId == spaceId }
         for slot in retreatingSlots {
             slot.activate(spaceId: LocalStore.defaultSpaceId) { [weak slot] in
                 guard let slot,
                       let controller = slot.windowController(for: spaceId) else { return }
                 guard slot.visibleController !== controller else {
-                    AppLogWarn("[SpaceManager] disable Incognito: not closing its window — still visible (retreat did not complete)")
+                    AppLogWarn("[SpaceManager] close Incognito: not closing its window — still visible (retreat did not complete)")
                     return
                 }
                 slot.evictWindow(for: spaceId)
@@ -1791,6 +1977,9 @@ final class SpaceManager: ObservableObject {
         restoredSlotsByIndex.removeAll()
         restoreReattachDeadline = nil
         pendingProfileChangeReopens.removeAll()
+        // Incognito Spaces are session-scoped; sign-out ends them with
+        // everything else.
+        incognitoSpaces.removeAll()
         // spaces is now empty, so this also clears the "Open link as" submenu.
         pushSpaceStateToChromium()
     }
@@ -1803,23 +1992,24 @@ final class SpaceManager: ObservableObject {
     private func handleSpacesUpdate(_ storeSpaces: [SpaceModel]) {
         // Strip any synthetic entry from the input first: callers like
         // `handleLoginCompleted` can fall back to re-feeding `self.spaces`,
-        // which already carries the appended Incognito Space — without this
-        // the append below would duplicate it. Also keeps a stray persisted
-        // row under the sentinel id (never written by this code) from
-        // shadowing the synthetic Space.
-        var updated = storeSpaces.filter { $0.spaceId != Self.incognitoSpaceId }
+        // which already carries the appended Incognito Spaces — without this
+        // the append below would duplicate them. Also keeps a stray persisted
+        // row under an incognito id (never written by this code) from
+        // shadowing a synthetic Space.
+        var updated = storeSpaces.filter { !Self.isIncognitoSpaceId($0.spaceId) }
         lastStoreSpaces = updated
-        // The Incognito Space joins the list only while the feature is
-        // enabled, at its persisted position — after every user Space until
-        // it's dragged, clamped in case Spaces were deleted since. Because
-        // it flows through `spaces` (and thus `validIds`), a slot sitting on
-        // it survives unrelated store writes; on disable it drops out of
+        // Every live Incognito Space joins the list at its runtime position —
+        // after all user Spaces (in ordinal order) until it's dragged,
+        // clamped in case Spaces were deleted since. Because they flow
+        // through `spaces` (and thus `validIds`), a slot sitting on one
+        // survives unrelated store writes; on close its id drops out of
         // `validIds` and the reconciliation below switches those slots back
         // to a real Space.
-        if PhiPreferences.GeneralSettings.incognitoSpaceEnabled.loadValue() {
-            let stored = boundAccount?.userDefaults.incognitoSpaceSortIndex() ?? updated.count
-            let index = min(max(stored, 0), updated.count)
-            updated.insert(makeIncognitoSpace(sortOrder: index), at: index)
+        for descriptor in incognitoSpaces.sorted(by: {
+            ($0.sortIndex ?? Int.max, $0.ordinal) < ($1.sortIndex ?? Int.max, $1.ordinal)
+        }) {
+            let index = min(max(descriptor.sortIndex ?? updated.count, 0), updated.count)
+            updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
         spaces = updated
         let validIds = Set(updated.map(\.spaceId))
@@ -1842,6 +2032,13 @@ final class SpaceManager: ObservableObject {
         // `handleLoginCompleted` re-runs this once windows are registered.
         if AuthManager.shared.checkLoginStatusOnChromiumLaunch() {
             for slot in slots {
+                // A slot mid-cascade is on its way out: activating a fallback
+                // would respawn a window into it and fight the teardown. Hit
+                // when an Incognito Space is reaped while its slot's
+                // window-driven cascade is still draining.
+                if slot.isTearingDown {
+                    continue
+                }
                 if let current = slot.activeSpaceId, validIds.contains(current) {
                     continue
                 }
@@ -2148,6 +2345,12 @@ final class SpaceWindowSlot: ObservableObject {
     /// programmatic `close()`, stranding a background Space with live tabs.
     private var isCascadingSlotClose = false
 
+    /// True while a window-driven close is cascading this slot's windows
+    /// shut. Read by `SpaceManager.handleSpacesUpdate`'s reconciliation so a
+    /// Space removal landing mid-cascade (an Incognito Space reaped as its
+    /// windows close) doesn't respawn a window into a dying slot.
+    var isTearingDown: Bool { isCascadingSlotClose }
+
     /// windowId → spaceId we asked Chromium to spawn that window for, for
     /// THIS slot. `activate(spaceId:)` populates this synchronously right
     /// after calling `bridge.createBrowserWithWindowType` so the asynchronous
@@ -2206,10 +2409,11 @@ final class SpaceWindowSlot: ObservableObject {
     /// `unregisterWindow` to decide whether to switch to a sibling
     /// Space (tab-driven) or cascade-close every Space (window-driven,
     /// the default). Note ⌘W is intentionally NOT tagged: it is treated
-    /// as window-driven so it tears the whole slot down like ⇧⌘W —
-    /// except in the Incognito Space, whose ⌘W last-tab close IS tagged
-    /// (see `CommandDispatcher.IDC_CLOSE_TAB`) so it reads as "close the
-    /// Incognito Space", not as closing the user-perceived window.
+    /// as window-driven so it tears the whole slot down like ⇧⌘W. In an
+    /// Incognito Space neither last-tab path gets this far — both are
+    /// intercepted up front and routed into the confirmed Space teardown
+    /// (`SpaceManager.requestCloseIncognitoSpace`) instead of dispatching
+    /// the close.
     ///
     /// Stored as spaceId → expiration deadline rather than a plain
     /// set: when the dispatched `IDC_CLOSE_TAB` is vetoed (typically
@@ -2568,10 +2772,10 @@ final class SpaceWindowSlot: ObservableObject {
         // profile (`changeProfile`), its windows are closed and the next
         // activation lands here to respawn on the new profile.
         let targetProfileId = manager.spaces.first(where: { $0.spaceId == spaceId })?.profileId
-        // The Incognito Space spawns its own window type instead: Chromium
-        // ignores the profileId and binds the Browser to the Space's
-        // dedicated off-the-record profile.
-        let isIncognitoSpace = spaceId == SpaceManager.incognitoSpaceId
+        // An Incognito Space spawns its own window type instead: Chromium
+        // ignores the profileId and binds the Browser to the shared
+        // off-the-record profile all Incognito Spaces live on.
+        let isIncognitoSpace = SpaceManager.isIncognitoSpaceId(spaceId)
         let spawn: () -> Void = { [weak self, weak previous, weak manager] in
             guard let self = self else { return }
             // Record the spawn intent *before* createBrowser. Chromium's
@@ -4309,10 +4513,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// about to drop to zero. ⌘W (`CommandDispatcher` IDC_CLOSE_TAB)
     /// deliberately does NOT call this: closing the last tab with ⌘W
     /// tears the whole slot down like ⇧⌘W instead of switching to a
-    /// sibling Space. The Incognito Space is the one exception — its
-    /// ⌘W last-tab close is tagged too, so it ends the incognito
-    /// session and retreats to a sibling instead of taking the whole
-    /// user-perceived window with it.
+    /// sibling Space. Incognito Spaces never get here on a last-tab
+    /// close — both paths intercept it and route into the confirmed
+    /// Space teardown (`SpaceManager.requestCloseIncognitoSpace`).
     func markTabDrivenClose(for spaceId: String) {
         pendingTabDrivenCloseDeadlines[spaceId] = Date().addingTimeInterval(Self.tabDrivenCloseTTL)
         // Capture the closing window's pixels now, while the WebContents
@@ -4377,6 +4580,19 @@ final class SpaceWindowSlot: ObservableObject {
             NotificationCenter.default.removeObserver(token)
         }
         tabBarAccessoryObservationsByWindowId.removeValue(forKey: controller.windowId)?.invalidate()
+        // An Incognito Space lives only as long as it has windows: once the
+        // last one anywhere is gone, retire the Space itself. This covers
+        // every close path that bypasses `closeIncognitoSpace` — a
+        // window-driven slot cascade, a scripted window.close, the
+        // tab-driven hand-off. Deferred a turn so a mid-cascade teardown
+        // finishes reshaping this slot before the strip republishes
+        // (`closeIncognitoSpace`'s own closes evict first and never get
+        // here — the identity guard above already returned).
+        if SpaceManager.isIncognitoSpaceId(spaceId) {
+            DispatchQueue.main.async { [weak manager] in
+                manager?.reapIncognitoSpaceIfWindowless(spaceId)
+            }
+        }
         // Closing a window fires no will-exit fullscreen notification, so a
         // fullscreen window that closes (e.g. a tab-driven close handing off
         // to a sibling below) would leave `isFullScreen` stuck true — siblings

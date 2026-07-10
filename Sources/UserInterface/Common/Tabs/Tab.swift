@@ -390,12 +390,22 @@ class Tab: WebContentRepresentable {
         if isActive, windowId != 0 {
             let manager = MainBrowserWindowControllersManager.shared
             let state = manager.getBrowserState(for: windowId)
-            // Mirror of the CommandDispatcher.IDC_CLOSE_TAB tag: when
-            // closing the last tab in the active Space via the UI X
-            // button, tag the slot so the resulting browser auto-close
-            // falls into the switch-to-sibling branch.
+            // Closing the last tab in the active Space via the UI X button:
+            // tag the slot so the resulting browser auto-close falls into
+            // the switch-to-sibling branch (mirrors the old
+            // CommandDispatcher.IDC_CLOSE_TAB behavior). In an Incognito
+            // Space the close ends the Space itself, so route it into the
+            // confirmed teardown instead of dispatching the tab close — on
+            // confirm the Space's window close takes this tab with it, on
+            // cancel nothing must close.
             if let state, state.tabs.count <= 1,
                let controller = manager.controller(for: windowId) {
+                if state.isIncognitoSpace {
+                    MainActor.assumeIsolated {
+                        SpaceManager.shared.requestCloseIncognitoSpace(spaceId: controller.spaceId)
+                    }
+                    return
+                }
                 controller.slot?.markTabDrivenClose(for: controller.spaceId)
             }
             state?.prepareForActiveTabClose(tabId: guid)

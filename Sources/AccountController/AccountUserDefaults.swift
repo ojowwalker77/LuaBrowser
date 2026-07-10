@@ -156,16 +156,6 @@ extension AccountUserDefaults {
         /// global selection. Stored here rather than on `SpaceModel` to
         /// avoid a schema migration for what is purely a UI preference.
         case spaceThemeIds
-        /// Icon override of the built-in Incognito Space (an IconPicker
-        /// storage value). Stored here because that Space has no SpaceModel
-        /// row — SpaceManager synthesizes it — so `updateSpace` can't
-        /// persist an icon change. Missing means the built-in default.
-        case incognitoSpaceIconName
-        /// List position of the built-in Incognito Space (an index into the
-        /// full Space list). Stored here for the same reason as its icon:
-        /// the synthetic Space has no SpaceModel row for `reorderSpaces` to
-        /// renumber. Missing means after every user Space.
-        case incognitoSpaceSortIndex
         /// Snapshot of the slot/window/Space layout written on every
         /// `SpaceWindowSlot.registerWindow`. Read on the next launch by
         /// `SpaceManager` so Chromium-restored windows reattach to the
@@ -224,25 +214,6 @@ extension AccountUserDefaults {
     /// mutate a snapshot from `spaceThemeIds()` and pass the new map here.
     func setSpaceThemeIds(_ map: [String: String]) {
         set(map, forKey: DefaultsKey.spaceThemeIds.rawValue)
-    }
-
-    /// Icon of the built-in Incognito Space, or nil for the built-in default.
-    func incognitoSpaceIconName() -> String? {
-        string(forKey: DefaultsKey.incognitoSpaceIconName.rawValue)
-    }
-
-    func setIncognitoSpaceIconName(_ iconName: String) {
-        set(iconName, forKey: DefaultsKey.incognitoSpaceIconName.rawValue)
-    }
-
-    /// Position of the built-in Incognito Space in the Space list, or nil
-    /// to keep it after every user Space.
-    func incognitoSpaceSortIndex() -> Int? {
-        object(forKey: DefaultsKey.incognitoSpaceSortIndex.rawValue) as? Int
-    }
-
-    func setIncognitoSpaceSortIndex(_ index: Int) {
-        set(index, forKey: DefaultsKey.incognitoSpaceSortIndex.rawValue)
     }
 }
 

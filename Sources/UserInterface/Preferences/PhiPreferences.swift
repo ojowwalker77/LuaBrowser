@@ -57,7 +57,7 @@ extension PhiPreferences {
         case showBookmarkBarOnNewTabPage // In traditional layout, show bookmark bar on new tab page
         case alwaysShowURLPath // In address bar menu, always show full URL path
         case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
-        case incognitoSpaceEnabled // Surfaces the built-in Incognito Space (dedicated OTR-profile backed); toggled in Spaces settings
+        case suppressCloseIncognitoSpaceWarning // "Do not ask again" on the close-Incognito-Space confirmation
 
         var defaultValue: Bool {
             switch self {
@@ -75,11 +75,11 @@ extension PhiPreferences {
                 return false
             case .spacesFeatureEnabled:
                 return true
-            case .incognitoSpaceEnabled:
+            case .suppressCloseIncognitoSpaceWarning:
                 return false
             }
         }
-        
+
         func loadValue() -> Bool {
             UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
         }

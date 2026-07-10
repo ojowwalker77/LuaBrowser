@@ -176,9 +176,6 @@
     "Active" : {
       "comment" : "Search Tabs - Trailing label for the active tab result"
     },
-    "Add Download" : {
-
-    },
     "Add Left Split" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the left third of the page"
     },
@@ -217,9 +214,6 @@
     },
     "Additional info (optional)" : {
       "comment" : "Feedback form - Section header for optional additional information"
-    },
-    "Adds a built-in Space that browses in a private session. URL rules can route sites into it; everything it browsed is cleared when its windows close or Phi quits." : {
-      "comment" : "Spaces settings - Incognito Space toggle tooltip"
     },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
@@ -329,6 +323,9 @@
     "Browser data" : {
       "comment" : "Import browser data page - Page title"
     },
+    "Browser data can't be imported into Incognito. Switch to a regular Space or window, then try again." : {
+      "comment" : "Import browser data - Alert body explaining import is unavailable off-the-record"
+    },
     "Browser memory" : {
       "comment" : "AI settings - Section title for browser memory management"
     },
@@ -347,27 +344,17 @@
     "Can’t delete this Space yet" : {
       "comment" : "Title shown when deleting a Space is blocked by an in-progress import"
     },
+    "Can't Import Browser Data" : {
+      "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
+    },
     "Cancel" : {
       "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
-    },
-    "Cancel First" : {
-
     },
     "Canceled" : {
       "comment" : "Download item row - Status label when download was cancelled"
     },
     "Cancelled" : {
       "comment" : "Download state"
-    },
-    "Card %lld of %lld" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Card %1$lld of %2$lld"
-          }
-        }
-      }
     },
     "Certificate is invalid" : {
       "comment" : "Address bar menu - Certificate validity status"
@@ -436,7 +423,7 @@
       "comment" : "Phi menu - Menu item text when update is ready to install"
     },
     "Close" : {
-      "comment" : "Sidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
+      "comment" : "Confirm closing an Incognito Space\nSidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
     },
     "Close Group" : {
       "comment" : "Tab group context menu - Close the group and all its tabs"
@@ -444,11 +431,11 @@
     "Close Group Overview" : {
       "comment" : "Tab group overview - Accessibility label for the button that closes the overview"
     },
+    "Close Incognito Space" : {
+      "comment" : "Spaces menu - close the active Incognito Space's windows and end it"
+    },
     "Close Other Tabs" : {
       "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
-    },
-    "Close Space" : {
-      "comment" : "Spaces menu - close the Incognito Space's windows and clear the private session"
     },
     "Close Tab" : {
       "comment" : "Search Tabs - Close open tab button tooltip\nTab group overview - Accessibility label for the button that closes one tab card"
@@ -470,12 +457,6 @@
     },
     "Comfortable" : {
       "comment" : "Layout option - Horizontal tabs\nOnboarding layout selection - Comfortable option"
-    },
-    "Complete First" : {
-
-    },
-    "Complete First In-Progress" : {
-
     },
     "Completed" : {
       "comment" : "Download state"
@@ -582,9 +563,6 @@
     "Dark" : {
       "comment" : "Appearance choice: always dark mode"
     },
-    "DEBUG Test Mode" : {
-
-    },
     "Default" : {
       "comment" : "Settings - badge marking the default Space or Profile"
     },
@@ -624,6 +602,9 @@
     "Dismiss" : {
       "comment" : "Tooltip for button to dismiss living download item"
     },
+    "Do not ask again" : {
+      "comment" : "Suppression checkbox of the close-Incognito-Space confirmation"
+    },
     "Domain" : {
       "comment" : "URL rule match type: exact host only"
     },
@@ -638,9 +619,6 @@
     },
     "Download location" : {
       "comment" : "Profiles settings - download location row label"
-    },
-    "Download Test Controls" : {
-
     },
     "Downloading" : {
       "comment" : "Download state"
@@ -774,9 +752,6 @@
     "External Data Connectors help to provide additional context for better AI experience" : {
       "comment" : "AI settings - Description explaining external data connectors purpose"
     },
-    "Fail First In-Progress" : {
-
-    },
     "Failed" : {
       "comment" : "Download item row - Status label when download failed\nDownload state"
     },
@@ -900,8 +875,8 @@
     "Incognito" : {
       "comment" : "Built-in Incognito Space name\nIncognito label in the native new tab page"
     },
-    "Incognito Space" : {
-      "comment" : "Spaces settings - Incognito Space toggle label"
+    "Incognito %d" : {
+      "comment" : "Incognito Space name when several are open; %d is its number"
     },
     "Install and Restart" : {
       "comment" : "Update alert - Button to install update and restart the app"
@@ -929,9 +904,6 @@
     },
     "Item 2" : {
 
-    },
-    "Its open tabs will close and its browsing data will be cleared." : {
-      "comment" : "Body of the confirmation shown when disabling the Incognito Space with open tabs"
     },
     "Just now" : {
       "comment" : "Download item row - Relative time when download completed less than a minute ago"
@@ -974,9 +946,6 @@
     },
     "Linking..." : {
       "comment" : "Phi Link - Custom bot linking text"
-    },
-    "Living Downloads Test" : {
-
     },
     "Loading image…" : {
       "comment" : "Image preview loading"
@@ -1021,7 +990,7 @@
       "comment" : "Tab context menu - Submenu to move this tab to another Space"
     },
     "Mute" : {
-      "comment" : "Notification menu option - Disable auto popup for notification cards\nTab mute button tooltip - mute"
+      "comment" : "Notification menu option - Disable auto popup for notification cards"
     },
     "Name" : {
       "comment" : "Editor - Label for the title/name input field"
@@ -1046,6 +1015,9 @@
     },
     "New Folder…" : {
       "comment" : "Bookmark editor - Create new folder option in folder picker"
+    },
+    "New Incognito Space" : {
+      "comment" : "File menu - Create a new Incognito Space and bring it to the front"
     },
     "New Nested Folder..." : {
       "comment" : "Bookmark New Folder menu item"
@@ -1097,9 +1069,6 @@
     },
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
-    },
-    "Next Test (%lld items)" : {
-
     },
     "No Backups Available" : {
       "comment" : "Help menu - Time Machine submenu placeholder when no completed backups exist"
@@ -1404,9 +1373,6 @@
     "Replace Top" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it"
     },
-    "Reset" : {
-
-    },
     "Restarting Phi..." : {
       "comment" : "Time Machine restore progress stage"
     },
@@ -1548,9 +1514,6 @@
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
     },
-    "Start Test" : {
-
-    },
     "Starting restore..." : {
       "comment" : "Time Machine restore progress stage"
     },
@@ -1587,9 +1550,6 @@
     "The default Space can't be moved to another profile or deleted." : {
       "comment" : "Spaces settings - default Space limits note"
     },
-    "The Incognito Space browses in a private session. Its name and profile are fixed; the toggle above the list turns it off." : {
-      "comment" : "Spaces settings - Incognito Space limits note"
-    },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
     },
@@ -1614,6 +1574,9 @@
     "This version of Phi cannot open local browser data that was updated by a newer version. Install the latest Phi version and try again." : {
       "comment" : "Local store compatibility alert - body when a newer app is required to read local data"
     },
+    "This will also close this Incognito Space, are you sure?" : {
+      "comment" : "Title of the confirmation shown when a close would tear down an Incognito Space"
+    },
     "Time Machine Backups" : {
       "comment" : "Help menu - Parent menu item listing completed Phi Time Machine backups"
     },
@@ -1636,16 +1599,13 @@
       "comment" : "IM Channels - Custom bot verify success"
     },
     "Turn Off" : {
-      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors\nConfirm disabling the Incognito Space"
+      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors"
     },
     "Turn Off AI Features?" : {
       "comment" : "AI settings - Confirmation alert title when disabling all AI features"
     },
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
-    },
-    "Turn off Incognito Space?" : {
-      "comment" : "Title of the confirmation shown when disabling the Incognito Space with open tabs"
     },
     "Unable to open connector authorization." : {
       "comment" : "AI settings - OAuth authorization open error"
@@ -1664,9 +1624,6 @@
     },
     "Unlink" : {
       "comment" : "Phi Link - Official bot unlink button"
-    },
-    "Unmute" : {
-      "comment" : "Tab mute button tooltip - unmute"
     },
     "Unpin" : {
       "comment" : "Tab context menu - Menu item to unpin the selected tab"

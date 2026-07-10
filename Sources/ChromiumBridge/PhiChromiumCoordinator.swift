@@ -140,9 +140,24 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             }
 
             // List the current Space first, then the rest in their order.
+            // Live Incognito Spaces collapse into ONE generic "Incognito"
+            // choice: its id is the rules' generic target, which
+            // `routeAskedURL` resolves to the first live Incognito Space —
+            // creating one when none exists — so the choice is always
+            // offered. It leads when the navigation started in an Incognito
+            // Space (that Space is then the resolution target) and trails
+            // the user Spaces otherwise.
             let currentSpaceId = controller.spaceId
-            let ordered = spaces.filter { $0.spaceId == currentSpaceId }
-                + spaces.filter { $0.spaceId != currentSpaceId }
+            let currentIsIncognito = SpaceManager.isIncognitoSpaceId(currentSpaceId)
+            let userSpaces = spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) }
+            var ordered = userSpaces.filter { $0.spaceId == currentSpaceId }
+                + userSpaces.filter { $0.spaceId != currentSpaceId }
+            let incognitoTarget = manager.incognitoRuleTargetSpace()
+            if currentIsIncognito {
+                ordered.insert(incognitoTarget, at: 0)
+            } else {
+                ordered.append(incognitoTarget)
+            }
 
             // Resolve each Space's theme color (its pinned theme, or the
             // current theme when none) for the source window's appearance, so a
@@ -162,11 +177,16 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // so the item background is translucent like the box.
                 let legible: NSColor = themeNSColor.isLight() ? .black : .white
                 let opacity = theme.windowOverlayOpacity(for: appearance)
+                // The generic Incognito choice is "current" whenever the
+                // navigation started in any Incognito Space — that Space is
+                // what the choice resolves to.
+                let isCurrent = space.spaceId == currentSpaceId
+                    || (currentIsIncognito && space.spaceId == SpaceManager.incognitoRuleTargetId)
                 return SpaceChooserItem(
                     id: space.spaceId,
                     name: space.name,
                     iconName: space.iconName,
-                    isCurrent: space.spaceId == currentSpaceId,
+                    isCurrent: isCurrent,
                     themeColor: Color(nsColor: themeNSColor.withAlphaComponent(opacity)),
                     textColor: Color(nsColor: legible))
             }

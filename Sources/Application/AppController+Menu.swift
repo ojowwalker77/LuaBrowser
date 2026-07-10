@@ -29,6 +29,7 @@ extension AppController {
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
+    static let fileNewIncognitoSpaceItemTag = 500019
     static let spacesNewSpaceItemTag = 500030
     static let spacesRenameItemTag = 500031
     static let spacesChangeThemeParentTag = 500033
@@ -187,6 +188,23 @@ extension AppController {
                         item.keyEquivalent = ""
                         item.keyEquivalentModifierMask = .init(rawValue: 0)
                     }
+                }
+                // Remove-then-insert keeps this idempotent across menu
+                // rebuilds (Chromium can swap the main menu wholesale).
+                subMenu.items.removeAll { $0.tag == AppController.fileNewIncognitoSpaceItemTag }
+                let newIncognitoSpaceItem = NSMenuItem(
+                    title: NSLocalizedString("New Incognito Space", comment: "File menu - Create a new Incognito Space and bring it to the front"),
+                    action: #selector(newIncognitoSpaceFromMenu(_:)),
+                    keyEquivalent: ""
+                )
+                newIncognitoSpaceItem.tag = AppController.fileNewIncognitoSpaceItemTag
+                newIncognitoSpaceItem.target = self
+                if let incognitoWindowIndex = subMenu.items.firstIndex(where: {
+                    $0.tag == CommandWrapper.IDC_NEW_INCOGNITO_WINDOW.rawValue
+                }) {
+                    subMenu.insertItem(newIncognitoSpaceItem, at: incognitoWindowIndex + 1)
+                } else {
+                    subMenu.addItem(newIncognitoSpaceItem)
                 }
             } else
             
@@ -952,14 +970,14 @@ extension AppController {
         deleteSpaceItem.target = self
         menu.addItem(deleteSpaceItem)
 
-        // The Incognito Space's own action: close its windows, which ends
-        // (and clears) the private session without touching the feature
-        // toggle. Appended only while it IS the active Space — this builder
-        // runs on every menu open, so the conditional presence stays fresh.
-        if activeSpace?.spaceId == SpaceManager.incognitoSpaceId {
+        // An Incognito Space's own action: close its windows and tear the
+        // Space itself down (confirmed in `requestCloseIncognitoSpace`).
+        // Appended only while one IS the active Space — this builder runs on
+        // every menu open, so the conditional presence stays fresh.
+        if let activeSpaceId = activeSpace?.spaceId, SpaceManager.isIncognitoSpaceId(activeSpaceId) {
             menu.addItem(.separator())
             let closeSpaceItem = NSMenuItem(
-                title: NSLocalizedString("Close Space", comment: "Spaces menu - close the Incognito Space's windows and clear the private session"),
+                title: NSLocalizedString("Close Incognito Space", comment: "Spaces menu - close the active Incognito Space's windows and end it"),
                 action: #selector(closeIncognitoSpaceFromMenu(_:)),
                 keyEquivalent: ""
             )
@@ -1373,17 +1391,39 @@ extension AppController {
         SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
     }
 
-    /// Closes the Incognito Space's windows across all slots — ending, and
-    /// thereby clearing, its private session — while leaving the feature
-    /// enabled so the pip stays in the strip. No confirmation, matching how
-    /// closing a window never prompts. Reachable only while the Incognito
-    /// Space is active (`appendActiveSpaceMenuItems` gates the item).
+    /// Closes the active Incognito Space: its windows across all slots go,
+    /// and the Space itself is torn down with them. Confirmed (with a "Do
+    /// not ask again" option) in `requestCloseIncognitoSpace`. Reachable
+    /// only while an Incognito Space is active (`appendActiveSpaceMenuItems`
+    /// gates the item).
     @objc func closeIncognitoSpaceFromMenu(_ sender: Any?) {
+        guard let spaceId = currentActiveSpace()?.spaceId,
+              SpaceManager.isIncognitoSpaceId(spaceId) else { return }
         // Menu actions always arrive on the main thread; assume isolation
         // rather than annotating the @objc selector (same pattern as
         // SpaceManager.applyTheme).
         MainActor.assumeIsolated {
-            SpaceManager.shared.closeIncognitoSpaceWindows()
+            SpaceManager.shared.requestCloseIncognitoSpace(spaceId: spaceId)
+        }
+    }
+
+    /// Creates a new Incognito Space and brings it to the front of the
+    /// focused window — or a fresh window when none is open. All Incognito
+    /// Spaces browse the same private session (one shared OTR profile);
+    /// each is its own Space in the strip until it's closed.
+    @objc func newIncognitoSpaceFromMenu(_ sender: Any?) {
+        MainActor.assumeIsolated {
+            let manager = SpaceManager.shared
+            let spaceId = manager.createIncognitoSpace()
+            if let slot = currentSpacesSlot() {
+                slot.suppressHoverCard(spaceId: spaceId)
+                slot.activate(spaceId: spaceId)
+            } else {
+                // No browser window open (menu-bar-only state): mint a slot
+                // and spawn the Space's window into it, the same shape a
+                // Chromium-initiated Cmd+N takes.
+                manager.createSlot(initialSpaceId: spaceId).activate(spaceId: spaceId)
+            }
         }
     }
 
@@ -1591,6 +1631,12 @@ extension AppController {
             }
             return spacesFeatureEnabled && LoginController.shared.isLoggedin()
         }
+        if item.action == #selector(newIncognitoSpaceFromMenu(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.isHidden = !spacesFeatureEnabled
+            }
+            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+        }
         if item.action == #selector(deleteSelectedProfile(_:)) {
             guard spacesFeatureEnabled,
                   LoginController.shared.isLoggedin(),
@@ -1615,20 +1661,20 @@ extension AppController {
         ]
         if let action = item.action, spacesActions.contains(action) {
             guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
-            // The built-in Incognito Space's name, profile binding and
-            // existence are fixed: rename would be a silent store no-op on
-            // its sentinel id, its OTR profile can't be re-bound, and the
-            // Space is removed via its settings toggle, not delete. Icon and
-            // theme stay enabled — `changeIcon`/`setTheme` persist the
-            // sentinel's choices outside SwiftData. Navigation and the rules
-            // editor stay available too.
+            // An Incognito Space's name, profile binding and existence are
+            // fixed: its name is derived ("Incognito" / "Incognito N"), its
+            // shared OTR profile can't be re-bound, and the Space ends via
+            // Close Incognito Space, not delete. Icon and theme stay
+            // enabled — both live outside SwiftData. Navigation and the
+            // rules editor stay available too.
             let mutatingSpaceActions: [Selector] = [
                 #selector(renameActiveSpace(_:)),
                 #selector(selectSpaceProfile(_:)),
                 #selector(deleteActiveSpace(_:)),
             ]
             if mutatingSpaceActions.contains(action),
-               currentActiveSpace()?.spaceId == SpaceManager.incognitoSpaceId {
+               let activeId = currentActiveSpace()?.spaceId,
+               SpaceManager.isIncognitoSpaceId(activeId) {
                 return false
             }
             if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
