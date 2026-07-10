@@ -148,9 +148,8 @@ final class CustomTooltipRegistration: NSObject {
                 guard let self,
                       !self.isInvalidated,
                       !self.isApplyingNativeTooltipChange,
-                      let view,
-                      let newToolTip = change.newValue ?? nil else { return }
-                self.displacedNativeTooltip = newToolTip
+                      let view else { return }
+                self.displacedNativeTooltip = change.newValue ?? nil
                 self.suppressNativeTooltips(on: view)
             }
         }
@@ -181,7 +180,8 @@ extension NSView {
     /// Installs the default text tooltip. The custom tooltip becomes the sole
     /// tooltip owner for this view, so existing `addToolTip` rects are removed;
     /// a displaced `toolTip` string is restored when the custom tooltip is
-    /// removed. Passing `nil` or an empty string removes the custom tooltip.
+    /// removed. Install after configuring native tooltip rects. Passing `nil`
+    /// or an empty string removes the custom tooltip.
     func setCustomTooltip(
         _ text: String?,
         configuration: CustomTooltipConfiguration = .default
@@ -197,6 +197,7 @@ extension NSView {
 
     /// Installs a custom SwiftUI tooltip on an AppKit host view. The supplied
     /// content owns its complete visual style and should have an intrinsic size.
+    /// Install after configuring native tooltip rects.
     func setCustomTooltip<TooltipContent: View>(
         configuration: CustomTooltipConfiguration = .default,
         @ViewBuilder content: () -> TooltipContent
@@ -362,6 +363,7 @@ private final class CustomTooltipAnchorView: NSView {
 extension View {
     /// Adds a default-styled custom tooltip that takes precedence over a
     /// directly adjacent native `.help(...)` in either modifier order.
+    /// Apply the pair after layout modifiers so both describe the same view.
     func customTooltip(
         _ text: String?,
         configuration: CustomTooltipConfiguration = .default
@@ -380,6 +382,7 @@ extension View {
     ///
     /// A directly adjacent native `.help(...)` is suppressed in either
     /// modifier order while this custom tooltip is present.
+    /// Apply the pair after layout modifiers so both describe the same view.
     func customTooltip<TooltipContent: View>(
         configuration: CustomTooltipConfiguration = .default,
         @ViewBuilder content: () -> TooltipContent

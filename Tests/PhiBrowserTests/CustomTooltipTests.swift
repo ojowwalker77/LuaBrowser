@@ -11,6 +11,57 @@ import XCTest
 
 @MainActor
 final class CustomTooltipTests: XCTestCase {
+    private struct TooltipThemeSnapshot: Equatable {
+        let themeID: String
+        let appearance: Appearance
+        let colorScheme: ColorScheme
+    }
+
+    private final class TooltipThemeProbe {
+        private(set) var snapshots: [TooltipThemeSnapshot] = []
+
+        var latestSnapshot: TooltipThemeSnapshot? {
+            snapshots.last
+        }
+
+        func record(_ snapshot: TooltipThemeSnapshot) {
+            guard snapshots.last != snapshot else { return }
+            snapshots.append(snapshot)
+        }
+    }
+
+    private struct TooltipThemeProbeView: View {
+        @Environment(\.phiTheme) private var theme
+        @Environment(\.phiAppearance) private var appearance
+        @Environment(\.colorScheme) private var colorScheme
+
+        let probe: TooltipThemeProbe
+
+        var body: some View {
+            Text("Themed")
+                .onAppear(perform: recordSnapshot)
+                .onChange(of: theme.id) { _, _ in
+                    recordSnapshot()
+                }
+                .onChange(of: appearance) { _, _ in
+                    recordSnapshot()
+                }
+                .onChange(of: colorScheme) { _, _ in
+                    recordSnapshot()
+                }
+        }
+
+        private func recordSnapshot() {
+            probe.record(
+                TooltipThemeSnapshot(
+                    themeID: theme.id,
+                    appearance: appearance,
+                    colorScheme: colorScheme
+                )
+            )
+        }
+    }
+
     @MainActor
     private final class ManualScheduler {
         private final class ScheduledAction {
@@ -188,6 +239,39 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertNil(controller.activeOwnerID)
         XCTAssertFalse(presenter.isVisible)
         XCTAssertEqual(presenter.presentCount, 0)
+    }
+
+    func testPointerWatchdogHidesTooltipWhenExitEventIsMissed() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        var mouseLocation = fixture.mouseLocation
+        let controller = CustomTooltipController(
+            window: fixture.window,
+            presenter: presenter,
+            scheduler: scheduler.schedule,
+            mouseLocation: { mouseLocation },
+            isEligibleForPresentation: { _ in true }
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Watchdog")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
+        )
+        XCTAssertTrue(presenter.isVisible)
+
+        mouseLocation = .zero
+        let watchdogFired = expectation(description: "Pointer watchdog fired")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            watchdogFired.fulfill()
+        }
+        wait(for: [watchdogFired], timeout: 1)
+
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertNil(controller.activeOwnerID)
+        XCTAssertEqual(presenter.dismissCount, 1)
     }
 
     func testWarmHandoffShowsNextViewImmediatelyAndReusesSurface() throws {
@@ -465,6 +549,72 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertEqual(presenter.lastThemeProvider?.currentAppearance, .dark)
     }
 
+    func testRealTooltipSurfaceTracksWindowThemeAndSwiftUIEnvironment() throws {
+        let fixture = makeWindow()
+        fixture.window.orderFront(nil)
+        let scheduler = ManualScheduler()
+        let initialTheme = Theme(id: "tooltip-light", name: "Tooltip Light")
+        let updatedTheme = Theme(id: "tooltip-dark", name: "Tooltip Dark")
+        let themeContext = BrowserThemeContext(
+            configuration: BrowserThemeConfiguration(
+                currentTheme: initialTheme,
+                userAppearanceChoice: .light,
+                mirrorsSharedTheme: false,
+                mirrorsSharedAppearance: false
+            )
+        )
+        let probe = TooltipThemeProbe()
+        let controller = CustomTooltipController(
+            window: fixture.window,
+            scheduler: scheduler.schedule,
+            mouseLocation: { fixture.mouseLocation },
+            isEligibleForPresentation: { _ in true },
+            themeProvider: { _ in themeContext }
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(TooltipThemeProbeView(probe: probe)),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
+        )
+        waitForMainQueueUpdates()
+
+        let panel = try XCTUnwrap(
+            fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
+        )
+        let surface = try XCTUnwrap(controller.surfaceIdentifiers)
+        XCTAssertEqual(panel.appearance?.phiAppearance, .light)
+        XCTAssertEqual(
+            probe.latestSnapshot,
+            TooltipThemeSnapshot(
+                themeID: initialTheme.id,
+                appearance: .light,
+                colorScheme: .light
+            )
+        )
+
+        themeContext.setTheme(updatedTheme)
+        themeContext.setUserAppearanceChoice(.dark)
+        waitForMainQueueUpdates()
+
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertEqual(controller.surfaceIdentifiers?.panel, surface.panel)
+        XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, surface.hostingView)
+        XCTAssertEqual(panel.appearance?.phiAppearance, .dark)
+        XCTAssertEqual(
+            probe.latestSnapshot,
+            TooltipThemeSnapshot(
+                themeID: updatedTheme.id,
+                appearance: .dark,
+                colorScheme: .dark
+            )
+        )
+
+        controller.dismissAll()
+        fixture.window.orderOut(nil)
+    }
+
     func testAppKitExtensionReusesRegistrationAndSuppressesNativeTooltip() throws {
         let fixture = makeWindow()
         let originalTrackingAreaCount = fixture.host.trackingAreas.count
@@ -493,6 +643,17 @@ final class CustomTooltipTests: XCTestCase {
 
         XCTAssertNil(fixture.host.customTooltipRegistration)
         XCTAssertEqual(fixture.host.toolTip, "Updated native")
+    }
+
+    func testAppKitExtensionDoesNotRestoreExplicitlyClearedNativeTooltip() {
+        let fixture = makeWindow()
+        fixture.host.toolTip = "Native"
+        fixture.host.setCustomTooltip("Custom")
+
+        fixture.host.toolTip = nil
+        fixture.host.removeCustomTooltip()
+
+        XCTAssertNil(fixture.host.toolTip)
     }
 
     func testSwiftUIModifierInstallsSharedAppKitRegistration() {
@@ -562,5 +723,19 @@ final class CustomTooltipTests: XCTestCase {
 
     private func allSubviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap(allSubviews)
+    }
+
+    private func waitForMainQueueUpdates() {
+        let updatesFinished = expectation(description: "Main queue updates finished")
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async {
+                    DispatchQueue.main.async {
+                        updatesFinished.fulfill()
+                    }
+                }
+            }
+        }
+        wait(for: [updatesFinished], timeout: 5)
     }
 }
