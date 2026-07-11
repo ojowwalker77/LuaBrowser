@@ -62,6 +62,113 @@ final class CustomTooltipTests: XCTestCase {
         }
     }
 
+    private struct VisualCustomTooltipContent: View {
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(Color.accentColor, in: Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Custom tooltip from B")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("Warm handoff · no second delay")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.45))
+            }
+            .fixedSize()
+        }
+    }
+
+    private final class VisualFixtureSurfaceView: NSView {
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(rect: dirtyRect).fill()
+
+            let title = "Window-scoped custom tooltip"
+            let subtitle = "Move directly from A to B to reuse the visible surface."
+            (title as NSString).draw(
+                at: NSPoint(x: 24, y: bounds.maxY - 38),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+                    .foregroundColor: NSColor.labelColor,
+                ]
+            )
+            (subtitle as NSString).draw(
+                at: NSPoint(x: 24, y: bounds.maxY - 60),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            )
+        }
+    }
+
+    private final class VisualFixtureHostView: NSView {
+        let title: String
+        let subtitle: String
+        var isActive = false {
+            didSet {
+                needsDisplay = true
+            }
+        }
+
+        init(frame frameRect: NSRect, title: String, subtitle: String) {
+            self.title = title
+            self.subtitle = subtitle
+            super.init(frame: frameRect)
+        }
+
+        required init?(coder: NSCoder) {
+            nil
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let path = NSBezierPath(
+                roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                xRadius: 9,
+                yRadius: 9
+            )
+            let fillColor = isActive
+                ? NSColor.controlAccentColor.withAlphaComponent(0.16)
+                : NSColor.controlBackgroundColor
+            fillColor.setFill()
+            path.fill()
+            (isActive ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+            path.lineWidth = isActive ? 2 : 1
+            path.stroke()
+
+            (title as NSString).draw(
+                at: NSPoint(x: 12, y: bounds.maxY - 25),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                    .foregroundColor: NSColor.labelColor,
+                ]
+            )
+            (subtitle as NSString).draw(
+                at: NSPoint(x: 12, y: 10),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 10),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            )
+        }
+    }
+
     @MainActor
     private final class ManualScheduler {
         private final class ScheduledAction {
@@ -615,6 +722,124 @@ final class CustomTooltipTests: XCTestCase {
         fixture.window.orderOut(nil)
     }
 
+    func testVisualDefaultCustomWarmHandoffAndDarkModeAttachments() throws {
+        let fixture = makeVisualWindow()
+        fixture.window.appearance = Appearance.light.nsAppearance
+        fixture.window.orderFront(nil)
+        waitForMainQueueUpdates()
+
+        let scheduler = ManualScheduler()
+        let themeContext = BrowserThemeContext(
+            configuration: BrowserThemeConfiguration(
+                currentTheme: Theme(id: "tooltip-visual", name: "Tooltip Visual"),
+                userAppearanceChoice: .light,
+                mirrorsSharedTheme: false,
+                mirrorsSharedAppearance: false
+            )
+        )
+        var mouseLocation = screenMidpoint(of: fixture.firstHost)
+        let controller = CustomTooltipController(
+            window: fixture.window,
+            scheduler: scheduler.schedule,
+            mouseLocation: { mouseLocation },
+            isEligibleForPresentation: { _ in true },
+            themeProvider: { _ in themeContext }
+        )
+        defer {
+            controller.dismissAll()
+            fixture.window.orderOut(nil)
+        }
+
+        let firstOwnerID = UUID()
+        let secondOwnerID = UUID()
+        fixture.firstHost.isActive = true
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.firstHost,
+            content: AnyView(DefaultCustomTooltipContent(text: "Default tooltip from A")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
+        )
+        waitForMainQueueUpdates()
+
+        let panel = try XCTUnwrap(
+            fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
+        )
+        let firstSurface = try XCTUnwrap(controller.surfaceIdentifiers)
+        let firstPanelOrigin = panel.frame.origin
+        try attachVisualTooltipSnapshot(
+            window: fixture.window,
+            panel: panel,
+            named: "Custom Tooltip - Light - Default Style"
+        )
+
+        controller.pointerExited(ownerID: firstOwnerID)
+        XCTAssertFalse(controller.isVisible)
+
+        fixture.firstHost.isActive = false
+        fixture.secondHost.isActive = true
+        mouseLocation = screenMidpoint(of: fixture.secondHost)
+        controller.pointerEntered(
+            ownerID: secondOwnerID,
+            anchorView: fixture.secondHost,
+            content: AnyView(VisualCustomTooltipContent()),
+            configuration: CustomTooltipConfiguration(showDelay: 5, displayDuration: nil)
+        )
+        waitForMainQueueUpdates()
+
+        let secondSurface = try XCTUnwrap(controller.surfaceIdentifiers)
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertEqual(controller.activeOwnerID, secondOwnerID)
+        XCTAssertTrue(scheduler.pendingDelays.isEmpty)
+        XCTAssertEqual(firstSurface.panel, secondSurface.panel)
+        XCTAssertEqual(firstSurface.hostingView, secondSurface.hostingView)
+        XCTAssertNotEqual(firstPanelOrigin.x, panel.frame.origin.x)
+        try attachVisualTooltipSnapshot(
+            window: fixture.window,
+            panel: panel,
+            named: "Custom Tooltip - Light - Warm Custom Style"
+        )
+
+        themeContext.setUserAppearanceChoice(.dark)
+        fixture.window.appearance = Appearance.dark.nsAppearance
+        fixture.surface.needsDisplay = true
+        fixture.firstHost.needsDisplay = true
+        fixture.secondHost.needsDisplay = true
+        waitForMainQueueUpdates()
+
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertEqual(panel.appearance?.phiAppearance, .dark)
+        XCTAssertEqual(panel.contentView?.effectiveAppearance.phiAppearance, .dark)
+        XCTAssertEqual(controller.surfaceIdentifiers?.panel, firstSurface.panel)
+        XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, firstSurface.hostingView)
+        try attachVisualTooltipSnapshot(
+            window: fixture.window,
+            panel: panel,
+            named: "Custom Tooltip - Dark - Warm Custom Style"
+        )
+
+        controller.pointerExited(ownerID: secondOwnerID)
+        fixture.firstHost.isActive = true
+        fixture.secondHost.isActive = false
+        mouseLocation = screenMidpoint(of: fixture.firstHost)
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.firstHost,
+            content: AnyView(DefaultCustomTooltipContent(text: "Default tooltip from A")),
+            configuration: CustomTooltipConfiguration(showDelay: 5, displayDuration: nil)
+        )
+        waitForMainQueueUpdates()
+
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertTrue(scheduler.pendingDelays.isEmpty)
+        XCTAssertEqual(controller.surfaceIdentifiers?.panel, firstSurface.panel)
+        XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, firstSurface.hostingView)
+        try attachVisualTooltipSnapshot(
+            window: fixture.window,
+            panel: panel,
+            named: "Custom Tooltip - Dark - Default Style"
+        )
+    }
+
     func testAppKitExtensionReusesRegistrationAndSuppressesNativeTooltip() throws {
         let fixture = makeWindow()
         let originalTrackingAreaCount = fixture.host.trackingAreas.count
@@ -687,6 +912,12 @@ final class CustomTooltipTests: XCTestCase {
     }
 
     private typealias WindowFixture = (window: NSWindow, host: NSView, mouseLocation: CGPoint)
+    private typealias VisualWindowFixture = (
+        window: NSWindow,
+        surface: VisualFixtureSurfaceView,
+        firstHost: VisualFixtureHostView,
+        secondHost: VisualFixtureHostView
+    )
 
     private func makeWindow() -> WindowFixture {
         let window = NSWindow(
@@ -703,6 +934,105 @@ final class CustomTooltipTests: XCTestCase {
         let rectInWindow = host.convert(host.bounds, to: nil)
         let screenRect = window.convertToScreen(rectInWindow)
         return (window, host, CGPoint(x: screenRect.midX, y: screenRect.midY))
+    }
+
+    private func makeVisualWindow() -> VisualWindowFixture {
+        let windowSize = CGSize(width: 560, height: 240)
+        let visibleFrame = NSScreen.main?.visibleFrame ?? CGRect(
+            x: 100,
+            y: 100,
+            width: windowSize.width,
+            height: windowSize.height
+        )
+        let windowOrigin = CGPoint(
+            x: visibleFrame.midX - windowSize.width / 2,
+            y: visibleFrame.midY - windowSize.height / 2
+        )
+        let window = NSWindow(
+            contentRect: CGRect(origin: windowOrigin, size: windowSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let surface = VisualFixtureSurfaceView(
+            frame: CGRect(origin: .zero, size: windowSize)
+        )
+        let firstHost = VisualFixtureHostView(
+            frame: CGRect(x: 70, y: 110, width: 180, height: 56),
+            title: "A · Default style",
+            subtitle: "Default string overload"
+        )
+        let secondHost = VisualFixtureHostView(
+            frame: CGRect(x: 310, y: 110, width: 180, height: 56),
+            title: "B · Custom style",
+            subtitle: "Configured cold delay: 5 s"
+        )
+        surface.addSubview(firstHost)
+        surface.addSubview(secondHost)
+        window.contentView = surface
+        return (window, surface, firstHost, secondHost)
+    }
+
+    private func screenMidpoint(of view: NSView) -> CGPoint {
+        guard let window = view.window else { return .zero }
+        let rectInWindow = view.convert(view.bounds, to: nil)
+        let screenRect = window.convertToScreen(rectInWindow)
+        return CGPoint(x: screenRect.midX, y: screenRect.midY)
+    }
+
+    private func attachVisualTooltipSnapshot(
+        window: NSWindow,
+        panel: NSPanel,
+        named name: String
+    ) throws {
+        let sourceView = try XCTUnwrap(window.contentView)
+        let panelView = try XCTUnwrap(panel.contentView)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        sourceView.layoutSubtreeIfNeeded()
+        panelView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        panel.displayIfNeeded()
+
+        let sourceImage = try XCTUnwrap(snapshot(of: sourceView))
+        let panelImage = try XCTUnwrap(
+            WebContentSnapshotter.captureOnScreen(
+                panelView,
+                resolution: .bestResolution
+            ),
+            "The visual attachment must use the real on-screen tooltip panel"
+        )
+        let panelOrigin = CGPoint(
+            x: panel.frame.minX - window.frame.minX,
+            y: panel.frame.minY - window.frame.minY
+        )
+        let composite = NSImage(
+            size: sourceView.bounds.size,
+            flipped: false
+        ) { bounds in
+            sourceImage.draw(in: bounds)
+            panelImage.draw(
+                in: CGRect(origin: panelOrigin, size: panel.frame.size),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+            return true
+        }
+        let attachment = XCTAttachment(image: composite, quality: .original)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func snapshot(of view: NSView) -> NSImage? {
+        guard !view.bounds.isEmpty,
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            return nil
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
     }
 
     private func makeController(
