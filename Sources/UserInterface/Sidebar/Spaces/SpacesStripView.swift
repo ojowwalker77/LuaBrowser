@@ -226,10 +226,9 @@ struct SpacesStripView: View {
         }
         .padding(.horizontal, showsEllipsisAffordance ? Self.horizontalPadding : Self.compactChipHorizontalPadding)
         .contentShape(Rectangle())
-        .onChange(of: slot.iconPickerRequestToken) { _ in
+        .onChange(of: slot.iconPickerRequestToken) { _, _ in
             openActiveIconPicker()
         }
-        .ignoresSafeArea()
     }
 
     /// Opens the icon/emoji picker for the active Space anchored below its icon —

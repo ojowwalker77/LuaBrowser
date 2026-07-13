@@ -9,6 +9,16 @@ import WebKit
 
 @MainActor
 final class PhiSparkleUserDriver: SPUStandardUserDriver {
+    private final class UpdateChoiceContext {
+        weak var driver: PhiSparkleUserDriver?
+        weak var windowController: PhiSparkleUpdateWindowController?
+
+        init(driver: PhiSparkleUserDriver, windowController: PhiSparkleUpdateWindowController) {
+            self.driver = driver
+            self.windowController = windowController
+        }
+    }
+
     weak var updater: SPUUpdater?
     var onUserInitiatedUpdateCheck: (() -> Void)?
 
@@ -46,16 +56,19 @@ final class PhiSparkleUserDriver: SPUStandardUserDriver {
         )
 
         var didReply = false
-        let finish: (SPUUserUpdateChoice) -> Void = { [weak self, weak windowController] choice in
+        // Keep weak references behind a stable context so Release WMO does not
+        // lower a choice-bearing closure with direct weak captures.
+        let context = UpdateChoiceContext(driver: self, windowController: windowController)
+        let finish: (SPUUserUpdateChoice) -> Void = { [context] choice in
             guard !didReply else { return }
             didReply = true
-            self?.persistAutomaticDownloadsPreference(from: windowController)
+            context.driver?.persistAutomaticDownloadsPreference(from: context.windowController)
             if choice == .install {
-                self?.closeUpdateWindow()
+                context.driver?.closeUpdateWindow()
                 reply(choice)
             } else {
                 reply(choice)
-                self?.closeUpdateWindow()
+                context.driver?.closeUpdateWindow()
             }
         }
 

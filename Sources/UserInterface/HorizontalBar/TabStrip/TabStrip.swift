@@ -2623,9 +2623,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         // chip's left separator (not directly adjacent to tab[i]). For
         // collapsed groups this check is unnecessary — their members are
         // zero-width with separators pre-hidden at x=-1000.
-        let firstMemberOfExpandedGroup: (Int) -> Bool = { [weak self] idx in
-            guard let self = self,
-                  idx >= 0, idx < tabs.count,
+        let firstMemberOfExpandedGroup: (Int) -> Bool = { idx in
+            guard idx >= 0, idx < tabs.count,
                   let token = tabs[idx].groupToken,
                   let group = self.browserState.groups[token],
                   !group.isCollapsed else { return false }

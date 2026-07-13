@@ -4458,8 +4458,7 @@ final class SpaceWindowSlot: ObservableObject {
         let duration = Self.swapAnimationDuration
         var didFinish = false
         var timer: Timer?
-        let finalize: (Bool) -> Void = { [weak self, weak leavingView] cancelled in
-            _ = cancelled
+        let finalize: () -> Void = { [weak self, weak leavingView] in
             guard !didFinish else { return }
             didFinish = true
             timer?.invalidate()
@@ -4477,14 +4476,14 @@ final class SpaceWindowSlot: ObservableObject {
             // one call across the tick / cancel / duration<=0 paths.
             onSwapSettled?()
         }
-        windowSlideCancel = { finalize(true) }
+        windowSlideCancel = finalize
 
         // Drive the slide manually. CALayer's implicit animation is
         // disabled per tick (CATransaction setDisableActions) so the
         // duration is exactly the user-tunable preference rather than
         // the layer's default 0.25s.
         if duration <= 0 {
-            finalize(false)
+            finalize()
             return
         }
 
@@ -4496,7 +4495,7 @@ final class SpaceWindowSlot: ObservableObject {
         let tick = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak leavingView] t in
             guard let leavingView else {
                 t.invalidate()
-                finalize(true)
+                finalize()
                 return
             }
             let elapsed = CACurrentMediaTime() - startTime
@@ -4505,7 +4504,7 @@ final class SpaceWindowSlot: ObservableObject {
             setEnteringTransform(mainStartDx * (1 - eased))
             leavingView.frame = contentBounds.offsetBy(dx: leavingEndDx * eased, dy: 0)
             if progress >= 1.0 {
-                finalize(false)
+                finalize()
             }
         }
         timer = tick
@@ -6051,7 +6050,7 @@ final class SpaceWindowSlot: ObservableObject {
         }
         visibleFrameObservers.removeAll()
         guard let window = controller?.window else { return }
-        let propagate: (Notification) -> Void = { [weak self, weak window] _ in
+        let propagate: () -> Void = { [weak self, weak window] in
             guard let self,
                   !self.isAnimatingWindowSlide,
                   let window,
@@ -6086,13 +6085,13 @@ final class SpaceWindowSlot: ObservableObject {
             forName: NSWindow.didMoveNotification,
             object: window,
             queue: .main,
-            using: propagate
+            using: { _ in propagate() }
         )
         let resize = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification,
             object: window,
             queue: .main,
-            using: propagate
+            using: { _ in propagate() }
         )
         visibleFrameObservers = [move, resize]
     }

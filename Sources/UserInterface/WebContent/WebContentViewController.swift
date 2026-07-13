@@ -56,6 +56,16 @@ enum WebContentConstant {
 
 
 class WebContentViewController: NSViewController {
+    private final class ProgressObserverContext {
+        weak var controller: WebContentViewController?
+        weak var tab: Tab?
+
+        init(controller: WebContentViewController, tab: Tab) {
+            self.controller = controller
+            self.tab = tab
+        }
+    }
+
     private lazy var cancellables = Set<AnyCancellable>()
     /// Cancellables for tab-specific observers (need to be reset when tab changes)
     private var tabObserverCancellables = Set<AnyCancellable>()
@@ -1055,32 +1065,27 @@ class WebContentViewController: NSViewController {
 
         AppLogDebug("[ProgressBar] Bind progress observer tabId=\(tab.guid), isNTP=\(tab.isNTP), progress=\(tab.loadingProgress), layoutEnabled=\(webContentProgressBar.isLayoutEnabled)")
 
-        let updateProgress: (CGFloat) -> Void = { [weak self, weak tab] progress in
-            guard let self else { return }
-            if tab?.isNTP == true {
-                self.webContentProgressBar.setProgress(0, animated: false)
-            } else {
-                self.webContentProgressBar.setProgress(progress, animated: false)
-            }
-        }
-
-        updateProgress(tab.loadingProgress)
+        // Keep the initial update inline. Release WMO can miscompile a
+        // parameterized local closure that captures multiple weak references.
+        let initialProgress = tab.isNTP ? 0 : tab.loadingProgress
+        webContentProgressBar.setProgress(initialProgress, animated: false)
         logProgressIfNeeded(progress: tab.isNTP ? 0 : tab.loadingProgress, tabId: tab.guid, isNTP: tab.isNTP)
 
+        let context = ProgressObserverContext(controller: self, tab: tab)
         tab.$loadingProgress
             .removeDuplicates()
             .combineLatest(tab.$isLoading)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak tab] progress, isLoading in
-                guard let self else { return }
-                let isNTP = tab?.isNTP == true
+            .sink { [context] progress, isLoading in
+                guard let self = context.controller else { return }
+                let isNTP = context.tab?.isNTP == true
                 var effectiveProgress: CGFloat = isNTP ? 0 : progress
                 if !isLoading {
                     effectiveProgress = 0
                 }
                 AppLogDebug("progress: \(progress), isloading: \(isLoading)")
                 self.webContentProgressBar.setProgress(effectiveProgress)
-                self.logProgressIfNeeded(progress: effectiveProgress, tabId: tab?.guid, isNTP: isNTP)
+                self.logProgressIfNeeded(progress: effectiveProgress, tabId: context.tab?.guid, isNTP: isNTP)
             }
             .store(in: &progressObserverCancellables)
     }
