@@ -111,6 +111,13 @@ struct SpacesStripView: View {
     @State private var stripDraggingId: String?
     @State private var stripOrderedIds: [String] = []
 
+    /// Index of the first pip inside the strip's sliding viewport. When the
+    /// active Space's pip sits outside the visible window, the row slides the
+    /// minimal distance that brings it in (see `ensureActivePipVisible`).
+    /// Always read through `clampedStripStart`, so a shrinking Space list or
+    /// a widening sidebar can never leave the window hanging past the end.
+    @State private var stripStartIndex: Int = 0
+
     /// The pip currently under the cursor — or the active Space while the
     /// horizontal chip is hovered — driving its hover tooltip (Space name,
     /// bound profile, and keyboard shortcut). Only one pip is hovered at a
@@ -132,6 +139,13 @@ struct SpacesStripView: View {
     /// it while the cursor is still on the pip — either would make the wash
     /// lag in or flick off mid-hover.
     @State private var highlightedPipId: String?
+
+    /// Pairs the strip-level glass chip with the active pip's frame anchor.
+    /// The chip is ONE persistent view that re-targets the new active pip's
+    /// anchor on switch, so its frame change animates as a slide — an
+    /// insert/remove chip per pip appeared instantly at the target while the
+    /// removed one slid over, doubling the highlight.
+    @Namespace private var pipGlassNamespace
 
     /// The pip whose icon/emoji picker is open, presented from its right-click
     /// "Change Icon…" entry. Only one picker is open at a time.
@@ -392,34 +406,16 @@ struct SpacesStripView: View {
     /// a new Space. A large number of Spaces can overflow the row; the
     /// common handful fit within the sidebar width.
     private var iconStrip: some View {
-        // Single row that never wraps: show as many leading pips as fit. The
-        // trailing slot (pinned right via a Spacer) holds the add button — or,
-        // once any pips are hidden, a "…" affordance in its place that opens
-        // the full switcher menu.
+        // Single row that never wraps: a clipped viewport slides along the
+        // full pip row to keep the active pip in view. The trailing slot
+        // (pinned right via a Spacer) holds the add button — or, once any
+        // pips are hidden, a "…" affordance in its place that opens the full
+        // switcher menu.
         GeometryReader { geo in
             let visibleCount = visiblePipCount(availableWidth: geo.size.width)
             let hasOverflow = visibleCount < stripOrderedSpaces.count
             HStack(spacing: Self.stripSpacing) {
-                ForEach(stripOrderedSpaces.prefix(visibleCount), id: \.spaceId) { space in
-                    spacePip(for: space)
-                        .overlay(alignment: .topTrailing) {
-                            agentBadge(for: space.spaceId)
-                        }
-                        .overlay(alignment: .bottomTrailing) {
-                            agentNumberBadge(for: space.spaceId)
-                        }
-                        .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
-                        .onDrag {
-                            stripDraggingId = space.spaceId
-                            return NSItemProvider(object: space.spaceId as NSString)
-                        }
-                        .onDrop(of: [.text], delegate: SpaceRowDropDelegate(
-                            targetSpaceId: space.spaceId,
-                            draggingSpaceId: $stripDraggingId,
-                            orderedIds: $stripOrderedIds,
-                            commit: { manager.reorder(spaceIds: $0) }
-                        ))
-                }
+                pipsViewport(visibleCount: visibleCount)
                 Spacer(minLength: 4)
                 if hasOverflow {
                     moreButton
@@ -433,6 +429,33 @@ struct SpacesStripView: View {
             // far-right slot.
             .contentShape(Rectangle())
             .onHover { stripRowHoverChanged($0) }
+            // Slide the glass chip (and cross-fade the pips' dim/brighten
+            // swap) to the new active pip on every switch source — click,
+            // ⌃-number, menu, swipe. Match the band push-in exactly (same
+            // curve + duration) so the chip lands with the slide. The
+            // viewport shift rides its own `withAnimation` with the same
+            // curve (see `ensureActivePipVisible`), so both slides move
+            // together.
+            .animation(
+                .easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration()),
+                value: slot.activeSpaceId
+            )
+            .onAppear {
+                ensureActivePipVisible(visibleCount: visibleCount, animated: false)
+            }
+            .onChange(of: slot.activeSpaceId) { _ in
+                ensureActivePipVisible(visibleCount: visibleCount, animated: true)
+            }
+            .onChange(of: geo.size.width) { newWidth in
+                ensureActivePipVisible(visibleCount: visiblePipCount(availableWidth: newWidth), animated: false)
+            }
+            .onChange(of: stripOrderedSpaces.map(\.spaceId)) { _ in
+                // A delete/reorder can push the active pip out of the window
+                // (e.g. removing a pip ahead of it). Re-anchor — but never
+                // mid-drag, where the live rearrangement is transient.
+                guard stripDraggingId == nil else { return }
+                ensureActivePipVisible(visibleCount: visibleCount, animated: false)
+            }
         }
         .frame(height: rowHeight)
         // Reset a drag that ends off every pip (Spacer / add button / "…" /
@@ -474,10 +497,108 @@ struct SpacesStripView: View {
         }
     }
 
-    /// How many leading pips fit on the single row, reserving the trailing
-    /// slot for the add button — or the "…" affordance that replaces it when
-    /// not every Space fits. All strip items share a uniform width, so the
-    /// count is pure arithmetic.
+    /// Clipped sliding window onto the FULL pip row. Every pip stays in the
+    /// tree — the ones outside the window sit beyond the clip with hit
+    /// testing off — so both the window shift and the glass chip are plain
+    /// frame animations, and the chip can slide to a pip that is itself
+    /// still sliding into view.
+    @ViewBuilder
+    private func pipsViewport(visibleCount: Int) -> some View {
+        let start = clampedStripStart(visibleCount: visibleCount)
+        let step = Self.stripItemWidth + Self.stripSpacing
+        // When pips are hidden past an edge, the window widens by half an
+        // icon there so the neighbor peeks through the clip — the cue that
+        // the row continues. The peeked halves stay non-interactive: their
+        // hit region would extend past the clip into the padding / Spacer.
+        let peek = Self.stripItemWidth / 2 + Self.stripSpacing
+        let leadingPeek: CGFloat = start > 0 ? peek : 0
+        let trailingPeek: CGFloat = start + visibleCount < stripOrderedSpaces.count ? peek : 0
+        HStack(spacing: Self.stripSpacing) {
+            ForEach(Array(stripOrderedSpaces.enumerated()), id: \.element.spaceId) { index, space in
+                spacePip(for: space)
+                    .overlay(alignment: .topTrailing) {
+                        agentBadge(for: space.spaceId)
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        agentNumberBadge(for: space.spaceId)
+                    }
+                    .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
+                    // `.clipped()` below is visual only — pips beyond the
+                    // window would still swallow clicks/hovers aimed at the
+                    // Spacer and the trailing button without this.
+                    .allowsHitTesting(index >= start && index < start + visibleCount)
+                    .onDrag {
+                        stripDraggingId = space.spaceId
+                        return NSItemProvider(object: space.spaceId as NSString)
+                    }
+                    .onDrop(of: [.text], delegate: SpaceRowDropDelegate(
+                        targetSpaceId: space.spaceId,
+                        draggingSpaceId: $stripDraggingId,
+                        orderedIds: $stripOrderedIds,
+                        commit: { manager.reorder(spaceIds: $0) }
+                    ))
+            }
+        }
+        // The active pip's liquid-glass chip — the selected-tab-row treatment
+        // (translucent white fill + soft drop shadow). One persistent view
+        // behind the row that adopts the active pip's published frame, so a
+        // switch animates it as a slide. It rides inside the viewport so it
+        // shifts and clips with the row.
+        .background {
+            if let activeId = slot.activeSpaceId,
+               stripOrderedSpaces.contains(where: { $0.spaceId == activeId }) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.sidebarTabSelected)
+                    .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
+                    .matchedGeometryEffect(id: activeId, in: pipGlassNamespace, isSource: false)
+                    .allowsHitTesting(false)
+            }
+        }
+        .offset(x: -CGFloat(start) * step + leadingPeek)
+        .frame(width: pipRowWidth(visibleCount) + leadingPeek + trailingPeek, alignment: .leading)
+        .clipped()
+    }
+
+    /// Width of `count` uniform strip items plus the gaps between them.
+    private func pipRowWidth(_ count: Int) -> CGFloat {
+        count <= 0 ? 0 : CGFloat(count) * Self.stripItemWidth + CGFloat(count - 1) * Self.stripSpacing
+    }
+
+    /// `stripStartIndex` clamped so the window never runs past the end of the
+    /// pip list (after a delete, or a sidebar resize that fits more pips).
+    private func clampedStripStart(visibleCount: Int) -> Int {
+        min(stripStartIndex, max(0, stripOrderedSpaces.count - visibleCount))
+    }
+
+    /// Slides the viewport the minimal distance that brings the active pip
+    /// fully into the window — no-op while it is already visible. Animated
+    /// for user switches (matching the glass chip's slide); instant for
+    /// layout events (first appearance, sidebar resize, list changes).
+    private func ensureActivePipVisible(visibleCount: Int, animated: Bool) {
+        guard visibleCount > 0,
+              let activeId = slot.activeSpaceId,
+              let index = stripOrderedSpaces.firstIndex(where: { $0.spaceId == activeId }) else { return }
+        var start = clampedStripStart(visibleCount: visibleCount)
+        if index < start {
+            start = index
+        } else if index >= start + visibleCount {
+            start = index - visibleCount + 1
+        }
+        guard start != stripStartIndex else { return }
+        if animated {
+            withAnimation(.easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration())) {
+                stripStartIndex = start
+            }
+        } else {
+            stripStartIndex = start
+        }
+    }
+
+    /// How many whole pips fit inside the sliding window, reserving the
+    /// trailing slot for the add button — or the "…" affordance that replaces
+    /// it when not every Space fits — plus, when overflowing, room for the
+    /// half-pip peeks at the window's edges (see `pipsViewport`). All strip
+    /// items share a uniform width, so the count is pure arithmetic.
     private func visiblePipCount(availableWidth: CGFloat) -> Int {
         let total = stripOrderedSpaces.count
         guard total > 0 else { return 0 }
@@ -490,11 +611,13 @@ struct SpacesStripView: View {
         let budget = availableWidth - item - spacing
         // Everything fits, with the "+" trailing?
         if width(total) <= budget { return total }
-        // Overflowing: the "…" takes the trailing slot; fit as many leading
-        // pips as possible before it.
+        // Overflowing: the "…" takes the trailing slot, and BOTH edge peeks
+        // are reserved regardless of the window's position, so the whole-pip
+        // count never reflows while the row slides.
+        let peekAllowance = item + 2 * spacing
         var count = total - 1
-        while count > 0, width(count) > budget { count -= 1 }
-        return max(count, 0)
+        while count > 1, width(count) + peekAllowance > budget { count -= 1 }
+        return count
     }
 
     /// Pips in drag order: the local `stripOrderedIds` snapshot (rearranged live
@@ -590,20 +713,19 @@ struct SpacesStripView: View {
             )
             .opacity(isActive ? 1 : 0.4)
             .frame(width: 24, height: rowHeight)
-            .background(
-                // The active pip carries the sidebar's liquid-glass selection
-                // treatment — the selected-tab-row chip (translucent white
-                // fill + soft drop shadow); a hovered inactive pip gets the
-                // sidebar's dim hover wash, with the shadow reserved for the
-                // active chip so the wash stays flat.
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        isActive
-                            ? Color.sidebarTabSelected
-                            : highlightedPipId == space.spaceId ? Color.sidebarTabHovered : Color.clear
-                    )
-                    .shadow(color: isActive ? Color.black.opacity(0.15) : Color.clear, radius: 1, x: 0, y: 1)
-            )
+            // Publishes this pip's frame under its spaceId, for the
+            // strip-level glass chip to target (see `iconStrip`).
+            .matchedGeometryEffect(id: space.spaceId, in: pipGlassNamespace)
+            .background {
+                // A hovered inactive pip gets the sidebar's dim hover wash,
+                // which stays flat (no shadow). The active pip's liquid-glass
+                // chip is NOT drawn here — it's a single strip-level view
+                // (see `iconStrip`) so a switch slides it between pips.
+                if !isActive, highlightedPipId == space.spaceId {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.sidebarTabHovered)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
