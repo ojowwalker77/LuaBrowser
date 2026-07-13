@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
+		C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000003 /* CommandShortcutTooltipContent.swift */; };
 		CDA11ED500000000000000B1 /* claude-skill in Resources */ = {isa = PBXBuildFile; fileRef = CDA11ED500000000000000A1 /* claude-skill */; };
 		04FE4637EFE3A1396687DD63 /* AISettingsConnectorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */; };
 		15B618E574463D94C98AEA5F /* AISettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */; };
@@ -507,6 +508,7 @@
 /* Begin PBXFileReference section */
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
+		C70000000000000000000003 /* CommandShortcutTooltipContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandShortcutTooltipContent.swift; sourceTree = "<group>"; };
 		CDA11ED500000000000000A1 /* claude-skill */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "claude-skill"; path = tools/claude-skill; sourceTree = SOURCE_ROOT; };
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
@@ -2039,6 +2041,7 @@
 			children = (
 				C70000000000000000000001 /* CustomTooltipController.swift */,
 				C70000000000000000000002 /* CustomTooltip+Hosting.swift */,
+				C70000000000000000000003 /* CommandShortcutTooltipContent.swift */,
 			);
 			path = Tooltip;
 			sourceTree = "<group>";
@@ -2382,6 +2385,7 @@
 			files = (
 				C70000000000000000000011 /* CustomTooltipController.swift in Sources */,
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
+				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,
 				CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */,
 				4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */,
 				4D454D4F5259000000000004 /* MemoryUsageMonitor.swift in Sources */,

@@ -17,6 +17,22 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(CommandWrapper.PHI_COPY_URL.displayName, "Copy URL")
     }
 
+    func testCopyURLShortcutKeycapsMatchMacModifierOrder() {
+        let shortcut = ShortcutsKey(characters: "c", modifiers: [.command, .shift])
+
+        XCTAssertEqual(shortcut.keycapTokens, ["⇧", "⌘", "C"])
+    }
+
+    func testShortcutKeycapsUseReadableSpecialKeySymbols() {
+        let shortcut = ShortcutsKey(
+            characters: "\u{F702}",
+            modifiers: [.control, .option]
+        )
+
+        XCTAssertEqual(shortcut.keycapTokens, ["⌃", "⌥", "←"])
+        XCTAssertEqual(shortcut.displayString, "⌥⌃←")
+    }
+
     func testThemeSnapshotRoundTripPreservesEditableColorsAndOverlayOpacity() {
         let theme = Theme(id: "theme-snapshot-round-trip", name: "Snapshot")
         theme.setColor(

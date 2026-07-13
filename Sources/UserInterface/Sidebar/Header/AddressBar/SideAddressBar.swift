@@ -38,6 +38,12 @@ class SideAddressBar: NSView {
             self?.copyCurrentURL()
         }
         button.toolTip = NSLocalizedString("Copy Link", comment: "Sidebar address bar - Copy current page URL button tooltip")
+        button.setCustomTooltip {
+            CommandShortcutTooltipContent(
+                title: NSLocalizedString("Copy URL", comment: "Copy URL shortcut tooltip title"),
+                command: .PHI_COPY_URL
+            )
+        }
         button.snp.makeConstraints { make in
             make.size.equalTo(CGSize(width: 24, height: 24))
         }

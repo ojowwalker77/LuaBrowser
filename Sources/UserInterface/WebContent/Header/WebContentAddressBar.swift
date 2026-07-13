@@ -359,7 +359,12 @@ struct WebContentAddressBarView: View {
             isAddressBarHovering: isHovering,
             isMenuShown: isMenuShown
         )
-        .help(NSLocalizedString("Copy Link", comment: "Address bar menu - Copy link menu item"),)
+        .customTooltip {
+            CommandShortcutTooltipContent(
+                title: NSLocalizedString("Copy URL", comment: "Copy URL shortcut tooltip title"),
+                command: .PHI_COPY_URL
+            )
+        }
     }
 
     private var menuButton: some View {

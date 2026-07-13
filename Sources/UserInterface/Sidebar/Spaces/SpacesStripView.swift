@@ -902,7 +902,7 @@ struct SpacesStripView: View {
             iconStoredValue: space.iconName,
             spaceName: space.name,
             iconColor: iconColor(for: space),
-            shortcutTokens: spaceShortcut(for: space).map(keycapTokens) ?? []
+            shortcutTokens: spaceShortcut(for: space)?.keycapTokens ?? []
         )
     }
 
@@ -913,19 +913,6 @@ struct SpacesStripView: View {
         guard let index = manager.spaces.firstIndex(where: { $0.spaceId == space.spaceId }),
               let command = CommandWrapper.spaceSelectionCommand(at: index) else { return nil }
         return Shortcuts.key(for: command)
-    }
-
-    /// Splits a shortcut into keycap tokens — one per modifier, then the key —
-    /// so the tooltip can render them as separate badges (e.g. ⌃ and 6).
-    private func keycapTokens(_ key: ShortcutsKey) -> [String] {
-        var tokens: [String] = []
-        let modifiers = key.modifiers
-        if modifiers.contains(.command) { tokens.append("⌘") }
-        if modifiers.contains(.option) { tokens.append("⌥") }
-        if modifiers.contains(.shift) { tokens.append("⇧") }
-        if modifiers.contains(.control) { tokens.append("⌃") }
-        tokens.append(key.characters.uppercased())
-        return tokens
     }
 
     /// Trailing affordance that opens the create-Space flow, seeding the new

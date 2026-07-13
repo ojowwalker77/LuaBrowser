@@ -6,6 +6,10 @@
 import Foundation
 import AppKit
 
+extension Notification.Name {
+    static let shortcutsDidChange = Notification.Name("PhiShortcutsDidChangeNotification")
+}
+
 extension ShortcutsKey: Codable {
     enum CodingKeys: String, CodingKey {
         case characters
@@ -176,23 +180,24 @@ extension Shortcuts {
         
         save()
         CommandDispatcher.reloadPhiShortcutMap()
-        notifyChromiumShortcutsChanged()
+        notifyShortcutsChanged()
     }
     
     static func reloadOverrides() {
         overridedShortcuts = load()
         CommandDispatcher.reloadPhiShortcutMap()
-        notifyChromiumShortcutsChanged()
+        notifyShortcutsChanged()
     }
     
     static func restoreOverrides() {
         overridedShortcuts.removeAll()
         save()
         CommandDispatcher.reloadPhiShortcutMap()
-        notifyChromiumShortcutsChanged()
+        notifyShortcutsChanged()
     }
     
-    private static func notifyChromiumShortcutsChanged() {
+    private static func notifyShortcutsChanged() {
+        NotificationCenter.default.post(name: .shortcutsDidChange, object: nil)
         ChromiumLauncher.sharedInstance().bridge?.requestRebuildMainMenu()
     }
     
@@ -260,34 +265,41 @@ extension ShortcutsKey {
         if modifiers.contains(.option) { prefix += "⌥" }
         if modifiers.contains(.shift) { prefix += "⇧" }
         if modifiers.contains(.control) { prefix += "⌃" }
-        
-        let characterSymbol: String
+
+        return prefix + characterSymbol
+    }
+
+    var keycapTokens: [String] {
+        var tokens: [String] = []
+        if modifiers.contains(.control) { tokens.append("⌃") }
+        if modifiers.contains(.option) { tokens.append("⌥") }
+        if modifiers.contains(.shift) { tokens.append("⇧") }
+        if modifiers.contains(.command) { tokens.append("⌘") }
+        tokens.append(characterSymbol)
+        return tokens
+    }
+
+    private var characterSymbol: String {
         switch characters {
         case String(format: "%c", NSBackspaceCharacter):
-            characterSymbol = "⌫"
+            return "⌫"
         case "\t":
-            characterSymbol = "⇥"
+            return "⇥"
         case "\r":
-            characterSymbol = "↩︎"
+            return "↩︎"
         case "\u{1B}":
-            characterSymbol = "⎋"
+            return "⎋"
         case "\u{F700}":
-            characterSymbol = "↑"
+            return "↑"
         case "\u{F701}":
-            characterSymbol = "↓"
+            return "↓"
         case "\u{F702}":
-            characterSymbol = "←"
+            return "←"
         case "\u{F703}":
-            characterSymbol = "→"
+            return "→"
         default:
-            if characters.count == 1 {
-                characterSymbol = characters.uppercased()
-            } else {
-                characterSymbol = characters.uppercased()
-            }
+            return characters.uppercased()
         }
-        
-        return prefix + characterSymbol
     }
 }
 
