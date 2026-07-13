@@ -348,6 +348,46 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertEqual(presenter.presentCount, 0)
     }
 
+    func testDismissAllCancelsPendingAndHidesVisibleTooltip() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Visible")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
+        )
+        XCTAssertTrue(presenter.isVisible)
+
+        controller.dismissAll()
+
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertNil(controller.activeOwnerID)
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Pending")),
+            configuration: CustomTooltipConfiguration(showDelay: 1, displayDuration: nil)
+        )
+        XCTAssertNotNil(controller.pendingOwnerID)
+
+        controller.dismissAll()
+        scheduler.fireNext()
+
+        XCTAssertNil(controller.pendingOwnerID)
+        XCTAssertNil(controller.activeOwnerID)
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertEqual(presenter.presentCount, 1)
+    }
+
     func testPointerWatchdogHidesTooltipWhenExitEventIsMissed() {
         let fixture = makeWindow()
         let scheduler = ManualScheduler()
@@ -879,6 +919,53 @@ final class CustomTooltipTests: XCTestCase {
         fixture.host.removeCustomTooltip()
 
         XCTAssertNil(fixture.host.toolTip)
+    }
+
+    func testAppKitRegistrationHandlesTrackingAreaObjectiveCSelectors() throws {
+        let fixture = makeWindow()
+        fixture.host.setCustomTooltip("Custom")
+        let registration = try XCTUnwrap(fixture.host.customTooltipRegistration)
+        let enteredSelector = NSSelectorFromString("mouseEntered:")
+        let exitedSelector = NSSelectorFromString("mouseExited:")
+
+        guard registration.responds(to: enteredSelector),
+              registration.responds(to: exitedSelector) else {
+            XCTFail("The tracking area owner must expose AppKit's mouse enter and exit selectors.")
+            return
+        }
+
+        let enteredEvent = try XCTUnwrap(
+            NSEvent.enterExitEvent(
+                with: .mouseEntered,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: fixture.window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                trackingNumber: 0,
+                userData: nil
+            )
+        )
+        let exitedEvent = try XCTUnwrap(
+            NSEvent.enterExitEvent(
+                with: .mouseExited,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: fixture.window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                trackingNumber: 0,
+                userData: nil
+            )
+        )
+
+        registration.perform(enteredSelector, with: enteredEvent)
+        XCTAssertTrue(registration.isHovering)
+
+        registration.perform(exitedSelector, with: exitedEvent)
+        XCTAssertFalse(registration.isHovering)
     }
 
     func testSwiftUIModifierInstallsSharedAppKitRegistration() {

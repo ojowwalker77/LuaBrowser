@@ -104,11 +104,13 @@ final class CustomTooltipRegistration: NSObject {
         activeController = nil
     }
 
-    @objc private func mouseEntered(with event: NSEvent) {
+    @objc(mouseEntered:)
+    private func handleMouseEntered(_ event: NSEvent) {
         handlePointerEntered()
     }
 
-    @objc private func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:)
+    private func handleMouseExited(_ event: NSEvent) {
         handlePointerExited()
     }
 

@@ -357,7 +357,10 @@ struct WebContentAddressBarView: View {
             currentTab: currentTab,
             showCopyConfirmation: $showCopyConfirmation,
             isAddressBarHovering: isHovering,
-            isMenuShown: isMenuShown
+            isMenuShown: isMenuShown,
+            dismissTooltip: {
+                anchorView?.window?.customTooltipController.dismissAll()
+            }
         )
         .customTooltip {
             CommandShortcutTooltipContent(
@@ -416,6 +419,7 @@ private struct CopyURLButtonView: View {
     @Binding var showCopyConfirmation: Bool
     let isAddressBarHovering: Bool
     let isMenuShown: Bool
+    let dismissTooltip: () -> Void
 
     @State private var isButtonHovering = false
     @Environment(\.phiTheme) private var theme
@@ -428,6 +432,7 @@ private struct CopyURLButtonView: View {
             : ThemedColor.textPrimary.swiftUIColor(theme: theme, appearance: appearance)
 
         Button {
+            dismissTooltip()
             guard let urlString = currentTab?.url, !urlString.isEmpty else { return }
             let branded = URLProcessor.phiBrandEnsuredUrlString(urlString)
             NSPasteboard.general.clearContents()
