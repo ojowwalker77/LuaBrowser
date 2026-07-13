@@ -153,6 +153,25 @@ class WebContentContainerViewController: NSViewController {
     /// NSDraggingDestination callbacks never fire in that mode.
     var splitTabDropContainer: SplitTabDropContainer { contentContainer }
 
+    /// NTP-colored backdrop pinned under every other subview of
+    /// `contentContainer`, tracing the page panel's exact geometry
+    /// (`WebContentViewController.splitViewContainer`: same insets, corner
+    /// radius, and `.contentOverlayBackground` fill). Only visible while no
+    /// tab content is mounted above it — the zero-tab gap of a freshly
+    /// spawned Space window whose seed NTP hasn't mounted yet. Without it
+    /// that gap shows the window background, so the page area pops from
+    /// window color to NTP color when the tab lands; with it the page area
+    /// reads as an NTP from the first frame.
+    private var pageAreaBackdropLeadingConstraint: Constraint?
+    private lazy var pageAreaBackdrop: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.cornerCurve = .continuous
+        view.layer?.cornerRadius = LiquidGlassCompatible.webContentContainerCornerRadius
+        view.phiLayer?.setBackgroundColor(ThemedColor.contentOverlayBackground)
+        return view
+    }()
+
     /// Single CAShapeLayer that strokes a unified path covering the active
     /// tab's outline (top + sides + inverse curves) AND splitViewContainer's
     /// rounded-rect outline. Hosted on this view's layer so its z is above
@@ -268,6 +287,17 @@ class WebContentContainerViewController: NSViewController {
         contentContainer.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        // First child of contentContainer, so every later subview (the tab's
+        // WebContentViewController, placeholder shell, close snapshot) stacks
+        // above it and covers it whenever real content is mounted.
+        contentContainer.addSubview(pageAreaBackdrop)
+        pageAreaBackdrop.snp.makeConstraints { make in
+            pageAreaBackdropLeadingConstraint = make.leading.equalToSuperview().constraint
+            make.trailing.bottom.equalToSuperview().inset(WebContentConstant.edgesSpacing)
+            make.top.equalToSuperview()
+        }
+        updatePageAreaBackdropLeadingInset()
 
         // Outer border layer sits on this view's layer so it can render above
         // both the tab strip's tab fills and splitViewContainer's fill.
@@ -1332,6 +1362,20 @@ class WebContentContainerViewController: NSViewController {
 
         updateFloatingSidebarAvailability()
         updateContentOuterBorder()
+        updatePageAreaBackdropLeadingInset()
+    }
+
+    /// Mirror of `WebContentViewController.updateSplitViewLeadingInset`, so
+    /// the backdrop hugs the same leading edge the mounted panel uses.
+    /// Called from `updateLayoutForMode`, which already re-runs on layout-mode
+    /// and sidebar-collapse changes.
+    private func updatePageAreaBackdropLeadingInset() {
+        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let sidebarCollapsed = browserState?.sidebarCollapsed ?? true
+        let inset: CGFloat = (traditionalLayout || sidebarCollapsed)
+            ? WebContentConstant.edgesSpacing
+            : 0
+        pageAreaBackdropLeadingConstraint?.update(inset: inset)
     }
 
     // MARK: - AI Chat Toggle
