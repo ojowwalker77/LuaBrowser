@@ -101,6 +101,7 @@ struct SpacesStripView: View {
     @State private var isPickerOpen: Bool = false
     @State private var isIconPickerOpen: Bool = false
     @State private var isAddButtonHovered: Bool = false
+    @State private var isMoreButtonHovered: Bool = false
 
     /// Drag-reorder state for the sidebar icon strip. `stripOrderedIds` is the
     /// live arrangement shown while a pip is dragged across its siblings, and
@@ -124,6 +125,13 @@ struct SpacesStripView: View {
     /// schedule, never a sibling's fresh one.
     @State private var pendingHoverSpaceId: String?
     @State private var pendingHoverWork: DispatchWorkItem?
+
+    /// The pip under the cursor, driving its dim hover wash. Kept separate
+    /// from `hoveredSpaceId` (the hover-card owner): that one is promoted only
+    /// after `hoverCardDelay`, and the card's watchdog / auto-close can drop
+    /// it while the cursor is still on the pip — either would make the wash
+    /// lag in or flick off mid-hover.
+    @State private var highlightedPipId: String?
 
     /// The pip whose icon/emoji picker is open, presented from its right-click
     /// "Change Icon…" entry. Only one picker is open at a time.
@@ -451,6 +459,7 @@ struct SpacesStripView: View {
             // the drag guard so it self-heals regardless of drag state and never
             // depends on SpaceTooltipAnchor.dismantleNSView firing.
             if let hovered = hoveredSpaceId, !ids.contains(hovered) { hoveredSpaceId = nil }
+            if let highlighted = highlightedPipId, !ids.contains(highlighted) { highlightedPipId = nil }
             if let pending = pendingHoverSpaceId, !ids.contains(pending) {
                 pendingHoverWork?.cancel()
                 pendingHoverWork = nil
@@ -582,17 +591,29 @@ struct SpacesStripView: View {
             .opacity(isActive ? 1 : 0.4)
             .frame(width: 24, height: rowHeight)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isActive ? Color.primary.opacity(0.1) : Color.clear)
+                // The active pip carries the sidebar's liquid-glass selection
+                // treatment — the selected-tab-row chip (translucent white
+                // fill + soft drop shadow); a hovered inactive pip gets the
+                // sidebar's dim hover wash, with the shadow reserved for the
+                // active chip so the wash stays flat.
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Color.sidebarTabSelected
+                            : highlightedPipId == space.spaceId ? Color.sidebarTabHovered : Color.clear
+                    )
+                    .shadow(color: isActive ? Color.black.opacity(0.15) : Color.clear, radius: 1, x: 0, y: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
         .onHover { hovering in
             if hovering {
+                highlightedPipId = space.spaceId
                 hoverBegan(space.spaceId)
             } else {
+                if highlightedPipId == space.spaceId { highlightedPipId = nil }
                 hoverEnded(space.spaceId)
             }
         }
@@ -828,9 +849,14 @@ struct SpacesStripView: View {
                 .font(.system(size: Self.iconSize, weight: .semibold))
                 .foregroundStyle(Color.secondary)
                 .frame(width: Self.stripItemWidth, height: rowHeight)
-                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isMoreButtonHovered ? Color.sidebarTabHovered : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { isMoreButtonHovered = $0 }
         .help(NSLocalizedString("More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
         .background(SpaceSwitcherMenuAnchor(isPresented: $isPickerOpen) { menu in
             AppController.shared?.populateSpaceSwitcherMenu(menu)
