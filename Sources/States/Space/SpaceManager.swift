@@ -3241,6 +3241,16 @@ final class SpaceWindowSlot: ObservableObject {
         // ignores the profileId and binds the Browser to the shared
         // off-the-record profile all Incognito Spaces live on.
         let isIncognitoSpace = SpaceManager.isIncognitoSpaceId(spaceId)
+        // Fullscreen slots keep the legacy VISIBLE spawn. The hidden-spawn
+        // reveal has to surface the new window through the fullscreen tab
+        // group, and selecting a window that has never been ordered in swaps
+        // it "into" fullscreen without its fullscreen state ever becoming
+        // real — NSWindowStackController then asserts ("windowToTakeFrom
+        // should be in FS") on the next tab swap that uses it as the frame
+        // source (e.g. Chromium re-activating a sibling) and crashes the
+        // app. In fullscreen, Chromium's own Show() surfaces the window
+        // exactly as before the animate-first change.
+        let spawnHidden = !slotHasFullScreenWindow
         // Animate-first: start the push-in NOW, on the leaving window, against
         // a transparent entering band — the target window doesn't exist yet,
         // so there is nothing to snapshot. The spawn below runs behind the
@@ -3248,9 +3258,9 @@ final class SpaceWindowSlot: ObservableObject {
         // while `createBrowser` blocks the main thread) and the reveal fires
         // once BOTH the slide and the spawn have finished. nil when the
         // animated push-in can't run (horizontal layout, `animated: false`,
-        // no visible previous window) — the spawn then presents the target
-        // instantly once it's ready.
-        let spawnSwitch: SpawnSwitchAnimation? = animated
+        // fullscreen slot, no visible previous window) — the spawn then
+        // presents the target instantly once it's ready.
+        let spawnSwitch: SpawnSwitchAnimation? = (animated && spawnHidden)
             ? beginSpawnVerticalPushIn(
                 targetSpaceId: spaceId,
                 previous: previous,
@@ -3284,13 +3294,15 @@ final class SpaceWindowSlot: ObservableObject {
                 inheritedSidebarWidth: inheritedSidebarWidth,
                 inheritedSidebarCollapsed: inheritedSidebarCollapsed
             )
-            // `hidden: true` — Chromium skips its post-create Show(). The
-            // window stays ordered out until the reveal below fronts it, so an
-            // empty, unpainted NSWindow can never flash on screen (the root of
-            // the old first-switch glitch).
+            // `hidden` — Chromium skips its post-create Show() and the window
+            // stays ordered out until the reveal below fronts it, so an
+            // empty, unpainted NSWindow can never flash on screen (the root
+            // of the old first-switch glitch). False only for fullscreen
+            // slots, which keep the legacy Chromium-Show()n spawn (see
+            // `spawnHidden` above).
             let dict = bridge.createBrowser(withWindowType: isIncognitoSpace ? .incognitoSpace : .normal,
                                             profileId: isIncognitoSpace ? nil : targetProfileId,
-                                            hidden: true)
+                                            hidden: spawnHidden)
             // Clear in case the callback was async (rare) or createBrowser
             // failed before the observer fired — either way the hint is
             // no longer valid for any later arriving window.
@@ -4078,13 +4090,16 @@ final class SpaceWindowSlot: ObservableObject {
                 restoreLeaving()
                 return
             }
-            // Same completion shape as the clicked push-in's finalize: the
-            // leaving window can have entered native fullscreen during the
-            // slide — rebuild the group first so the front below is a tab
-            // selection inside the same fullscreen Space.
-            if self.slotHasFullScreenWindow {
-                self.syncSlotTabGroup(selecting: previousWindow)
-            }
+            // Unlike the clicked push-in's finalize, do NOT rebuild the slot
+            // tab group here even if the leaving window entered native
+            // fullscreen during the slide (fullscreen slots don't reach this
+            // path — `activate` spawns them visible — but the green button
+            // can be clicked mid-slide). The target has never been ordered
+            // in, and swapping a never-shown window into a fullscreen tab
+            // group corrupts NSWindowStackController's fullscreen
+            // bookkeeping ("windowToTakeFrom should be in FS" crash). Front
+            // it detached instead; `syncSlotTabGroup` regroups it on the
+            // next switch once it has been shown.
             self.makeKeyAndOrderFrontHidingSlotTabBar(target.window)
             self.orderOutIfNotTabbedWithTarget(previousWindow, targetWindow: target.window)
             restoreLeaving()
