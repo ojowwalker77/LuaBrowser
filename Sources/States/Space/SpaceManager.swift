@@ -320,6 +320,15 @@ final class SpaceManager: ObservableObject {
     /// pending spawn intent, and destroyed when its last controller closes.
     private(set) var slots: [SpaceWindowSlot] = []
 
+    /// True once any slot has registered a Chromium window this session.
+    /// Distinguishes "the user closed the last window mid-session" — where a
+    /// Dock-click reopen must respawn the persisted Space
+    /// (`reopenOnPersistedSpaceIfWindowless`) — from a launch that hasn't
+    /// surfaced a window yet (e.g. a hidden login-item start), where the
+    /// first Dock click must stay with Chromium's reopen so its session
+    /// restore can run (`PhiAttemptSessionRestore`).
+    fileprivate(set) var hasEverHostedSlotWindow = false
+
     /// The slot whose window was most recently key. Used as the default
     /// destination for Chromium-initiated windows (Cmd+N from the menu bar)
     /// and for any caller that historically asked the singleton "what's
@@ -516,6 +525,51 @@ final class SpaceManager: ObservableObject {
         for slot in slots {
             slot.scheduleRestoreVisibilityReconcile()
         }
+    }
+
+    /// Handles a Dock-icon reopen when no browser window survives (the user
+    /// closed the last window and the app kept running). Spawns the persisted
+    /// last-active Space through the normal spawn path — which requests the
+    /// Space's OWN profile via `createBrowser(withWindowType:profileId:)` —
+    /// and returns true. Returns false when the reopen should stay with
+    /// Chromium's handler: a browser window still exists (Chromium focuses
+    /// it), or no slot window has been hosted yet this session (Chromium's
+    /// session restore owns the hidden-login-item first click).
+    ///
+    /// Why Chromium must not create this window itself: its reopen seeds the
+    /// window from Chromium's last-used-profile pref
+    /// (`GetStartupProfilePathMac`), a value the window-close cascade
+    /// pollutes — closing the visible window promotes the slot's hidden
+    /// sibling Space windows to key one by one, and each promotion rewrites
+    /// the pref (`ProfileManager::OnBrowserActivated`; its
+    /// `closing_all_browsers_` suppression covers only full quit, not the
+    /// per-window cascade). The coordinator's profile-consistency rule
+    /// (`spaceId(boundTo:preferring:)`) then re-resolves the persisted Space
+    /// to one bound to that polluted profile, so the reopen lands on the
+    /// wrong (typically default) Space instead of the one the user closed.
+    func reopenOnPersistedSpaceIfWindowless() -> Bool {
+        guard hasEverHostedSlotWindow, slots.isEmpty else { return false }
+        // Non-slot windows don't count as "windowless": a standalone
+        // Incognito window is focused by Chromium's own reopen, and shadow
+        // windows are invisible background hosts either way.
+        guard !MainBrowserWindowControllersManager.shared.getAllWindows()
+            .contains(where: { $0.browserType != .shadow }) else { return false }
+        // Same resolution shape as `handleSpacesUpdate`'s fallback: the
+        // persisted id when it names a live, automatically-switchable Space,
+        // else the first such Space. `activate` refuses unknown spaceIds, so
+        // an unvalidated stale id would silently spawn nothing.
+        let resolved: String? = {
+            if let persisted = persistedActiveSpaceId,
+               let model = spaces.first(where: { $0.spaceId == persisted }),
+               isAutomaticSwitchTarget(model) {
+                return persisted
+            }
+            return (spaces.first(where: isAutomaticSwitchTarget) ?? spaces.first)?.spaceId
+        }()
+        guard let spaceId = resolved else { return false }
+        AppLogInfo("[SpaceManager] windowless reopen — spawning persisted Space \(spaceId)")
+        createSlot(initialSpaceId: spaceId).activate(spaceId: spaceId)
+        return true
     }
 
     /// Walks every slot looking for one that recorded a pending spawn
@@ -4643,6 +4697,7 @@ final class SpaceWindowSlot: ObservableObject {
             pendingCloseOnReplacementBySpaceId[spaceId] = existing
         }
         windowsBySpaceId[spaceId] = controller
+        manager?.hasEverHostedSlotWindow = true
         // The spawn for this Space has landed — clear the in-flight gate.
         pendingSpawnSpaceIds.remove(spaceId)
         // Drain any spawn-intent entry for this windowId. On the async

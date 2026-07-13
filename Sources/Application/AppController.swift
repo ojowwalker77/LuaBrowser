@@ -210,6 +210,17 @@ import PostHog
             } else {
                 AppLogDebug("reopen: access token still fresh, skipping renew")
             }
+            // With no surviving browser window, spawn the persisted
+            // last-active Space ourselves instead of letting Chromium's
+            // reopen create the window: Chromium seeds it from its own
+            // last-used-profile pref, which the window-close cascade
+            // pollutes, and the coordinator then re-resolves the Space to
+            // match that profile — reopening on the default Space instead
+            // of the one the user closed. See
+            // `SpaceManager.reopenOnPersistedSpaceIfWindowless`.
+            if SpaceManager.shared.reopenOnPersistedSpaceIfWindowless() {
+                return true
+            }
             let handled = ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
             // Chromium's reopen surfaces every browser window it owns, which
             // un-hides the slots' hidden sibling Space windows. Re-assert the
