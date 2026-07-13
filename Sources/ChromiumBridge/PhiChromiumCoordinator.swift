@@ -472,8 +472,11 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // window matching `slot.activeSpaceId` belongs on screen;
                 // siblings stay hidden until the user pip-switches to them,
                 // matching the steady-state "one slot, one visible window"
-                // invariant. The active window is left to Chromium's Show() to
-                // surface (see note above); only siblings are explicitly hidden.
+                // invariant. Cold-launch restored active windows are left to
+                // Chromium's Show() to surface (see note above); slot-SPAWNED
+                // windows are created `hidden: true` and revealed by the
+                // slot's own spawn path once seeded (see `activate`'s spawn
+                // branch); only siblings are explicitly hidden here.
                 let isActiveForSlot: Bool = {
                     guard let resolvedSlot else { return true }
                     return resolvedSlot.activeSpaceId == spaceId

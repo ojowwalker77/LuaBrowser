@@ -655,8 +655,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// (NSNumber*), @"windowType" (NSNumber* of ChromiumBrowserType),
 /// @"profileId" (NSString*, the basename actually used). Returns nil when
 /// the window could not be created; callers must handle the nil result.
+/// Pass |hidden| = YES to skip Chromium's post-create Show(): the caller
+/// owns the reveal and surfaces the NSWindow itself once the window is
+/// ready (frame applied, seed tab created) — the Space spawn path uses
+/// this so an empty, unpainted window never flashes on screen.
 - (nullable NSDictionary<NSString *, id> *)createBrowserWithWindowType:(ChromiumBrowserType)browserType
-                                                            profileId:(NSString * _Nullable)profileId;
+                                                            profileId:(NSString * _Nullable)profileId
+                                                                hidden:(BOOL)hidden;
 
 /// Creates a hidden agent-Space browser window: TYPE_NORMAL, never Show()n by
 /// Chromium, omitted from session restore, and starting in agent mode (window
