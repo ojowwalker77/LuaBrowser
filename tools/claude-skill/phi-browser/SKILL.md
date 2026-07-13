@@ -28,7 +28,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 
 ## Helpers
 
-- Agent spaces: `ensureAgentSpace(name, {profile})`, `listAgentSpaces()`, `listProfiles()`, `complete({success, message})`, `ping(ttlSeconds?)` — keep-alive control, see "Task lifecycle"
+- Agent spaces: `ensureAgentSpace(name, {profile})` (returns the Space's open `tabs` too), `listAgentSpaces()`, `listProfiles()`, `spaceStatus({shots})` (one-call digest of the current Space — see "Space status"), `complete({success, message})`, `ping(ttlSeconds?)` — keep-alive control, see "Task lifecycle"
 - Ownership: `ownership()`, `handOff(message)`, `takeOver()`, `waitForAgentControl({timeout})`
 - Tabs: `listTabs()`, `openTab(url)` (reuses the Space's blank seed tab in place when one exists; `{reuseBlank: false}` forces a separate tab), `switchTab(targetId)`, `closeTab(targetId?)`
 - Navigation: `goto(url, {timeout})`, `waitForLoad({timeout})`
@@ -265,6 +265,29 @@ goal.
 `{profile: 'Default'}` (profileId or display name) to choose —
 `listProfiles()` enumerates what's available.
 
+### Space status
+
+`spaceStatus()` is the one-call "what does my Space look like right now":
+`{taskId, spaceId, windowId, ownership, status, caption,
+keepAliveRemainingSeconds, viewportOverride, tabs}` — each tab
+`{targetId, url, title, current}`. Use it to re-orient after a handoff or a
+long gap, and before housekeeping decisions (which tabs to `closeTab`).
+`ensureAgentSpace` also returns the same `tabs` list, so every round starts
+with the tab inventory in hand — check it before opening more tabs.
+
+- It is PASSIVE: safe while the user holds control (no activation, no
+  viewport override), and it does not refresh the keep-alive clock it
+  reports. `{gone: true}` means the Space no longer exists — the task is
+  over; do not recreate it just to look around.
+- `{shots: 'current'}` adds `shot`, a PNG path of the ATTACHED tab (Read
+  it), or null if the capture fails. Only the attached tab can be shot:
+  background tabs of the hidden window do not paint, so there is no
+  all-tabs contact sheet — `switchTab` to a tab before shooting it.
+- `keepAliveRemainingSeconds` is null while the user holds control (the
+  clock pauses). While you are actively driving, the round heartbeat keeps
+  it near-full anyway — treat it as diagnostics, and use `ping(ttlSeconds)`
+  when you actually need a longer window.
+
 **Keep-alive**: an agent Space auto-closes when its driver goes silent —
 ~120s while driving (a live round heartbeats automatically, even through long
 waits, so it never expires; a killed round's Space closes on its own) and
@@ -434,6 +457,8 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
 ## Workflow
 
 1. `ensureAgentSpace(name)` → `openTab(url)` (or `goto` in the current tab).
+   Its return includes the Space's open `tabs` — check it before opening more
+   (`spaceStatus()` gives the same view any time, see "Space status").
 2. Observe with `observe()` to get the `{ref, role, name, loc}` element map;
    fall back to `snapshotText()` when you need to read body prose, or
    `screenshot()` + the Read tool for canvas-like pages. If a cookie-consent

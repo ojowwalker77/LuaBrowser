@@ -136,6 +136,17 @@ enum AgentSpaceRouter {
                     case .failed: return "failed"
                     }
                 }()
+                // Remaining keep-alive so a status probe can report it. This
+                // handler is NOT a control message (no callerMayControl), so
+                // reading the clock never refreshes it. null while the user
+                // holds control — the sweep pauses, so a run-down value would
+                // read as urgency that isn't there — or when no deadline
+                // applies.
+                let keepAliveRemaining: Any = {
+                    guard task.ownership == .agent,
+                          task.keepAliveDeadline != .distantFuture else { return NSNull() }
+                    return max(0, Int(task.keepAliveDeadline.timeIntervalSinceNow.rounded()))
+                }()
                 return [
                     "taskId": task.taskId,
                     "spaceId": task.spaceId,
@@ -143,6 +154,7 @@ enum AgentSpaceRouter {
                     "ownership": task.ownership == .agent ? "agent" : "user",
                     "status": status,
                     "caption": task.statusCaption,
+                    "keepAliveRemainingSeconds": keepAliveRemaining,
                 ]
             }
         }

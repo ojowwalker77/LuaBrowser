@@ -212,7 +212,77 @@ export async function ensureAgentSpace(name, { profile = '' } = {}) {
     await attachTab(tab.targetId)
   }
   return { taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
-           ownership: task.ownership }
+           ownership: task.ownership,
+           // The tab inventory was in hand anyway (listed above to pick the
+           // attach target); returning it gives every round its Space
+           // situational awareness for free. `current` is stamped after the
+           // attach — the list itself predates it.
+           tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
+}
+
+/**
+ * One-call digest of the CURRENT agent Space — situational awareness without
+ * side effects. Returns {taskId, spaceId, windowId, ownership, status,
+ * caption, keepAliveRemainingSeconds, viewportOverride, tabs}, plus `shot` (a
+ * PNG path of the attached tab — Read it) with {shots: 'current'}. Returns
+ * {gone: true} when the Space no longer exists (expired or finished) — the
+ * task is over, do not recreate it just to look around.
+ *
+ * Passive by design, so it is safe for post-handoff re-orientation while the
+ * USER holds control: no guardAgentControl, no tab activation, no viewport
+ * override, and no keep-alive refresh (agentSpace.list is not a control
+ * message — though while the agent is driving, the round heartbeat keeps the
+ * clock near-full anyway, so keepAliveRemainingSeconds mostly matters as a
+ * post-hoc "how close did I cut it"). The shot is captured straight off the
+ * existing session — none of screenshot()'s resize/ping side effects.
+ *
+ * Only the ATTACHED tab can be shot: background tabs of the hidden agent
+ * window do not paint (visibility forcing follows the active tab), so an
+ * all-tabs sweep would cycle the window's active tab in front of a watching
+ * user. Deliberately not offered.
+ */
+export async function spaceStatus({ shots = false } = {}) {
+  if (shots && shots !== true && shots !== 'current') {
+    throw new Error("spaceStatus: only {shots: 'current'} is supported — " +
+                    'background tabs of the hidden window do not paint')
+  }
+  const task = requireTask()
+  const tasks = await listAgentSpaces()
+  const t = tasks.find((x) => x.taskId === task.taskId)
+  if (!t) return { gone: true, taskId: task.taskId }
+  // The list read is authoritative — keep the cached ownership bit (and the
+  // guard's staleness clock) in step, same as waitForAgentControl.
+  task.ownership = t.ownership
+  state.ownerCheckedAt = Date.now()
+  const out = {
+    taskId: t.taskId,
+    spaceId: t.spaceId,
+    windowId: t.windowId,
+    ownership: t.ownership,
+    status: t.status,
+    caption: t.caption || '',
+    keepAliveRemainingSeconds: t.keepAliveRemainingSeconds ?? null,
+    viewportOverride: (state.targetId &&
+      state.viewportByTarget.get(state.targetId)?.request) || null,
+    tabs: await listTabs(),
+  }
+  if (shots) {
+    out.shot = null
+    if (state.sessionId) {
+      try {
+        const client = await cdpClient()
+        const { data } = await client.send('Page.captureScreenshot',
+                                           { format: 'png' }, state.sessionId, 30000)
+        const file = join(tmpdir(), `phi-browser-status-${Date.now()}.png`)
+        writeFileSync(file, Buffer.from(data, 'base64'))
+        out.shot = file
+      } catch {
+        // Status must degrade, not throw: a dead renderer or a mid-navigation
+        // tab loses the thumbnail, never the digest.
+      }
+    }
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------
