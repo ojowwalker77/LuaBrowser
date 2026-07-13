@@ -72,6 +72,10 @@ class PinnedTabViewController: NSViewController {
                     guard let tab else { return }
                     self?.handleTabClicked(tab)
                 }
+                tabItem.itemDoubleClicked = { [weak self] tab in
+                    guard let tab else { return }
+                    self?.browserState?.navigatePinnedTabToOriginalURL(tab)
+                }
                 return tabItem
 
             case .splitItem(let group):
@@ -86,6 +90,10 @@ class PinnedTabViewController: NSViewController {
                 )
                 splitItem.itemClicked = { [weak self] tab in
                     self?.handleSplitCellClicked(group: group, preferredTab: tab)
+                }
+                splitItem.itemDoubleClicked = { [weak self] tab in
+                    guard let tab else { return }
+                    self?.browserState?.navigatePinnedTabToOriginalURL(tab)
                 }
                 return splitItem
             }

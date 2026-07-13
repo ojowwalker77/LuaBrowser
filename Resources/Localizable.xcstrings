@@ -580,6 +580,9 @@
     "Could Not Add Attachment" : {
       "comment" : "Feedback form - Alert title when selected attachments cannot be added"
     },
+    "Could Not Export Bookmarks" : {
+      "comment" : "Export bookmarks failure alert - title shown when writing the exported HTML file fails"
+    },
     "Could Not Save Feedback" : {
       "comment" : "Feedback form - Alert title when local outbox save fails"
     },
@@ -801,6 +804,9 @@
     },
     "Export" : {
       "comment" : "Help menu - NSSavePanel primary button title for confirming log export save location"
+    },
+    "Export Bookmarks..." : {
+      "comment" : "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"
     },
     "Export Failed" : {
       "comment" : "Help menu - Log export error alert title"
@@ -1122,6 +1128,9 @@
     },
     "New Incognito Space" : {
       "comment" : "File menu - Create a new Incognito Space and bring it to the front"
+    },
+    "New Incognito Tab" : {
+      "comment" : "Tab title shown for an incognito new-tab page rendered by the native NTP"
     },
     "New Nested Folder..." : {
       "comment" : "Bookmark New Folder menu item"

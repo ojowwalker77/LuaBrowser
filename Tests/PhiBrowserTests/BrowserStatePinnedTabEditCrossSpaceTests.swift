@@ -87,6 +87,41 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         }
     }
 
+    func testPinnedTabOriginNavigationReturnsOpenTabToOriginalURL() throws {
+        let store = try makeStore()
+        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://www.google.com/")
+
+        let state = BrowserState(windowId: 1, localStore: store,
+                                 profileId: "Default", spaceId: "space-a")
+        let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
+        let wrapper = PinnedEditWebContentWrapperSpy(
+            urlString: "https://www.google.com/search?q=1"
+        )
+        pinnedTab.isOpenned = true
+        pinnedTab.setWebContentsWrapper(wrapper: wrapper)
+
+        state.navigatePinnedTabToOriginalURL(pinnedTab)
+
+        XCTAssertEqual(wrapper.navigatedURLs, ["https://www.google.com/"])
+    }
+
+    func testPinnedTabOriginNavigationDoesNothingAtOriginalURL() throws {
+        let store = try makeStore()
+        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://www.google.com/")
+
+        let state = BrowserState(windowId: 1, localStore: store,
+                                 profileId: "Default", spaceId: "space-a")
+        let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://www.google.com/")
+        pinnedTab.isOpenned = true
+        pinnedTab.setWebContentsWrapper(wrapper: wrapper)
+
+        state.navigatePinnedTabToOriginalURL(pinnedTab)
+
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
+    }
+
     private func makeStore() throws -> LocalStore {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

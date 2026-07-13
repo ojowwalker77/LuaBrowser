@@ -456,7 +456,7 @@ class BrowserState {
         let persistedURL = localTab.pinnedUrl ?? localTab.url
         if existing.pinnedUrl != persistedURL {
             existing.pinnedUrl = persistedURL
-            navigateOpenPinnedTab(existing, toEditedURL: persistedURL)
+            navigateOpenPinnedTab(existing, to: persistedURL)
         }
         
         if existing.storedTitle != localTab.storedTitle {
@@ -490,12 +490,10 @@ class BrowserState {
         }
     }
 
-    /// A pinned-tab URL edit lands here in every space of the profile except
-    /// the editing one (whose live tab `applyPinnedTabEdit` already
-    /// navigates). If this space has the tab open, retarget its web content
-    /// too; custom_value must be cleared around the navigation or
-    /// `CrossDomainNewTabNavigationThrottle` bounces the cross-domain load.
-    private func navigateOpenPinnedTab(_ tab: Tab, toEditedURL url: String?) {
+    /// Retargets an open pinned tab in place. custom_value must be cleared
+    /// around the navigation or `CrossDomainNewTabNavigationThrottle` bounces
+    /// a cross-domain load into a new tab.
+    private func navigateOpenPinnedTab(_ tab: Tab, to url: String?) {
         guard let url, tab.isOpenned, let wrapper = tab.webContentWrapper else { return }
         if tab.url != url {
             tab.url = url
@@ -866,6 +864,18 @@ class BrowserState {
         } else {
             createTab(realTab.url ?? "", customGuid: realTab.guidInLocalDB, focusAfterCreate: true)
         }
+    }
+
+    func navigatePinnedTabToOriginalURL(_ tab: Tab) {
+        guard let guid = tab.guidInLocalDB,
+              let realTab = pinnedTabs.first(where: { $0.guidInLocalDB == guid }),
+              let originalURL = realTab.pinnedUrl,
+              !originalURL.isEmpty,
+              realTab.url != originalURL else {
+            return
+        }
+
+        navigateOpenPinnedTab(realTab, to: originalURL)
     }
     
     func toggleSidebar(_ collapse: Bool? = nil) {

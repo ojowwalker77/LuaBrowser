@@ -1939,6 +1939,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 }
                 self.handleTabSelection(tab: tab)
             }
+            if isPinned {
+                view.onDoubleSelect = { [weak self, weak tab] in
+                    guard let tab else { return }
+                    self?.browserState.navigatePinnedTabToOriginalURL(tab)
+                }
+            } else {
+                view.onDoubleSelect = nil
+            }
             // Split-merged cells: the right favicon represents the partner
             // pane; clicking that half should focus the partner instead of
             // the primary tab. Wire the secondary callback to the partner
@@ -1957,6 +1965,14 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                     self.browserState.clearMultiSelection()
                 }
                 self.handleTabSelection(tab: partner)
+            }
+            if isPinned, let partner = pinnedSplitPartners[id] {
+                view.onSecondaryDoubleSelect = { [weak self, weak partner] in
+                    guard let partner else { return }
+                    self?.browserState.navigatePinnedTabToOriginalURL(partner)
+                }
+            } else {
+                view.onSecondaryDoubleSelect = nil
             }
             if !isPinned {
                 let capturedIndex = index
