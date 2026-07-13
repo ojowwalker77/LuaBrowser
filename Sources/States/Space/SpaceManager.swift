@@ -5243,17 +5243,22 @@ final class SpaceWindowSlot: ObservableObject {
         // (`activate`'s spawn path created it with `hidden: true` while the
         // push-in it started is still running — that in-flight animation is
         // exactly what `verticalSwapCancel` being armed means here, since
-        // clicked swaps never register windows). Selecting the new window's
-        // native tab now would surface it before the reveal; keep the leaving
-        // window's tab selected — the reveal's
-        // `makeKeyAndOrderFrontHidingSlotTabBar` flips the selection when the
-        // slide lands.
-        let deferTabSelectionForReveal = verticalSwapCancel != nil
+        // clicked swaps never register windows). Keep that window OUT of the
+        // slot's native tab group entirely: `addTabbedWindow` on a window
+        // that has never been ordered in leaves NSWindowStackController's
+        // synced tab-bar items one short of the group, and the next
+        // `orderOut` of ANY group member (the post-switch sweep hiding the
+        // leaving window) then throws NSRangeException in
+        // `_removeSyncedTabBarItem:` — an app-killing crash. The reveal
+        // fronts it as an ungrouped window (`makeKeyAndOrderFront` plain
+        // path), and the next `syncSlotTabGroup` regroups it once it has
+        // been shown — the same regroup-on-resurface contract hidden
+        // siblings already follow after a hard orderOut detaches them.
+        let deferGroupingForReveal = verticalSwapCancel != nil
             && controller.window?.isVisible != true
-        let selectionTarget = (shouldBecomeVisible && !deferTabSelectionForReveal)
-            ? controller.window
-            : visibleController?.window
-        syncSlotTabGroup(selecting: selectionTarget)
+        if !deferGroupingForReveal {
+            syncSlotTabGroup(selecting: shouldBecomeVisible ? controller.window : visibleController?.window)
+        }
         if shouldBecomeVisible {
             visibleController = controller
         }
