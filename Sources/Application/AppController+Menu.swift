@@ -1118,22 +1118,15 @@ extension AppController {
     /// that Space, plus a trailing "New Space" item. Drives the horizontal tab
     /// strip's active-Space chip, whose left-click presents this as a switcher
     /// menu (the menu rendition of the old switcher popover; hovering the chip
-    /// shows the Space hover card instead). Items target the controller and
-    /// reuse the Spaces menu's activate / create actions, so switching here
-    /// behaves exactly like the menu-bar Spaces menu.
-    func populateSpaceSwitcherMenu(
-        _ menu: NSMenu,
-        excludedSpaceIds: Set<String> = [],
-        includeNewSpace: Bool = true
-    ) {
+    /// shows the Space hover card instead), and the sidebar strip's "…" overflow
+    /// affordance, so both layouts share one switcher UI. Items target the
+    /// controller and reuse the Spaces menu's activate / create actions, so
+    /// switching here behaves exactly like the menu-bar Spaces menu.
+    func populateSpaceSwitcherMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let activeSpaceId = currentActiveSpace()?.spaceId
 
-        // Iterate the full list so each row keeps its ⌃-number shortcut (⌃1 = the
-        // first Space), skipping any the caller already shows elsewhere — e.g. the
-        // sidebar's pips, leaving only the overflow Spaces in its "…" menu.
         for (index, space) in SpaceManager.shared.spaces.enumerated() {
-            if excludedSpaceIds.contains(space.spaceId) { continue }
             let item = NSMenuItem(
                 title: space.name,
                 action: #selector(activateSpaceFromMenu(_:)),
@@ -1149,10 +1142,6 @@ extension AppController {
             item.attributedTitle = spaceMenuTitle(name: space.name, profileId: space.profileId)
             menu.addItem(item)
         }
-
-        // The sidebar overflow menu suppresses creation (its strip has its own "+"
-        // button); the horizontal chip keeps a "New Space" row.
-        guard includeNewSpace else { return }
 
         if menu.numberOfItems > 0 {
             menu.addItem(.separator())

@@ -384,9 +384,10 @@ struct SpacesStripView: View {
     /// a new Space. A large number of Spaces can overflow the row; the
     /// common handful fit within the sidebar width.
     private var iconStrip: some View {
-        // Single row that never wraps: show as many leading pips as fit, then a
-        // trailing "…" affordance once any are hidden (it opens the picker with
-        // the full list). The add button stays pinned to the right via a Spacer.
+        // Single row that never wraps: show as many leading pips as fit. The
+        // trailing slot (pinned right via a Spacer) holds the add button — or,
+        // once any pips are hidden, a "…" affordance in its place that opens
+        // the full switcher menu.
         GeometryReader { geo in
             let visibleCount = visiblePipCount(availableWidth: geo.size.width)
             let hasOverflow = visibleCount < stripOrderedSpaces.count
@@ -411,11 +412,12 @@ struct SpacesStripView: View {
                             commit: { manager.reorder(spaceIds: $0) }
                         ))
                 }
-                if hasOverflow {
-                    moreButton(excludedSpaceIds: Set(stripOrderedSpaces.prefix(visibleCount).map(\.spaceId)))
-                }
                 Spacer(minLength: 4)
-                addButton
+                if hasOverflow {
+                    moreButton
+                } else {
+                    addButton
+                }
             }
             .frame(width: geo.size.width, height: rowHeight, alignment: .leading)
             // The whole row is the add button's hover region, so the "+" is
@@ -463,9 +465,10 @@ struct SpacesStripView: View {
         }
     }
 
-    /// How many leading pips fit on the single row, reserving room for the
-    /// trailing add button and — when any pips are hidden — a "…" affordance.
-    /// All strip items share a uniform width, so the count is pure arithmetic.
+    /// How many leading pips fit on the single row, reserving the trailing
+    /// slot for the add button — or the "…" affordance that replaces it when
+    /// not every Space fits. All strip items share a uniform width, so the
+    /// count is pure arithmetic.
     private func visiblePipCount(availableWidth: CGFloat) -> Int {
         let total = stripOrderedSpaces.count
         guard total > 0 else { return 0 }
@@ -474,13 +477,14 @@ struct SpacesStripView: View {
         func width(_ items: Int) -> CGFloat {
             items <= 0 ? 0 : CGFloat(items) * item + CGFloat(items - 1) * spacing
         }
-        // Room left of the add button (which keeps a small gap before it).
+        // Room left of the trailing slot (which keeps a small gap before it).
         let budget = availableWidth - item - spacing
-        // Everything fits with no "…"?
+        // Everything fits, with the "+" trailing?
         if width(total) <= budget { return total }
-        // Overflowing: reserve a "…" slot and fit as many leading pips as possible.
+        // Overflowing: the "…" takes the trailing slot; fit as many leading
+        // pips as possible before it.
         var count = total - 1
-        while count > 0, width(count + 1) > budget { count -= 1 }
+        while count > 0, width(count) > budget { count -= 1 }
         return max(count, 0)
     }
 
@@ -811,12 +815,11 @@ struct SpacesStripView: View {
         .help(NSLocalizedString("New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
     }
 
-    /// Overflow affordance shown when the row can't fit every Space. Drops a
-    /// native menu listing only the Spaces that didn't fit (`excludedSpaceIds` are
-    /// the pips already on screen) and no "New Space" row — creation stays on the
-    /// strip's own "+" button. Same switcher menu the horizontal chip uses, just
-    /// filtered via `AppController.populateSpaceSwitcherMenu`.
-    private func moreButton(excludedSpaceIds: Set<String>) -> some View {
+    /// Overflow affordance shown in the add button's trailing slot when the row
+    /// can't fit every Space. Drops the exact switcher menu the horizontal chip
+    /// uses — every Space plus a "New Space" row, which also carries creation
+    /// while the "+" it replaces is off screen.
+    private var moreButton: some View {
         Button {
             isIconPickerOpen = false
             isPickerOpen = true
@@ -830,11 +833,7 @@ struct SpacesStripView: View {
         .buttonStyle(.plain)
         .help(NSLocalizedString("More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
         .background(SpaceSwitcherMenuAnchor(isPresented: $isPickerOpen) { menu in
-            AppController.shared?.populateSpaceSwitcherMenu(
-                menu,
-                excludedSpaceIds: excludedSpaceIds,
-                includeNewSpace: false
-            )
+            AppController.shared?.populateSpaceSwitcherMenu(menu)
         })
     }
 
