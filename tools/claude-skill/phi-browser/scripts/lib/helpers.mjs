@@ -799,17 +799,28 @@ export async function closeTab(targetId = state.targetId) {
 // ---------------------------------------------------------------------------
 // Navigation / observation
 
+/**
+ * Navigates the current tab and waits for the document. `timeout` (seconds)
+ * budgets the WHOLE navigate + load-wait, not just the load-wait, so goto's
+ * total time tracks what the caller asked for (the consent pass and the final
+ * page probe can add a little on top, but never hang: a failed probe returns
+ * degraded browser-side info instead of throwing).
+ */
 export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   await guardAgentControl()
   const client = await cdpClient()
-  const res = await client.send('Page.navigate', { url }, requireSession())
+  const deadline = Date.now() + timeout * 1000
+  // Page.navigate answers at commit — normally fast, but budget it inside
+  // {timeout} (capped at the 40s send default) instead of always allowing 40s.
+  const res = await client.send('Page.navigate', { url }, requireSession(),
+                                Math.min(40000, Math.max(2000, timeout * 1000)))
   // Page.navigate resolves with errorText on hard failures (bad host, blocked
   // scheme, …) instead of rejecting — surface it rather than silently waiting
   // out the timeout and returning the previous page's info.
   if (res.errorText) {
     throw new Error(`goto: navigation to ${url} failed: ${res.errorText}`)
   }
-  await waitForLoad({ timeout }).catch(() => {})
+  await waitForLoad({ timeout: (deadline - Date.now()) / 1000 }).catch(() => {})
   // Dismiss a cookie-consent banner with the static rule set (CMP selectors
   // only — high precision, no model turn), polling briefly for a late-injected
   // banner to surface. Opt out with {acceptCookies:false}; tune the wait by
@@ -817,20 +828,51 @@ export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   if (acceptCookies) {
     await autoAcceptConsent(typeof acceptCookies === 'object' ? acceptCookies : {})
   }
-  return pageInfo()
+  // The navigation itself succeeded; a page probe that still fails (busy or
+  // wedged renderer) must degrade, not fail the goto — fall back to
+  // browser-side target info, which never touches the renderer.
+  try {
+    return await pageInfo()
+  } catch {
+    const { targetInfo } = await client
+      .send('Target.getTargetInfo', { targetId: state.targetId })
+      .catch(() => ({ targetInfo: null }))
+    return { url: targetInfo?.url ?? url, title: targetInfo?.title ?? '',
+             degraded: 'in-page probe unavailable — browser-side info only' }
+  }
 }
 
 export async function waitForLoad({ timeout = 25 } = {}) {
-  const deadline = Date.now() + timeout * 1000
-  while (Date.now() < deadline) {
-    if (state.openDialog) return { dialog: state.openDialog }
-    try {
-      const ready = await evalInPage('document.readyState', 4000)
-      if (ready === 'complete' || ready === 'interactive') return { ready }
-    } catch {}
-    await wait(0.25)
+  const client = await cdpClient()
+  const sid = requireSession()
+  // Browser-side settle signal, independent of renderer eval health: the Page
+  // lifecycle events arrive on this session from the browser process even
+  // when in-page probes hang (a stale/frozen pinned context). Events only
+  // cover loads finishing AFTER we start listening; the readyState poll
+  // handles documents that were already done.
+  let fired = null
+  const disposers = [
+    client.on('Page.domContentEventFired', () => { fired = 'interactive' }, sid),
+    client.on('Page.loadEventFired', () => { fired = 'complete' }, sid),
+  ]
+  try {
+    const deadline = Date.now() + timeout * 1000
+    while (Date.now() < deadline) {
+      if (state.openDialog) return { dialog: state.openDialog }
+      if (fired) return { ready: fired, via: 'event' }
+      try {
+        const ready = await evalInPage('document.readyState', 4000)
+        if (ready === 'complete' || ready === 'interactive') return { ready }
+      } catch {}
+      // The poll may have burned seconds hanging on a stale context — an
+      // event that landed meanwhile settles the wait before the next poll.
+      if (fired) return { ready: fired, via: 'event' }
+      await wait(0.25)
+    }
+    throw new Error('waitForLoad: timed out')
+  } finally {
+    for (const d of disposers) d()
   }
-  throw new Error('waitForLoad: timed out')
 }
 
 /**
@@ -912,20 +954,33 @@ export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflig
   }
 }
 
-async function evalInPage(expression, timeoutMs = 20000) {
+async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
   const client = await cdpClient()
   const params = { expression, returnByValue: true, awaitPromise: true }
-  // Pin to the tracked main-frame context (see attachTab); retry unpinned once
+  // Pin to the tracked main-frame context (see attachTab); retry unpinned
   // when a navigation destroyed it between tracking and evaluating.
   if (state.contextId) params.contextId = state.contextId
   let res
   try {
     res = await client.send('Runtime.evaluate', params, requireSession(), timeoutMs)
   } catch (err) {
-    const gone = /cannot find context|context.*(destroyed|cleared)/i
-    if (params.contextId && gone.test(String(err?.message))) {
-      state.contextId = null
-      return evalInPage(expression, timeoutMs)
+    if (params.contextId) {
+      const msg = String(err?.message || '')
+      const gone = /cannot find context|context.*(destroyed|cleared)/i
+      // Capped: a page churning main-frame contexts must not recurse forever.
+      if (gone.test(msg) && depth < 2) {
+        state.contextId = null
+        return evalInPage(expression, timeoutMs, depth + 1)
+      }
+      // A pinned eval that TIMES OUT (rather than erroring) is the signature
+      // of a stale-but-alive context — e.g. the previous document parked
+      // frozen in the back/forward cache after a real navigation: commands
+      // against it hang instead of failing, so the gone-test above never
+      // fires. Drop the pin so the NEXT probe re-resolves the live document;
+      // without this, every later eval in the round burns its full timeout
+      // (observed as goto() never settling on x.com while the page had
+      // long finished loading).
+      if (/timed out/i.test(msg)) state.contextId = null
     }
     throw err
   }

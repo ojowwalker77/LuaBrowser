@@ -543,6 +543,11 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
 ## Caveats
 
 - `wait`/`timeout` values are in seconds.
+- `goto` budgets navigate + load-wait inside its `{timeout}` (default 25s):
+  a navigation that can't commit in time throws instead of silently running
+  long, and if the post-load page probe fails, goto returns `{url, title,
+  degraded}` from browser-side info instead of throwing — re-observe before
+  acting on such a page.
 - Code in the heredoc runs in Node; code inside `js(...)` runs in the page.
   `document`/`window` belong inside `js(...)`; navigation, waits, and
   `cliLog` belong in the heredoc body.
