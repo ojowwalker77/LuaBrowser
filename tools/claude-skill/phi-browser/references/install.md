@@ -62,6 +62,13 @@ EOF
 A robot (🤖) Space pip with a pulsing badge appears in the Space switcher;
 click it to watch the agent live.
 
+For a full functional pass (skill development), run the self-test instead —
+it drives a throwaway hidden Space against a local HTTP server, ~60s:
+
+```bash
+node ~/.claude/skills/phi-browser/scripts/selftest.mjs
+```
+
 ## Troubleshooting
 
 - **DevToolsActivePort not found**: the default isn't set for the bundle id
@@ -69,6 +76,15 @@ click it to watch the agent live.
   Set `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
 - **Endpoint not responding**: stale DevToolsActivePort after a crash —
   relaunch Phi Browser.
+- **"No Phi app connection available"**: the CDP endpoint is up but the Mac
+  client's message router has no registered connection to the framework (the
+  `PhiAgentSpace` domain tunnels every `agentSpace.*` call through it). Seen
+  right after launch before any window exists, or when the app side is
+  stopped or half-initialized (e.g. a paused Xcode debug session, or local
+  changes to the embedded-extension launch flags — the router rides that
+  infrastructure). Open a Phi window and retry; if it persists, relaunch
+  Phi Browser. Distinct from "unknown method" below, which means the
+  framework itself is too old.
 - **"PhiAgentSpace.sendMessage" unknown method**: the running Phi Framework
   predates the PhiAgentSpace domain. Rebuild it:
   `autoninja -C out/PhiRelease "Phi Framework.framework"` in chromium/src,

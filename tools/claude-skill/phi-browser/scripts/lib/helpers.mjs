@@ -173,6 +173,7 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
   }
   const tasks = await listAgentSpaces()
   let task = tasks.find((t) => t.taskId === name)
+  const rebound = !!task
   if (!task) {
     const created = await phiSend('agentSpace.create', {
       taskId: name,
@@ -211,6 +212,30 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
   // not flip the badge while they work.
   if (task.ownership !== 'user') await reportRunState(true)
   const tabs = await listTabs()
+  // Zombie heal. A re-bound record with ZERO tabs is broken, not empty:
+  // closing a Space's last tab leaves a window that agentSpace.openTab
+  // silently no-ops into ({ok:true}, no tab ever appears — measured), and a
+  // dead window's lingering record lists no tabs either. A healthy Space
+  // always has ≥1 tab between rounds, so purge and start fresh — the page
+  // state died with the tabs either way. (A just-CREATED space is exempt:
+  // its seed tab can lag, and openTab works there.)
+  if (rebound && tabs.length === 0 && task.ownership !== 'user') {
+    if (task.persistent) {
+      // A persistent Space is a permanent workspace — never purge it from
+      // here; reopening it (or an app relaunch) restores its window.
+      throw new Error(
+        `ensureAgentSpace: persistent space '${name}' has no tabs — ` +
+        'reopen it from the Space switcher (or relaunch Phi Browser), then retry')
+    }
+    await phiSend('agentSpace.complete', {
+      taskId: name, status: 'failure', message: 'agent window lost',
+    }).catch(() => {})
+    if ((await listAgentSpaces()).some((t) => t.taskId === name)) {
+      throw new Error(`ensureAgentSpace: could not heal tab-less space '${name}'`)
+    }
+    state.task = null
+    return ensureAgentSpace(name, { profile, persistent })
+  }
   if (tabs.length > 0) {
     // Resume where the task left off: the tab the previous round drove
     // (persisted on every attach), falling back to the first tab.

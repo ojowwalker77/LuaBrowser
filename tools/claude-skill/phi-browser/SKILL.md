@@ -574,6 +574,12 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
   backslashes or use `String.raw`.
 - The first tab appears ~1s after a space is created; `ensureAgentSpace`
   already waits for it. If `listTabs()` is empty, `openTab(url)` first.
+- Don't close EVERY tab as housekeeping: a Space whose last tab is gone is
+  broken, not empty (`openTab` silently no-ops into it) — end the task with
+  `complete()` instead; an ephemeral Space's tabs die with it anyway. If it
+  happens, the next `ensureAgentSpace(name)` heals by starting a FRESH Space
+  under that name (page state is lost; a persistent Space instead errors
+  until reopened from the switcher).
 - `ensureAgentSpace` re-attaches to the tab the task last drove (first tab as
   a fallback). To act in a different tab, find it via `listTabs()` and
   `switchTab` to it first — keystrokes land in the attached tab only.
