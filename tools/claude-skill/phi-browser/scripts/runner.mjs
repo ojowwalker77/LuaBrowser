@@ -20,6 +20,15 @@ if (typeof WebSocket === 'undefined') {
 
 const { __dispose, ...surface } = await import('./lib/helpers.mjs')
 
+// The heredoc body compiles as a plain async-function body inside this ES
+// module: `import … from` statements can't appear there, and ESM has no
+// ambient `require`. Provide one anchored at the caller's cwd, so
+// require('node:fs') works and relative/node_modules lookups resolve the way
+// a script run from that directory would.
+const { createRequire } = await import('node:module')
+const { join } = await import('node:path')
+surface.require = createRequire(join(process.cwd(), '__phi-heredoc__.mjs'))
+
 // A killed round (Bash-tool timeout, Ctrl-C) should still flip the Space's
 // busy badge back to idle — best effort, the default handler would just die.
 for (const signal of ['SIGINT', 'SIGTERM']) {

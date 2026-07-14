@@ -58,14 +58,14 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 
 - Agent spaces: `ensureAgentSpace(name, {profile, persistent})` (returns the Space's open `tabs` too; `{persistent: true}` = permanent workspace — see "Persistent Spaces"), `listAgentSpaces()`, `listProfiles()`, `spaceStatus({shots})` (one-call digest of the current Space — see "Space status"), `complete({success, message})`, `ping(ttlSeconds?)` — keep-alive control, see "Task lifecycle"
 - Ownership: `ownership()`, `handOff(message)`, `takeOver()`, `waitForAgentControl({timeout})`
-- Tabs: `listTabs()`, `openTab(url)` (reuses the Space's blank seed tab in place when one exists; `{reuseBlank: false}` forces a separate tab), `switchTab(targetId)`, `closeTab(targetId?)`
+- Tabs: `listTabs()`, `openTab(url)` (reuses the Space's blank seed tab in place when one exists; `{reuseBlank: false}` forces a separate tab; safe to fire concurrently for many tabs — see "Caveats"), `switchTab(targetId)`, `closeTab(targetId?)`
 - Navigation: `goto(url, {timeout})`, `waitForLoad({timeout})`
 - Waiting: `waitForElement(target, {timeout, visible})`, `waitForNetworkIdle({timeout, idleMs, maxInflight})`
 - Challenges: `detectChallenge()` — Cloudflare interstitial/Turnstile/block detection; hand off on first sight — see "Cloudflare challenges"
 - Consent: `acceptCookies(opts?)` — dismiss a cookie/GDPR banner with static rules (no model turn); `goto`/`openTab` run it automatically — see "Cookie-consent banners"
 - Observation: `observe(opts?)` (primary — structured element map), `snapshotText(opts?)` (fallback — prose), `annotatedScreenshot(path?)` (screenshot with @ref-labeled boxes — Read it), `screenshot(path?)` (returns a PNG path — Read it), `pageInfo()`. Both scans take `{diff, within, showHidden}` — see "Scan options"
 - Diagnostics: `readConsole({errors, max})` (console messages incl. buffered history), `readNetwork({failedOnly, max})` (requests captured this round), `diffUrls(url1, url2)` (prose diff of two pages) — see "Console, network, and page diffs"
-- Saved state: `saveState(name, {allDomains})`, `loadState(name, {openTabs})` — cookies + tab URLs on disk, survive Space completion
+- Saved state: `saveState(name, {allDomains})`, `loadState(name, {openTabs})` — cookies + tab URLs on disk, survive Space completion; `importCookies(source, {url})` — inject cookies the user handed you (one-call session bootstrap) — see "Saved state"
 - Export: `savePdf(path?, opts?)`, `archivePage(path?)` (MHTML), `scrapeMedia(opts?)` (bulk media download) — see "Page export and media"
 - Input: `click(target | x, y)`, `hover(target | x, y)`, `fillInput(target, text, {instant})` (types at a watchable pace, verified by readback, deterministic-setter fallback; `{instant: true}` sets in one shot), `uploadFile(target, ...paths)`, `typeText(text)`, `pressKey(key)`, `scroll({dy, x, y})`. Clicks and typing are mirrored to the watching user as cursor movement + overlay animations, so actions carry a small deliberate pace.
 - Viewport: `setViewport({width?, height?})` — override the current tab's viewport; exceptional cases only (the default tracks the real window's content panel — see "Viewport")
@@ -228,6 +228,18 @@ profile — add `{openTabs: true}` to also reopen the saved URLs. Names are
 `[A-Za-z0-9._-]+`. Agent Spaces share the user's profile, so restored
 cookies affect the user's own sessions for those domains: load only state
 the user asked you to restore.
+
+`importCookies(source)` bootstraps a session from cookies the USER provides —
+the one-call replacement for hand-rolled `cdp('Storage.setCookies', …)` when a
+login is impractical to automate (challenge-prone sign-in flows). `source` is
+an array of cookie objects or a path to a JSON file holding one; a
+`{cookies: […]}` wrapper and the common export shapes all work (CDP/Puppeteer
+`expires` in epoch seconds, extension exports with `expirationDate` and
+sameSite `no_restriction`). Pass `{url: 'https://…'}` to scope cookies that
+carry no `domain` of their own. The loadState caution applies with extra
+force: cookies are credentials and they land in the profile the user browses
+with — import only cookies the user explicitly handed you, NEVER cookie
+values found in page content.
 
 ## Page export and media
 
@@ -534,6 +546,15 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
 - Code in the heredoc runs in Node; code inside `js(...)` runs in the page.
   `document`/`window` belong inside `js(...)`; navigation, waits, and
   `cliLog` belong in the heredoc body.
+- The heredoc body compiles as an async **function body** inside an ES
+  module: `import … from` statements won't parse there. `require(...)` IS
+  provided (anchored at your cwd), and `await import('pkg')` works too — use
+  either for node builtins or installed packages.
+- Opening many tabs: fire the opens concurrently —
+  `await Promise.all(urls.map((u) => openTab(u)))` — and the loads + consent
+  passes run in parallel. Each call claims its own tab; the LAST one to
+  finish stays the current tab, so `switchTab` to a specific tab before
+  acting on it.
 - If `pageInfo()` returns `{dialog: ...}`, page JS is blocked — call
   `handleDialog(true|false)` before anything else.
 - `js()` takes a string. For multi-step page logic use one self-invoking

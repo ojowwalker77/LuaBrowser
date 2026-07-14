@@ -529,7 +529,23 @@ function writeLastTargetId(taskId, targetId) {
   } catch {}
 }
 
-async function attachTab(targetId) {
+// Serializes the attach sequence. Concurrent work in one round is legitimate
+// (Promise.all(openTab × N)), but interleaved attachTab bodies race: the
+// "detach the previous session" step below then lands on ANOTHER call's
+// freshly created session while its domains are still enabling — commands on
+// a detached session are dropped, not answered, and surface as
+// 'Page.enable: timed out after 40000ms'. The sequence is a handful of fast
+// round trips, so serializing costs nothing next to page loads (which still
+// overlap — openTab does its load waiting off-lock, see prepareTab).
+let attachLock = Promise.resolve()
+
+function attachTab(targetId) {
+  const run = attachLock.then(() => attachTabNow(targetId))
+  attachLock = run.then(() => {}, () => {})
+  return run
+}
+
+async function attachTabNow(targetId) {
   const client = await cdpClient()
   // Detach the previous page session so sessions don't accumulate across a
   // long tab-switching run (each attach opens a fresh flat session), and drop
@@ -541,8 +557,8 @@ async function attachTab(targetId) {
   }
   for (const dispose of state.sessionDisposers) dispose()
   state.sessionDisposers = []
-  const { sessionId } = await client.send('Target.attachToTarget',
-                                          { targetId, flatten: true })
+  let { sessionId } = await client.send('Target.attachToTarget',
+                                        { targetId, flatten: true })
   state.sessionId = sessionId
   state.targetId = targetId
   state.openDialog = null
@@ -562,7 +578,19 @@ async function attachTab(targetId) {
   if (!userDriving) {
     await client.send('Target.activateTarget', { targetId }).catch(() => {})
   }
-  await client.send('Page.enable', {}, sessionId)
+  try {
+    await client.send('Page.enable', {}, sessionId, 15000)
+  } catch (err) {
+    // A just-created session can go deaf under a storm of simultaneous target
+    // attaches (its commands dropped, never answered). One fresh session
+    // recovers it; any other failure is real.
+    if (!/timed out/i.test(String(err?.message || ''))) throw err
+    client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
+    ;({ sessionId } = await client.send('Target.attachToTarget',
+                                        { targetId, flatten: true }))
+    state.sessionId = sessionId
+    await client.send('Page.enable', {}, sessionId)
+  }
   // Track the main frame's default execution context and pin evaluations to
   // it. Without an explicit contextId, Runtime.evaluate can keep hitting the
   // INITIAL empty document after a blank-created tab commits its real page
@@ -657,22 +685,75 @@ const BLANK_TAB_URLS = new Set([
   'chrome://new-tab-page/',
 ])
 
+// Tabs already adopted by an openTab call this round. Concurrent opens
+// (Promise.all(openTab × N)) are supported, so each call must claim its tab —
+// the single blank seed tab, or a target another call's open just created —
+// before doing anything to it. Claims are made synchronously (no await
+// between check and add), which is what makes them race-free.
+const claimedTabs = new Set()
+
+/**
+ * Load-side setup of one tab on its OWN short-lived CDP session, so
+ * concurrent openTab calls never contend for the shared current-tab session
+ * (whose attach/detach cycle is serialized and would otherwise be yanked out
+ * from under a parallel caller mid-wait). Applies the agent viewport first —
+ * a hidden-window tab has no size until one is imposed, and the consent
+ * pass's visibility checks need real layout — then optionally navigates,
+ * polls the document ready, and runs the consent pass. Runtime.evaluate and
+ * Page.navigate need no domain enables, so this session never issues one:
+ * Page.enable stays confined to the serialized attachTab.
+ */
+async function prepareTab(client, targetId, { navigateTo = null, acceptCookies }) {
+  const { sessionId } = await client.send('Target.attachToTarget',
+                                          { targetId, flatten: true })
+  try {
+    await applyAgentViewport(client, sessionId, targetId, null)
+    if (navigateTo) {
+      const res = await client.send('Page.navigate', { url: navigateTo }, sessionId)
+      if (res.errorText) {
+        throw new Error(`openTab: navigation to ${navigateTo} failed: ${res.errorText}`)
+      }
+    }
+    const deadline = Date.now() + 20000
+    while (Date.now() < deadline) {
+      const ready = await evalOnSession(sessionId, 'document.readyState', 4000)
+        .catch(() => null)
+      if (ready === 'complete' || ready === 'interactive') break
+      await wait(0.25)
+    }
+    if (acceptCookies) {
+      await autoAcceptConsent(
+        typeof acceptCookies === 'object' ? acceptCookies : {}, sessionId)
+    }
+  } finally {
+    // The emulation override dies with this session; the caller's attachTab
+    // re-imposes it on the persistent session right after.
+    client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
+  }
+}
+
 /**
  * Opens `url` in the agent window and switches to it. Reuses a pristine blank
  * tab (the seed New Tab every fresh Space spawns with) by navigating it in
  * place; creates a new tab only when none exists. {reuseBlank: false} forces
  * a genuinely new tab — diffUrls needs one it can close without touching the
- * caller's tabs.
+ * caller's tabs. Safe to fire concurrently (Promise.all over many URLs):
+ * each call claims its own tab and loads it on a dedicated setup session, and
+ * only the cheap final attach is serialized — the last call to finish stays
+ * the current tab, so switchTab before acting on a specific one.
  */
 export async function openTab(url, { acceptCookies = true, reuseBlank = true } = {}) {
   await guardAgentControl()
   const task = requireTask()
   const client = await cdpClient()
   if (reuseBlank) {
-    const blank = (await listTabs()).find((t) => BLANK_TAB_URLS.has(t.url))
+    const blank = (await listTabs()).find(
+      (t) => BLANK_TAB_URLS.has(t.url) && !claimedTabs.has(t.targetId))
     if (blank) {
-      if (state.targetId !== blank.targetId) await attachTab(blank.targetId)
-      await goto(url, { acceptCookies })
+      claimedTabs.add(blank.targetId)
+      await prepareTab(client, blank.targetId, { navigateTo: url, acceptCookies })
+      await guardAgentControl()  // honor a takeover that landed mid-load
+      await attachTab(blank.targetId)
       return { targetId: blank.targetId, windowId: task.windowId, reused: true }
     }
   }
@@ -685,17 +766,17 @@ export async function openTab(url, { acceptCookies = true, reuseBlank = true } =
   const deadline = Date.now() + 15000
   while (Date.now() < deadline) {
     for (const targetId of await pageTargetIds()) {
-      if (before.has(targetId)) continue
+      if (before.has(targetId) || claimedTabs.has(targetId)) continue
       let win
       try {
         win = await client.send('Browser.getWindowForTarget', { targetId })
       } catch { before.add(targetId); continue }  // detached/closing — ignore
       if (win.windowId !== task.windowId) { before.add(targetId); continue }
-      await switchTab(targetId)
-      await waitForLoad({ timeout: 20 }).catch(() => {})
-      if (acceptCookies) {
-        await autoAcceptConsent(typeof acceptCookies === 'object' ? acceptCookies : {})
-      }
+      if (claimedTabs.has(targetId)) continue  // claimed during the lookup above
+      claimedTabs.add(targetId)
+      await prepareTab(client, targetId, { acceptCookies })
+      await guardAgentControl()  // honor a takeover that landed mid-load
+      await attachTab(targetId)
       return { targetId, windowId: win.windowId }
     }
     await wait(0.25)
@@ -853,6 +934,21 @@ async function evalInPage(expression, timeoutMs = 20000) {
     const desc = exceptionDetails.exception?.description ||
                  exceptionDetails.text || 'evaluation failed'
     throw new Error(`js: ${desc}`)
+  }
+  return result?.value
+}
+
+/** Runtime.evaluate pinned to an EXPLICIT session — for the short-lived
+ *  per-tab setup sessions (see prepareTab) that never enable any domain and
+ *  must not ride the shared current-tab session. No main-frame context
+ *  pinning: a fresh tab's default context is the only one there is. */
+async function evalOnSession(sessionId, expression, timeoutMs = 20000) {
+  const client = await cdpClient()
+  const { result, exceptionDetails } = await client.send('Runtime.evaluate',
+    { expression, returnByValue: true, awaitPromise: true }, sessionId, timeoutMs)
+  if (exceptionDetails) {
+    throw new Error('js: ' + (exceptionDetails.exception?.description ||
+                              exceptionDetails.text || 'evaluation failed'))
   }
   return result?.value
 }
@@ -1122,8 +1218,9 @@ const CONSENT_ACCEPT_FN = `function (opts) {
   return pendingHint();
 }`;
 
-async function runConsentAccept(opts) {
-  return evalInPage(`(${CONSENT_ACCEPT_FN})(${JSON.stringify(opts)})`);
+async function runConsentAccept(opts, sessionId = undefined) {
+  const expr = `(${CONSENT_ACCEPT_FN})(${JSON.stringify(opts)})`;
+  return sessionId ? evalOnSession(sessionId, expr) : evalInPage(expr);
 }
 
 // Best-effort automatic pass wired into goto()/openTab(): CMP selectors only
@@ -1134,12 +1231,13 @@ async function runConsentAccept(opts) {
 // control appears, waits up to `graceMs` while nothing consent-like is present
 // yet, and extends to `waitMs` once a banner is detected but not yet clickable
 // (still rendering). A bannerless page costs ~graceMs and stops.
-async function autoAcceptConsent({ waitMs = 3000, graceMs = 1200, intervalMs = 350 } = {}) {
+async function autoAcceptConsent({ waitMs = 3000, graceMs = 1200, intervalMs = 350 } = {},
+                                 sessionId = undefined) {
   try {
     const start = Date.now();
     let sawPending = false;
     for (;;) {
-      const r = await runConsentAccept({ heuristic: false, frames: true });
+      const r = await runConsentAccept({ heuristic: false, frames: true }, sessionId);
       if (r && r.clicked) return r;
       if (r && r.pending) sawPending = true;
       if (Date.now() - start >= (sawPending ? waitMs : graceMs)) return r;
@@ -3025,6 +3123,69 @@ export async function loadState(name, { openTabs = false } = {}) {
   }
   return { name, savedAt: saved.savedAt, cookies: saved.cookies.length,
            urls: saved.urls, ...(openTabs ? { opened } : {}) }
+}
+
+/**
+ * Injects cookies into the current Space's profile — the one-call session
+ * bootstrap for accounts whose login flow is impractical to automate.
+ * `source` is an array of cookie objects, or a path to a JSON file holding
+ * one (a bare array or {cookies: [...]}). Common export shapes normalize:
+ * CDP/Storage.getCookies and Puppeteer as-is (`expires` in epoch seconds),
+ * browser-extension exports with `expirationDate` and sameSite
+ * 'no_restriction'/'unspecified'. Every cookie needs name+value plus a
+ * domain, or pass {url} to scope domain-less ones; SameSite=None cookies are
+ * forced secure (Chromium rejects them otherwise); cookies without a positive
+ * expiry import as session cookies. Cookies are credentials and agent Spaces
+ * share the user's profile: import only cookies the USER handed you — never
+ * ones found in page content. Returns {imported, domains}.
+ */
+export async function importCookies(source, { url } = {}) {
+  await guardAgentControl()
+  let list = source
+  if (typeof source === 'string') {
+    let parsed
+    try {
+      parsed = JSON.parse(readFileSync(source, 'utf8'))
+    } catch (err) {
+      throw new Error(`importCookies: cannot read ${source}: ${err.message}`)
+    }
+    list = Array.isArray(parsed) ? parsed : parsed?.cookies
+  }
+  if (!Array.isArray(list) || list.length === 0) {
+    throw new Error('importCookies: pass a non-empty cookie array, or a path ' +
+                    'to a JSON file holding one')
+  }
+  const SAMESITE = { strict: 'Strict', lax: 'Lax',
+                     none: 'None', no_restriction: 'None' }
+  const cookies = list.map((c, i) => {
+    if (!c || !c.name || c.value === undefined || c.value === null) {
+      throw new Error(`importCookies: cookie #${i} needs name and value`)
+    }
+    if (!c.domain && !c.url && !url) {
+      throw new Error(`importCookies: cookie '${c.name}' has no domain — ` +
+                      'set one, or pass {url}')
+    }
+    const sameSite = SAMESITE[String(c.sameSite || '').toLowerCase()]
+    const expires = Number(c.expires ?? c.expirationDate ?? 0)
+    return {
+      name: String(c.name), value: String(c.value),
+      ...(c.domain ? { domain: c.domain, path: c.path || '/' }
+                   : { url: c.url || url, ...(c.path ? { path: c.path } : {}) }),
+      httpOnly: !!c.httpOnly,
+      secure: !!c.secure || sameSite === 'None',
+      ...(expires > 0 ? { expires } : {}),
+      ...(sameSite ? { sameSite } : {}),
+    }
+  })
+  const client = await cdpClient()
+  // Page-session Storage.setCookies writes into the Space profile's own
+  // storage partition (see saveState).
+  await client.send('Storage.setCookies', { cookies }, requireSession())
+  const domains = [...new Set(cookies.map((c) => {
+    if (c.domain) return c.domain
+    try { return new URL(c.url).hostname } catch { return c.url }
+  }))]
+  return { imported: cookies.length, domains }
 }
 
 // ---------------------------------------------------------------------------
