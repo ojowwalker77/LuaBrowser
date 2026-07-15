@@ -19,6 +19,9 @@
     "· %@" : {
 
     },
+    "“%@” already exists and isn’t a link created by Phi Browser. Replace it with a link to this app’s bundled skill?" : {
+      "comment" : "Developer settings - Skill overwrite prompt body"
+    },
     "@%@" : {
 
     },
@@ -106,6 +109,16 @@
     "/**/Window Background" : {
       "comment" : "[EXAMPLE] Theme example: window background label"
     },
+    "%@  %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@  %2$@"
+          }
+        }
+      }
+    },
     "%@ — in use by a Space" : {
       "comment" : "Spaces menu - Delete Profile row label for a profile bound to a Space"
     },
@@ -119,6 +132,20 @@
           }
         }
       }
+    },
+    "%@ and %@ will be deleted." : {
+      "comment" : "Bookmark multi-selection delete confirmation body for mixed folders and bookmarks",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ and %2$@ will be deleted."
+          }
+        }
+      }
+    },
+    "%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect." : {
+      "comment" : "Developer settings - Skill install success body; %@ is the agent name"
     },
     "%@ tab group, %d tabs, collapsed" : {
       "comment" : "Tab Groups - VoiceOver label for collapsed horizontal-strip group chip",
@@ -142,8 +169,23 @@
         }
       }
     },
+    "%@ will be deleted." : {
+      "comment" : "Bookmark multi-selection delete confirmation body for bookmarks\nBookmark multi-selection delete confirmation body for folders"
+    },
+    "%d bookmark" : {
+      "comment" : "Bookmark multi-selection delete confirmation phrase for bookmark"
+    },
+    "%d bookmarks" : {
+      "comment" : "Bookmark multi-selection delete confirmation phrase for bookmarks"
+    },
     "%d days ago" : {
       "comment" : "Download item row - Relative time showing days since download completed"
+    },
+    "%d folder and its contents" : {
+      "comment" : "Bookmark multi-selection delete confirmation phrase for folder"
+    },
+    "%d folders and their contents" : {
+      "comment" : "Bookmark multi-selection delete confirmation phrase for folders"
     },
     "%d hour ago" : {
       "comment" : "Download item row - Relative time showing hours since download completed"
@@ -170,14 +212,17 @@
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
+    "A new version of Phi is available" : {
+      "comment" : "Sparkle update window - Title"
+    },
+    "A new version of Phi is ready to install" : {
+      "comment" : "Sparkle update window - Ready to install title"
+    },
     "A profile with this name already exists." : {
       "comment" : "Validation shown when a new or renamed profile name duplicates an existing profile"
     },
     "Active" : {
       "comment" : "Search Tabs - Trailing label for the active tab result"
-    },
-    "Add Download" : {
-
     },
     "Add Left Split" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the left third of the page"
@@ -190,6 +235,9 @@
     },
     "Add Rule" : {
       "comment" : "Footer button in URL rules editor"
+    },
+    "Add skill to…" : {
+      "comment" : "Developer settings - Dropdown button installing the phi-browser skill for an agent"
     },
     "Add Split to Bookmark" : {
       "comment" : "Tab context menu - Save both panes of the split as a bookmark folder"
@@ -218,14 +266,20 @@
     "Additional info (optional)" : {
       "comment" : "Feedback form - Section header for optional additional information"
     },
-    "Adds a built-in Space that browses in a private session. URL rules can route sites into it; everything it browsed is cleared when its windows close or Phi quits." : {
-      "comment" : "Spaces settings - Incognito Space toggle tooltip"
+    "Agent Autoview" : {
+      "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
+    },
+    "Agent skill" : {
+      "comment" : "Developer settings - phi-browser skill section title"
     },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
     },
     "AI Sidebar" : {
       "comment" : "AI settings - Section title for AI sidebar options"
+    },
+    "All agents" : {
+      "comment" : "Developer settings - Menu item installing the skill for every agent"
     },
     "All connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling connectors"
@@ -251,6 +305,9 @@
     "An import is still adding bookmarks to this Space. Wait for it to finish, then try again." : {
       "comment" : "Body shown when a Space action is blocked by an in-progress import\nBody shown when deleting a Space is blocked by an in-progress import"
     },
+    "Any unsaved changes may be lost." : {
+      "comment" : "Quit confirmation message"
+    },
     "Appearance" : {
       "comment" : "General settings - Appearance section title"
     },
@@ -263,8 +320,8 @@
     "Aqua" : {
       "comment" : "Aqua theme color name"
     },
-    "Are you sure you want to install version %@ and restart Phi?" : {
-      "comment" : "Update alert - Message asking user to confirm update installation with version number"
+    "Are you sure you want to quit Phi?" : {
+      "comment" : "Quit confirmation title"
     },
     "Ask every time" : {
       "comment" : "Special target in the URL rule Space picker: prompt for a Space on each match"
@@ -278,8 +335,14 @@
     "Automatically add External Data Connectors as context to new conversation" : {
       "comment" : "AI settings - Toggle to auto-add connector data as context to new AI conversation"
     },
+    "Automatically download and install updates in the future" : {
+      "comment" : "Sparkle update window - Automatic update download checkbox"
+    },
     "Back" : {
       "comment" : "Web content header - Accessibility description for back navigation button"
+    },
+    "Back to Saved URL" : {
+      "comment" : "Bookmark favicon hover hint - Navigate the open bookmark tab back to its saved URL"
     },
     "Back Up Phi User Data" : {
       "comment" : "Debug clear data - NSSavePanel title for saving Phi user data directory as zip"
@@ -354,26 +417,13 @@
       "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
     },
     "Cancel" : {
-      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast\nUpdate alert - Button to cancel update installation"
-    },
-    "Cancel First" : {
-
+      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
     },
     "Canceled" : {
       "comment" : "Download item row - Status label when download was cancelled"
     },
     "Cancelled" : {
       "comment" : "Download state"
-    },
-    "Card %lld of %lld" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Card %1$lld of %2$lld"
-          }
-        }
-      }
     },
     "Certificate is invalid" : {
       "comment" : "Address bar menu - Certificate validity status"
@@ -414,6 +464,9 @@
     "Choose a download location for this profile." : {
       "comment" : "Profiles settings - download folder picker message"
     },
+    "Choose File…" : {
+      "comment" : "Import browser data page - Button to pick a file to import"
+    },
     "Choose Files" : {
       "comment" : "Feedback form - Button to open file picker for attachments"
     },
@@ -441,8 +494,11 @@
     "Click to install update" : {
       "comment" : "Phi menu - Menu item text when update is ready to install"
     },
+    "Clone to Space" : {
+      "comment" : "Bookmark context menu - Submenu to clone this bookmark or folder to another Space\nTab multi-selection context menu - Submenu to clone selected tabs and bookmarks to another Space"
+    },
     "Close" : {
-      "comment" : "Sidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
+      "comment" : "Confirm closing an Incognito Space\nSidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
     },
     "Close Group" : {
       "comment" : "Tab group context menu - Close the group and all its tabs"
@@ -450,11 +506,11 @@
     "Close Group Overview" : {
       "comment" : "Tab group overview - Accessibility label for the button that closes the overview"
     },
+    "Close Incognito Space" : {
+      "comment" : "Spaces menu - close the active Incognito Space's windows and end it"
+    },
     "Close Other Tabs" : {
       "comment" : "Tab context menu - Menu item to close all tabs except the selected one\nTab multi-selection context menu - close all tabs except the selected ones"
-    },
-    "Close Space" : {
-      "comment" : "Spaces menu - close the Incognito Space's windows and clear the private session"
     },
     "Close Tab" : {
       "comment" : "Search Tabs - Close open tab button tooltip\nTab group overview - Accessibility label for the button that closes one tab card"
@@ -476,12 +532,6 @@
     },
     "Comfortable" : {
       "comment" : "Layout option - Horizontal tabs\nOnboarding layout selection - Comfortable option"
-    },
-    "Complete First" : {
-
-    },
-    "Complete First In-Progress" : {
-
     },
     "Completed" : {
       "comment" : "Download state"
@@ -526,7 +576,7 @@
       "comment" : "Bookmark context menu - Copy the left (primary) URL of a split-view bookmark\nTab context menu - Copy the left pane's URL for a split"
     },
     "Copy Link" : {
-      "comment" : "Address bar menu - Copy link menu item\nBookmark Copy Link menu item\nDownload item row - Tooltip for copy link button\nSidebar address bar - Copy current page URL button tooltip\nTab context menu - Menu item to copy the tab URL to clipboard\nTooltip for button to copy download URL in living downloads toast"
+      "comment" : "Bookmark Copy Link menu item\nDownload item row - Tooltip for copy link button\nSidebar address bar - Copy current page URL button tooltip\nTab context menu - Menu item to copy the tab URL to clipboard\nTooltip for button to copy download URL in living downloads toast"
     },
     "Copy Links" : {
       "comment" : "Tab multi-selection context menu - copy links of all selected tabs"
@@ -535,7 +585,7 @@
       "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
     },
     "Copy URL" : {
-      "comment" : "Edit menu - Copy the selected tab URL to the clipboard"
+      "comment" : "Copy URL shortcut tooltip title\nEdit menu - Copy the selected tab URL to the clipboard"
     },
     "Copy URLs" : {
       "comment" : "Edit menu - Copy the selected tab URLs to the clipboard"
@@ -546,11 +596,17 @@
     "Could Not Add Attachment" : {
       "comment" : "Feedback form - Alert title when selected attachments cannot be added"
     },
+    "Could Not Export Bookmarks" : {
+      "comment" : "Export bookmarks failure alert - title shown when writing the exported HTML file fails"
+    },
     "Could Not Save Feedback" : {
       "comment" : "Feedback form - Alert title when local outbox save fails"
     },
     "Couldn't delete profile" : {
       "comment" : "Title of the profile-delete error"
+    },
+    "Couldn’t install the skill" : {
+      "comment" : "Developer settings - Skill install error title"
     },
     "Couldn't rename profile" : {
       "comment" : "Title of the profile-rename error"
@@ -588,9 +644,6 @@
     "Dark" : {
       "comment" : "Appearance choice: always dark mode"
     },
-    "DEBUG Test Mode" : {
-
-    },
     "Default" : {
       "comment" : "Settings - badge marking the default Space or Profile"
     },
@@ -599,6 +652,39 @@
     },
     "Delete “%@”?" : {
       "comment" : "Title of the delete-Space confirmation"
+    },
+    "Delete %d Bookmark" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmark"
+    },
+    "Delete %d Bookmark?" : {
+      "comment" : "Bookmark multi-selection delete confirmation title"
+    },
+    "Delete %d Bookmarks" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmarks"
+    },
+    "Delete %d Bookmarks?" : {
+      "comment" : "Bookmark multi-selection delete confirmation title"
+    },
+    "Delete %d Folder" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmark folder"
+    },
+    "Delete %d Folder?" : {
+      "comment" : "Bookmark multi-selection delete confirmation title"
+    },
+    "Delete %d Folders" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmark folders"
+    },
+    "Delete %d Folders?" : {
+      "comment" : "Bookmark multi-selection delete confirmation title"
+    },
+    "Delete %d Item" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmark item"
+    },
+    "Delete %d Items" : {
+      "comment" : "Tab multi-selection context menu - delete selected bookmark items"
+    },
+    "Delete %d Items?" : {
+      "comment" : "Bookmark multi-selection delete confirmation title"
     },
     "Delete Profile" : {
       "comment" : "Spaces menu - Submenu listing deletable browser profiles"
@@ -621,6 +707,9 @@
     "Describe the issue in detail" : {
       "comment" : "Feedback form - Section header prompting user to describe the issue"
     },
+    "Developer" : {
+      "comment" : "Settings - Tab title for developer tooling"
+    },
     "Discard" : {
       "comment" : "Download item row - Tooltip for discard button on blocked download\nDownload item row - Tooltip for discard button on safety warning\nTooltip for discard button on blocked download in living downloads toast\nTooltip for discard button on safety warning in living downloads toast"
     },
@@ -629,6 +718,9 @@
     },
     "Dismiss" : {
       "comment" : "Tooltip for button to dismiss living download item"
+    },
+    "Do not ask again" : {
+      "comment" : "Suppression checkbox of the close-Incognito-Space confirmation"
     },
     "Domain" : {
       "comment" : "URL rule match type: exact host only"
@@ -644,9 +736,6 @@
     },
     "Download location" : {
       "comment" : "Profiles settings - download location row label"
-    },
-    "Download Test Controls" : {
-
     },
     "Downloading" : {
       "comment" : "Download state"
@@ -726,6 +815,9 @@
     "Enable External Data Connectors" : {
       "comment" : "AI settings - Toggle to enable external data connectors"
     },
+    "Enable remote debugging (CDP)" : {
+      "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
+    },
     "Enter a name for the new folder." : {
       "comment" : "Bookmark editor - Inline new folder creation subtitle"
     },
@@ -756,6 +848,9 @@
     "Export" : {
       "comment" : "Help menu - NSSavePanel primary button title for confirming log export save location"
     },
+    "Export Bookmarks..." : {
+      "comment" : "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"
+    },
     "Export Failed" : {
       "comment" : "Help menu - Log export error alert title"
     },
@@ -779,9 +874,6 @@
     },
     "External Data Connectors help to provide additional context for better AI experience" : {
       "comment" : "AI settings - Description explaining external data connectors purpose"
-    },
-    "Fail First In-Progress" : {
-
     },
     "Failed" : {
       "comment" : "Download item row - Status label when download failed\nDownload state"
@@ -815,6 +907,9 @@
     },
     "From %@" : {
       "comment" : "Download item row - Source host label showing where the file is downloaded from"
+    },
+    "From a file" : {
+      "comment" : "Import browser data page - Option label to import data from a file"
     },
     "From Arc" : {
       "comment" : "Import browser data page - Option label to import data from Arc browser"
@@ -900,20 +995,29 @@
     "Importing Chrome data..." : {
       "comment" : "Browser data importer - Status message while importing Chrome browser data"
     },
+    "Importing data from file..." : {
+      "comment" : "Browser data importer - Status message while importing data from a file"
+    },
     "Importing Safari data..." : {
       "comment" : "Browser data importer - Status message while importing Safari browser data"
     },
     "Incognito" : {
       "comment" : "Built-in Incognito Space name\nIncognito label in the native new tab page"
     },
-    "Incognito Space" : {
-      "comment" : "Spaces settings - Incognito Space toggle label"
+    "Incognito %d" : {
+      "comment" : "Incognito Space name when several are open; %d is its number"
     },
-    "Install and Restart" : {
-      "comment" : "Update alert - Button to install update and restart the app"
+    "Install and Relaunch" : {
+      "comment" : "Sparkle update window - Install downloaded update and relaunch button"
+    },
+    "Install on Quit" : {
+      "comment" : "Sparkle update window - Install downloaded update on quit button"
+    },
+    "Install the phi-browser skill" : {
+      "comment" : "Developer settings - Title for installing the phi-browser agent skill"
     },
     "Install Update" : {
-      "comment" : "Update alert - Title for install update confirmation dialog"
+      "comment" : "Sparkle update window - Install update button"
     },
     "Invalid image source" : {
       "comment" : "Image preview error"
@@ -936,14 +1040,14 @@
     "Item 2" : {
 
     },
-    "Its open tabs will close and its browsing data will be cleared." : {
-      "comment" : "Body of the confirmation shown when disabling the Incognito Space with open tabs"
-    },
     "Just now" : {
       "comment" : "Download item row - Relative time when download completed less than a minute ago"
     },
     "Keep" : {
       "comment" : "Download item row - Tooltip for keep button on safety warning\nTooltip for keep button on safety warning in living downloads toast"
+    },
+    "Later" : {
+      "comment" : "Agent handoff prompt - dismiss\nDeveloper settings - Relaunch prompt dismiss button"
     },
     "Launch Phi Sentinel automatically at login" : {
       "comment" : "AI settings - Toggle to auto-launch Phi Sentinel at system login"
@@ -966,6 +1070,9 @@
     "Left URL" : {
       "comment" : "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
     },
+    "Lets local tools drive Phi over the DevTools Protocol on 127.0.0.1. Any local process can control the browser while this is on — leave it off when you’re not using it. Takes effect after a relaunch." : {
+      "comment" : "Developer settings - Security note for the remote debugging toggle"
+    },
     "Light" : {
       "comment" : "Appearance choice: always light mode"
     },
@@ -981,11 +1088,14 @@
     "Linking..." : {
       "comment" : "Phi Link - Custom bot linking text"
     },
-    "Living Downloads Test" : {
-
+    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect." : {
+      "comment" : "Developer settings - Explanation for the phi-browser skill installer"
     },
     "Loading image…" : {
       "comment" : "Image preview loading"
+    },
+    "Loading release notes..." : {
+      "comment" : "Sparkle update window - Release notes loading placeholder"
     },
     "Log in" : {
       "comment" : "Onboarding Login button title"
@@ -1024,10 +1134,10 @@
       "comment" : "Tab context menu - Move this tab out of its current group into a newly created group"
     },
     "Move to Space" : {
-      "comment" : "Tab context menu - Submenu to move this tab to another Space"
+      "comment" : "Bookmark context menu - Submenu to move this bookmark or folder to another Space\nTab context menu - Submenu to move this tab to another Space\nTab multi-selection context menu - Submenu to move selected tabs and bookmarks to another Space"
     },
     "Mute" : {
-      "comment" : "Notification menu option - Disable auto popup for notification cards\nTab mute button tooltip - mute"
+      "comment" : "Notification menu option - Disable auto popup for notification cards"
     },
     "Name" : {
       "comment" : "Editor - Label for the title/name input field"
@@ -1052,6 +1162,12 @@
     },
     "New Folder…" : {
       "comment" : "Bookmark editor - Create new folder option in folder picker"
+    },
+    "New Incognito Space" : {
+      "comment" : "File menu - Create a new Incognito Space and bring it to the front"
+    },
+    "New Incognito Tab" : {
+      "comment" : "Tab title shown for an incognito new-tab page rendered by the native NTP"
     },
     "New Nested Folder..." : {
       "comment" : "Bookmark New Folder menu item"
@@ -1104,9 +1220,6 @@
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
     },
-    "Next Test (%lld items)" : {
-
-    },
     "No Backups Available" : {
       "comment" : "Help menu - Time Machine submenu placeholder when no completed backups exist"
     },
@@ -1122,6 +1235,9 @@
     "No extensions found or versions unavailable." : {
       "comment" : "Extension info alert - Fallback when no extension versions are available"
     },
+    "No file selected" : {
+      "comment" : "Import browser data page - Placeholder when no file has been chosen for import yet"
+    },
     "No Phi or Sentinel log folders were found." : {
       "comment" : "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing"
     },
@@ -1130,6 +1246,9 @@
     },
     "No Profiles to Delete" : {
       "comment" : "Spaces menu - Delete Profile submenu empty state"
+    },
+    "No release notes available." : {
+      "comment" : "Sparkle update window - Missing release notes placeholder"
     },
     "No Results" : {
       "comment" : "Shortcuts settings - Empty state text when no shortcuts match search"
@@ -1159,7 +1278,7 @@
       "comment" : "Phi Link - Official Bot title"
     },
     "OK" : {
-      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nDismiss button\nExtension info alert - OK button to dismiss the alert\nGeneric - OK button to dismiss an alert"
+      "comment" : "Account settings - OK button\nAccount settings - OK button to dismiss logout failed alert\nDeveloper settings - Alert dismiss button\nDismiss button\nExtension info alert - OK button to dismiss the alert\nGeneric - OK button to dismiss an alert"
     },
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
@@ -1269,6 +1388,9 @@
     "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone." : {
       "comment" : "Body of the delete-Space confirmation"
     },
+    "Please quit Safari before importing its data." : {
+      "comment" : "Import browser data page - Reminder to quit Safari before importing so its data can be read"
+    },
     "Please reauthenticate to restore account features." : {
       "comment" : "Account settings - Tooltip explaining why reauthentication is needed"
     },
@@ -1323,9 +1445,6 @@
     "Quit" : {
       "comment" : "Quit"
     },
-    "Quit Phi?" : {
-      "comment" : "Quit Phi?"
-    },
     "Reauthenticate" : {
       "comment" : "Auth reauthentication - Primary action to start Auth0 web authentication"
     },
@@ -1347,8 +1466,26 @@
     "Refresh connector status" : {
       "comment" : "AI settings - Tooltip for refreshing connector status"
     },
+    "Relaunch Now" : {
+      "comment" : "Developer settings - Relaunch prompt confirm button"
+    },
+    "Relaunch to apply?" : {
+      "comment" : "Developer settings - Relaunch prompt title after toggling remote debugging"
+    },
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
+    },
+    "Remind Me Later" : {
+      "comment" : "Sparkle update window - Remind later button"
+    },
+    "Remote debugging" : {
+      "comment" : "Developer settings - Remote debugging section title"
+    },
+    "Remote debugging starts after Phi Browser restarts." : {
+      "comment" : "Developer settings - Relaunch prompt body when enabling remote debugging"
+    },
+    "Remote debugging stops after Phi Browser restarts." : {
+      "comment" : "Developer settings - Relaunch prompt body when disabling remote debugging"
     },
     "Remove" : {
       "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
@@ -1398,6 +1535,9 @@
     "Reopen Closed Tab" : {
       "comment" : "Tab area context menu - Reopen the last closed tab"
     },
+    "Replace" : {
+      "comment" : "Developer settings - Skill overwrite confirm button"
+    },
     "Replace Bottom" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the bottom/secondary pane of a horizontal split to replace it"
     },
@@ -1407,11 +1547,11 @@
     "Replace Right" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the right/secondary pane of a vertical split to replace it"
     },
+    "Replace the existing skill?" : {
+      "comment" : "Developer settings - Skill overwrite prompt title"
+    },
     "Replace Top" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it"
-    },
-    "Reset" : {
-
     },
     "Restarting Phi..." : {
       "comment" : "Time Machine restore progress stage"
@@ -1433,6 +1573,9 @@
     },
     "Retry after Phi Sentinel is running normally." : {
       "comment" : "IM Channels - Official bot retry hint when service is unavailable"
+    },
+    "Return to Bookmark URL" : {
+      "comment" : "Bookmark favicon button - Navigate the open bookmark tab back to its saved URL"
     },
     "Reverse Panes" : {
       "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
@@ -1482,6 +1625,9 @@
     "Send Feedback to Phi" : {
       "comment" : "Feedback window - Window title for feedback submission"
     },
+    "Separate From Bookmark" : {
+      "comment" : "Bookmark favicon command-hover hint - Preserve the current page as a normal tab and reset the bookmark"
+    },
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
     },
@@ -1524,11 +1670,17 @@
     "Site Settings" : {
       "comment" : "Address bar menu - Settings menu item\nAddress bar menu - Settings submenu title"
     },
+    "Skill installed" : {
+      "comment" : "Developer settings - Skill install success title"
+    },
     "Skip" : {
       "comment" : "Onboarding base - Skip button to bypass current step"
     },
     "Skip Backup" : {
       "comment" : "Debug clear data - Alert button to clear data without creating a backup zip"
+    },
+    "Skip This Version" : {
+      "comment" : "Sparkle update window - Skip update button"
     },
     "Some account and system information may be sent to Phinomenon. We will use the information you give us to help address technical issues and to improve our services, subject to our Privacy Policy and Terms of Service." : {
       "comment" : "Feedback form - Legal disclaimer text explaining data usage, contains links to Privacy Policy and Terms of Service"
@@ -1554,9 +1706,6 @@
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
     },
-    "Start Test" : {
-
-    },
     "Starting restore..." : {
       "comment" : "Time Machine restore progress stage"
     },
@@ -1565,6 +1714,9 @@
     },
     "SwiftUI" : {
 
+    },
+    "Switch to Agent Space" : {
+      "comment" : "Agent handoff prompt - open the agent Space"
     },
     "System" : {
       "comment" : "Appearance choice: follow system setting"
@@ -1584,6 +1736,12 @@
     "Telegram ID" : {
       "comment" : "Phi Link - Official bot connected label"
     },
+    "The agent handed control back to you to finish a step — for example, signing in." : {
+      "comment" : "Agent handoff prompt - default body"
+    },
+    "The agent needs you" : {
+      "comment" : "Agent handoff prompt - title"
+    },
     "The archive does not contain a top-level Phi folder." : {
       "comment" : "Debug import user data - Error message when zip does not include the expected Phi directory at archive root"
     },
@@ -1592,9 +1750,6 @@
     },
     "The default Space can't be moved to another profile or deleted." : {
       "comment" : "Spaces settings - default Space limits note"
-    },
-    "The Incognito Space browses in a private session. Its name and profile are fixed; the toggle above the list turns it off." : {
-      "comment" : "Spaces settings - Incognito Space limits note"
     },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
@@ -1611,6 +1766,12 @@
     "Theme" : {
       "comment" : "General settings - Theme section title\nSpaces settings - theme section header"
     },
+    "This action cannot be undone." : {
+      "comment" : "Bookmark multi-selection delete confirmation irreversible warning"
+    },
+    "This build doesn’t include the phi-browser skill resources. Rebuild Phi Browser and try again." : {
+      "comment" : "Developer settings - Skill install failure body when the resource is missing"
+    },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
     },
@@ -1619,6 +1780,9 @@
     },
     "This version of Phi cannot open local browser data that was updated by a newer version. Install the latest Phi version and try again." : {
       "comment" : "Local store compatibility alert - body when a newer app is required to read local data"
+    },
+    "This will also close this Incognito Space, are you sure?" : {
+      "comment" : "Title of the confirmation shown when a close would tear down an Incognito Space"
     },
     "Time Machine Backups" : {
       "comment" : "Help menu - Parent menu item listing completed Phi Time Machine backups"
@@ -1642,16 +1806,13 @@
       "comment" : "IM Channels - Custom bot verify success"
     },
     "Turn Off" : {
-      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors\nConfirm disabling the Incognito Space"
+      "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors"
     },
     "Turn Off AI Features?" : {
       "comment" : "AI settings - Confirmation alert title when disabling all AI features"
     },
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
-    },
-    "Turn off Incognito Space?" : {
-      "comment" : "Title of the confirmation shown when disabling the Incognito Space with open tabs"
     },
     "Unable to open connector authorization." : {
       "comment" : "AI settings - OAuth authorization open error"
@@ -1670,9 +1831,6 @@
     },
     "Unlink" : {
       "comment" : "Phi Link - Official bot unlink button"
-    },
-    "Unmute" : {
-      "comment" : "Tab mute button tooltip - unmute"
     },
     "Unpin" : {
       "comment" : "Tab context menu - Menu item to unpin the selected tab"

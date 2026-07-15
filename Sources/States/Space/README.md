@@ -23,6 +23,8 @@ It checks `browserState.tabs.count <= 1` and, if true, calls `slot.markTabDriven
 
 Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliberately does **not** tag. Closing a Space's last tab with ⌘W is intended to tear the whole slot down like ⇧⌘W, so it dispatches `IDC_CLOSE_TAB` untagged and reaches `unregisterWindow` as a window-driven close. (⌘W is still swallowed by `handleCloseTab()` when the omnibox is open, which returns `true` without dispatching anything — no tag is involved either way.)
 
+**Incognito Spaces bypass the tag entirely on a last-tab close.** Both `Tab.close()` and the ⌘W dispatch intercept it up front and route into `SpaceManager.requestCloseIncognitoSpace(spaceId:)`: a confirmation ("This will also close this Incognito Space, are you sure?", suppressible via "Do not ask again") followed by `closeIncognitoSpace(spaceId:)`, which closes the Space's windows in every slot retreat-first (evict-then-close, like `deleteSpace`) and removes the runtime Space itself. Close paths that never reach the interception — a window-driven slot cascade, a scripted `window.close()` — are mopped up by `reapIncognitoSpaceIfWindowless(_:)`, called one turn deferred from `unregisterWindow`, which retires an Incognito Space once no slot holds a window for it.
+
 One robustness rule applies to the tag:
 
 - **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — no `unregisterWindow` fires to drain the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified.

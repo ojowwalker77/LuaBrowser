@@ -26,9 +26,11 @@ extension AppController {
     static let spacesNewProfileItemTag = 500015
     static let spacesDeleteProfileParentItemTag = 500016
     static let viewMenuPhiSectionSeparatorTag = 500023
+    static let agentAutoViewItemTag = 500024
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
+    static let fileNewIncognitoSpaceItemTag = 500019
     static let spacesNewSpaceItemTag = 500030
     static let spacesRenameItemTag = 500031
     static let spacesChangeThemeParentTag = 500033
@@ -78,7 +80,8 @@ extension AppController {
                     item.tag == AppController.layoutModeDefaultItemTag ||
                     item.tag == AppController.layoutModeNavigationAtTopItemTag ||
                     item.tag == AppController.layoutModeTraditionalItemTag ||
-                    item.tag == AppController.layoutModeTitleItemTag
+                    item.tag == AppController.layoutModeTitleItemTag ||
+                    item.tag == AppController.agentAutoViewItemTag
                 }
 
                 if submenu.items.last?.isSeparatorItem == false {
@@ -159,6 +162,18 @@ extension AppController {
                 Shortcuts.updateShortcut(for: newConversationItem)
                 newConversationItem.target = self
                 submenu.addItem(newConversationItem)
+
+                if PhiPreferences.AgentSpaces.skillFeatureEnabled {
+                    let agentAutoViewSeparator = NSMenuItem.separator()
+                    agentAutoViewSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                    submenu.addItem(agentAutoViewSeparator)
+                    let agentAutoViewItem = NSMenuItem(title: NSLocalizedString("Agent Autoview", comment: "View menu - Toggle that automatically switches to the Space of an operating agent"),
+                                                       action: #selector(toggleAgentAutoView(_:)),
+                                                       keyEquivalent: "")
+                    agentAutoViewItem.tag = AppController.agentAutoViewItemTag
+                    agentAutoViewItem.target = self
+                    submenu.addItem(agentAutoViewItem)
+                }
             } else
             
             if menuItem.title == "Phi", let subMenu = menuItem.submenu {
@@ -187,6 +202,23 @@ extension AppController {
                         item.keyEquivalent = ""
                         item.keyEquivalentModifierMask = .init(rawValue: 0)
                     }
+                }
+                // Remove-then-insert keeps this idempotent across menu
+                // rebuilds (Chromium can swap the main menu wholesale).
+                subMenu.items.removeAll { $0.tag == AppController.fileNewIncognitoSpaceItemTag }
+                let newIncognitoSpaceItem = NSMenuItem(
+                    title: NSLocalizedString("New Incognito Space", comment: "File menu - Create a new Incognito Space and bring it to the front"),
+                    action: #selector(newIncognitoSpaceFromMenu(_:)),
+                    keyEquivalent: ""
+                )
+                newIncognitoSpaceItem.tag = AppController.fileNewIncognitoSpaceItemTag
+                newIncognitoSpaceItem.target = self
+                if let incognitoWindowIndex = subMenu.items.firstIndex(where: {
+                    $0.tag == CommandWrapper.IDC_NEW_INCOGNITO_WINDOW.rawValue
+                }) {
+                    subMenu.insertItem(newIncognitoSpaceItem, at: incognitoWindowIndex + 1)
+                } else {
+                    subMenu.addItem(newIncognitoSpaceItem)
                 }
             } else
             
@@ -448,9 +480,11 @@ extension AppController {
             bookmarks: bookmarks,
             canBookmarkCurrentTab: canBookmarkCurrentTab(),
             canBookmarkAllTabs: canBookmarkAllTabs(),
+            canExportBookmarks: canExportBookmarks(),
             target: self,
             bookmarkThisTabAction: #selector(bookmarkThisTab(_:)),
             bookmarkAllTabsAction: #selector(bookmarkAllTabs(_:)),
+            exportBookmarksAction: #selector(exportBookmarks(_:)),
             openBookmarkAction: #selector(openBookmarkMenuItem(_:))
         )
     }
@@ -488,6 +522,16 @@ extension AppController {
         guard !isActiveWindowIncognito() else { return false }
         let bookmarkableTabsCount = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.normalTabs.filter { !$0.isLocalPage }.count ?? 0
         return bookmarkableTabsCount > 1
+    }
+
+    /// Export is meaningful only when the active window's Space has at least
+    /// one bookmark. Incognito windows never load a bookmark tree, so the
+    /// empty-tree check disables them too.
+    private func canExportBookmarks() -> Bool {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
+            return false
+        }
+        return !state.bookmarkManager.rootFolder.children.isEmpty
     }
 
     private func installOrUpdateCopyURLMenuItem(in menu: NSMenu) {
@@ -561,6 +605,20 @@ extension AppController {
         UserDefaults.standard.set(!currentValue, forKey: PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.rawValue)
     }
 
+    /// View ▸ Agent Autoview — follow the operating agent's Space while it
+    /// works (see `AgentSpaceManager.autoViewReevaluate`). Turning it ON
+    /// surfaces an already-running agent immediately.
+    @objc func toggleAgentAutoView(_ sender: Any?) {
+        let enabled = !PhiPreferences.AgentSpaces.autoViewEnabled
+        PhiPreferences.AgentSpaces.autoViewEnabled = enabled
+        if enabled {
+            // Menu actions arrive on the main thread; the manager is main-actor.
+            MainActor.assumeIsolated {
+                AgentSpaceManager.shared.autoViewReevaluate()
+            }
+        }
+    }
+
     @objc func toggleBookmarkBarOnNewTab(_ sender: Any?) {
         let currentValue = PhiPreferences.GeneralSettings.showBookmarkBarOnNewTabPage.loadValue()
         UserDefaults.standard.set(!currentValue, forKey: PhiPreferences.GeneralSettings.showBookmarkBarOnNewTabPage.rawValue)
@@ -595,6 +653,70 @@ extension AppController {
         }
 
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.openBookmark(bookmark)
+    }
+
+    /// Bookmark-export writes still running on the background queue, and
+    /// whether app termination is parked on them (`.terminateLater`).
+    /// Main-thread only.
+    static var inFlightBookmarkExportWrites = 0
+    static var bookmarkExportTerminationPending = false
+
+    /// Exports the active window's current Space's bookmark tree to a
+    /// Netscape-format HTML file. The system save panel handles the
+    /// same-name replace confirmation; the write is atomic so a mid-write
+    /// failure leaves any existing file intact.
+    @objc func exportBookmarks(_ sender: Any?) {
+        guard let windowController = MainBrowserWindowControllersManager.shared.activeWindowController,
+              let window = windowController.window else { return }
+        let state = windowController.browserState
+        guard !state.bookmarkManager.rootFolder.children.isEmpty else { return }
+
+        // Menu actions are dispatched on the main thread.
+        let spaceName = MainActor.assumeIsolated {
+            state.localStore.getAllSpaces()
+                .first { $0.spaceId == state.spaceId }?.name ?? "Default"
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = BookmarkHTMLExporter.defaultFilename(spaceName: spaceName,
+                                                                          date: Date())
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            // Read the tree at confirmation time, not when the sheet was
+            // presented — edits made while the panel was open must export.
+            let bookmarks = state.bookmarkManager.rootFolder.children
+            guard !bookmarks.isEmpty else { return }
+            // Serialize on the main thread (the Bookmark tree is main-thread
+            // state), but write off it — the destination may be a slow
+            // network or cloud volume and must not block the UI.
+            let html = BookmarkHTMLExporter.htmlDocument(for: bookmarks)
+            AppController.inFlightBookmarkExportWrites += 1
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Result { try Data(html.utf8).write(to: url, options: .atomic) }
+                DispatchQueue.main.async {
+                    AppController.inFlightBookmarkExportWrites -= 1
+                    // Resume termination before handling the result: when a
+                    // quit is parked on this write, a failure is deliberately
+                    // silent (log only) — quitting must not stay blocked on
+                    // an alert nobody will see.
+                    if AppController.bookmarkExportTerminationPending,
+                       AppController.inFlightBookmarkExportWrites == 0 {
+                        AppController.bookmarkExportTerminationPending = false
+                        NSApp.reply(toApplicationShouldTerminate: true)
+                    }
+                    if case .failure(let error) = result {
+                        AppLogError("Bookmark export failed: \(error.localizedDescription)")
+                        let alert = NSAlert()
+                        alert.alertStyle = .critical
+                        alert.messageText = NSLocalizedString("Could Not Export Bookmarks", comment: "Export bookmarks failure alert - title shown when writing the exported HTML file fails")
+                        alert.informativeText = error.localizedDescription
+                        alert.beginSheetModal(for: window)
+                    }
+                }
+            }
+        }
     }
 
     @objc func selectLayoutMode(_ sender: Any?) {
@@ -952,20 +1074,43 @@ extension AppController {
         deleteSpaceItem.target = self
         menu.addItem(deleteSpaceItem)
 
-        // The Incognito Space's own action: close its windows, which ends
-        // (and clears) the private session without touching the feature
-        // toggle. Appended only while it IS the active Space — this builder
-        // runs on every menu open, so the conditional presence stays fresh.
-        if activeSpace?.spaceId == SpaceManager.incognitoSpaceId {
+        // An Incognito Space's own action: close its windows and tear the
+        // Space itself down (confirmed in `requestCloseIncognitoSpace`).
+        // Appended only while one IS the active Space — this builder runs on
+        // every menu open, so the conditional presence stays fresh.
+        if let activeSpaceId = activeSpace?.spaceId, SpaceManager.isIncognitoSpaceId(activeSpaceId) {
             menu.addItem(.separator())
             let closeSpaceItem = NSMenuItem(
-                title: NSLocalizedString("Close Space", comment: "Spaces menu - close the Incognito Space's windows and clear the private session"),
+                title: NSLocalizedString("Close Incognito Space", comment: "Spaces menu - close the active Incognito Space's windows and end it"),
                 action: #selector(closeIncognitoSpaceFromMenu(_:)),
                 keyEquivalent: ""
             )
             closeSpaceItem.target = self
             menu.addItem(closeSpaceItem)
         }
+
+        // While the agent controls this Space, disable the actions that would
+        // mutate its workspace. New Space is left enabled (it doesn't touch the
+        // agent Space).
+        if focusedSpaceIsAgentControlled() {
+            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+                .forEach(Self.disableAgentLockedMenuItem)
+        } else if focusedSpaceIsAgentSpace() {
+            // The user took control, so most edits are allowed again — but
+            // re-profiling replaces the Space's windows and would break the
+            // agent, so Change Profile stays disabled for any agent Space.
+            Self.disableAgentLockedMenuItem(changeProfileParent)
+        }
+    }
+
+    /// Greys out a menu item that acts on an agent-controlled Space. Clearing
+    /// the action/target (and any submenu) makes AppKit's automatic menu
+    /// enabling disable it, so it reads as unavailable rather than vanishing.
+    private static func disableAgentLockedMenuItem(_ item: NSMenuItem) {
+        item.action = nil
+        item.target = nil
+        item.submenu = nil
+        item.isEnabled = false
     }
 
     /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
@@ -973,22 +1118,15 @@ extension AppController {
     /// that Space, plus a trailing "New Space" item. Drives the horizontal tab
     /// strip's active-Space chip, whose left-click presents this as a switcher
     /// menu (the menu rendition of the old switcher popover; hovering the chip
-    /// shows the Space hover card instead). Items target the controller and
-    /// reuse the Spaces menu's activate / create actions, so switching here
-    /// behaves exactly like the menu-bar Spaces menu.
-    func populateSpaceSwitcherMenu(
-        _ menu: NSMenu,
-        excludedSpaceIds: Set<String> = [],
-        includeNewSpace: Bool = true
-    ) {
+    /// shows the Space hover card instead), and the sidebar strip's "…" overflow
+    /// affordance, so both layouts share one switcher UI. Items target the
+    /// controller and reuse the Spaces menu's activate / create actions, so
+    /// switching here behaves exactly like the menu-bar Spaces menu.
+    func populateSpaceSwitcherMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let activeSpaceId = currentActiveSpace()?.spaceId
 
-        // Iterate the full list so each row keeps its ⌃-number shortcut (⌃1 = the
-        // first Space), skipping any the caller already shows elsewhere — e.g. the
-        // sidebar's pips, leaving only the overflow Spaces in its "…" menu.
         for (index, space) in SpaceManager.shared.spaces.enumerated() {
-            if excludedSpaceIds.contains(space.spaceId) { continue }
             let item = NSMenuItem(
                 title: space.name,
                 action: #selector(activateSpaceFromMenu(_:)),
@@ -1005,10 +1143,6 @@ extension AppController {
             menu.addItem(item)
         }
 
-        // The sidebar overflow menu suppresses creation (its strip has its own "+"
-        // button); the horizontal chip keeps a "New Space" row.
-        guard includeNewSpace else { return }
-
         if menu.numberOfItems > 0 {
             menu.addItem(.separator())
         }
@@ -1023,7 +1157,7 @@ extension AppController {
     }
 
     /// Inline title for a switcher row: the Space name in the label color followed
-    /// by its bound profile in a muted color (`name  —  profile`), so the row shows
+    /// by its bound profile in a muted color (`name  ·  profile`), so the row shows
     /// both on one line with the ⌃-number shortcut trailing. An attributed title
     /// (rather than `NSMenuItem.subtitle`, which is macOS 14.4+ and stacks below)
     /// keeps it on one line and renders on every supported OS.
@@ -1038,7 +1172,7 @@ extension AppController {
         if let profileName = ProfileManager.shared.profile(for: profileId)?.displayName,
            !profileName.isEmpty {
             title.append(NSAttributedString(
-                string: "  —  \(profileName)",
+                string: "  ·  \(profileName)",
                 attributes: [
                     .font: NSFont.menuFont(ofSize: 0),
                     .foregroundColor: NSColor.secondaryLabelColor
@@ -1125,6 +1259,18 @@ extension AppController {
         deleteSpaceItem.tag = AppController.spacesDeleteSpaceItemTag
         deleteSpaceItem.target = self
         menu.addItem(deleteSpaceItem)
+
+        // While the agent controls this Space, disable the actions that would
+        // mutate its workspace (mirrors the tab-area context menu). New Space
+        // and the Next/Previous switchers below stay enabled.
+        if focusedSpaceIsAgentControlled() {
+            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+                .forEach(Self.disableAgentLockedMenuItem)
+        } else if focusedSpaceIsAgentSpace() {
+            // Change Profile stays disabled for an agent Space even after the
+            // user takes control — re-profiling would break the running agent.
+            Self.disableAgentLockedMenuItem(changeProfileParent)
+        }
 
         menu.addItem(.separator())
 
@@ -1275,6 +1421,46 @@ extension AppController {
         return SpaceManager.shared.spaces.first(where: { $0.spaceId == id })
     }
 
+    /// True when the focused window is showing an agent Space that the agent
+    /// currently controls (not handed off to the user). While the agent holds
+    /// control, its workspace must not be mutated from the menus: New Tab and
+    /// the modify-this-Space actions (Rename / Change Icon / Edit Theme / Change
+    /// Profile / Delete) are disabled. New Space and switching Spaces stay
+    /// enabled so the user can always leave the agent Space.
+    func focusedSpaceIsAgentControlled() -> Bool {
+        guard let id = currentActiveSpace()?.spaceId else { return false }
+        return MainActor.assumeIsolated { AgentSpaceManager.shared.isAgentOwned(id) }
+    }
+
+    /// True when the focused Space is an agent Space, regardless of who holds
+    /// control. Used for actions that stay disabled even after the user takes
+    /// control — notably Change Profile, which would break the running agent.
+    func focusedSpaceIsAgentSpace() -> Bool {
+        guard let id = currentActiveSpace()?.spaceId else { return false }
+        return MainActor.assumeIsolated { AgentSpaceManager.shared.isAgentSpace(id) }
+    }
+
+    /// True when `item` lives in the Tab, Bookmarks, or History top-level menu —
+    /// the menus disabled wholesale while the focused Space is agent-controlled.
+    /// Bookmarks carries a stable identifier; Tab and History are matched by
+    /// title, as elsewhere in this file.
+    func itemIsInAgentLockedMenu(_ item: NSMenuItem) -> Bool {
+        // Walk up to the submenu that sits directly under the main menu.
+        var top: NSMenu? = item.menu
+        while let m = top, let sup = m.supermenu, sup !== NSApp.mainMenu {
+            top = sup
+        }
+        guard let topMenu = top else { return false }
+        if topMenu.identifier == AppController.bookmarksMenuIdentifier { return true }
+        if topMenu.title == "Tab" || topMenu.title == "History" { return true }
+        // The submenu's own title isn't always the menu name; fall back to the
+        // owning main-menu item's title.
+        if let owner = NSApp.mainMenu?.items.first(where: { $0.submenu === topMenu }) {
+            return owner.title == "Tab" || owner.title == "History"
+        }
+        return false
+    }
+
     private func cycleActiveSpace(by step: Int) {
         let spaces = SpaceManager.shared.spaces
         guard !spaces.isEmpty, let slot = currentSpacesSlot() else { return }
@@ -1373,17 +1559,39 @@ extension AppController {
         SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
     }
 
-    /// Closes the Incognito Space's windows across all slots — ending, and
-    /// thereby clearing, its private session — while leaving the feature
-    /// enabled so the pip stays in the strip. No confirmation, matching how
-    /// closing a window never prompts. Reachable only while the Incognito
-    /// Space is active (`appendActiveSpaceMenuItems` gates the item).
+    /// Closes the active Incognito Space: its windows across all slots go,
+    /// and the Space itself is torn down with them. Confirmed (with a "Do
+    /// not ask again" option) in `requestCloseIncognitoSpace`. Reachable
+    /// only while an Incognito Space is active (`appendActiveSpaceMenuItems`
+    /// gates the item).
     @objc func closeIncognitoSpaceFromMenu(_ sender: Any?) {
+        guard let spaceId = currentActiveSpace()?.spaceId,
+              SpaceManager.isIncognitoSpaceId(spaceId) else { return }
         // Menu actions always arrive on the main thread; assume isolation
         // rather than annotating the @objc selector (same pattern as
         // SpaceManager.applyTheme).
         MainActor.assumeIsolated {
-            SpaceManager.shared.closeIncognitoSpaceWindows()
+            SpaceManager.shared.requestCloseIncognitoSpace(spaceId: spaceId)
+        }
+    }
+
+    /// Creates a new Incognito Space and brings it to the front of the
+    /// focused window — or a fresh window when none is open. All Incognito
+    /// Spaces browse the same private session (one shared OTR profile);
+    /// each is its own Space in the strip until it's closed.
+    @objc func newIncognitoSpaceFromMenu(_ sender: Any?) {
+        MainActor.assumeIsolated {
+            let manager = SpaceManager.shared
+            let spaceId = manager.createIncognitoSpace()
+            if let slot = currentSpacesSlot() {
+                slot.suppressHoverCard(spaceId: spaceId)
+                slot.activate(spaceId: spaceId)
+            } else {
+                // No browser window open (menu-bar-only state): mint a slot
+                // and spawn the Space's window into it, the same shape a
+                // Chromium-initiated Cmd+N takes.
+                manager.createSlot(initialSpaceId: spaceId).activate(spaceId: spaceId)
+            }
         }
     }
 
@@ -1496,6 +1704,16 @@ extension AppController {
             }
         }
 
+        // Agent lock: while the agent controls the focused Space, disable the
+        // menus the user must not drive against its workspace — New Tab (File
+        // menu) plus every item in the Tab, Bookmarks, and History menus.
+        // Their shortcuts are separately swallowed in
+        // `CommandDispatcher.handleKeyEquivalent`. Take control re-enables them.
+        if let menuItem = item as? NSMenuItem, focusedSpaceIsAgentControlled() {
+            if menuItem.tag == CommandWrapper.IDC_NEW_TAB.rawValue { return false }
+            if itemIsInAgentLockedMenu(menuItem) { return false }
+        }
+
         if item.action == #selector(toggleChatbar(_:)) {
             let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
             let state = MainBrowserWindowControllersManager.shared.getActiveWindowState()
@@ -1532,6 +1750,8 @@ extension AppController {
         }
         
         if item.action == #selector(checkForUpdate(_:)) {
+            guard updater?.canCheckForUpdates == true else { return false }
+
             switch updateState {
             case .downloading, .checking:
                 return false
@@ -1554,6 +1774,13 @@ extension AppController {
                 default:
                     break
                 }
+                return LoginController.shared.isLoggedin()
+            }
+        }
+
+        if item.action == #selector(toggleAgentAutoView(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
                 return LoginController.shared.isLoggedin()
             }
         }
@@ -1591,6 +1818,12 @@ extension AppController {
             }
             return spacesFeatureEnabled && LoginController.shared.isLoggedin()
         }
+        if item.action == #selector(newIncognitoSpaceFromMenu(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.isHidden = !spacesFeatureEnabled
+            }
+            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+        }
         if item.action == #selector(deleteSelectedProfile(_:)) {
             guard spacesFeatureEnabled,
                   LoginController.shared.isLoggedin(),
@@ -1615,20 +1848,20 @@ extension AppController {
         ]
         if let action = item.action, spacesActions.contains(action) {
             guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
-            // The built-in Incognito Space's name, profile binding and
-            // existence are fixed: rename would be a silent store no-op on
-            // its sentinel id, its OTR profile can't be re-bound, and the
-            // Space is removed via its settings toggle, not delete. Icon and
-            // theme stay enabled — `changeIcon`/`setTheme` persist the
-            // sentinel's choices outside SwiftData. Navigation and the rules
-            // editor stay available too.
+            // An Incognito Space's name, profile binding and existence are
+            // fixed: its name is derived ("Incognito" / "Incognito N"), its
+            // shared OTR profile can't be re-bound, and the Space ends via
+            // Close Incognito Space, not delete. Icon and theme stay
+            // enabled — both live outside SwiftData. Navigation and the
+            // rules editor stay available too.
             let mutatingSpaceActions: [Selector] = [
                 #selector(renameActiveSpace(_:)),
                 #selector(selectSpaceProfile(_:)),
                 #selector(deleteActiveSpace(_:)),
             ]
             if mutatingSpaceActions.contains(action),
-               currentActiveSpace()?.spaceId == SpaceManager.incognitoSpaceId {
+               let activeId = currentActiveSpace()?.spaceId,
+               SpaceManager.isIncognitoSpaceId(activeId) {
                 return false
             }
             if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
@@ -1691,6 +1924,9 @@ extension AppController {
         }
         if item.action == #selector(bookmarkAllTabs(_:)) {
             return canBookmarkAllTabs()
+        }
+        if item.action == #selector(exportBookmarks(_:)) {
+            return canExportBookmarks()
         }
         if item.action == #selector(openBookmarkMenuItem(_:)) {
             guard let menuItem = item as? NSMenuItem,

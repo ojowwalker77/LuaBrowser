@@ -21,7 +21,8 @@ import PostHog
     var settingsWindowController: SettingsWindowController?
     
     var container: ModelContainer?
-    var updaterController: SPUStandardUpdaterController?
+    var updater: SPUUpdater?
+    var sparkleUserDriver: PhiSparkleUserDriver?
     /// Sparkle update state
     var updateState: UpdateState = .idle {
         didSet {
@@ -172,6 +173,14 @@ import PostHog
         // snapshot is frozen earlier, in phiWillTryToTerminateApplicationNotification.
         // Re-assert here as a backstop for any quit path that reaches this hook.
         SpaceManager.shared.markTerminating()
+        // A bookmark-export write may still be running on a background queue
+        // (slow network/cloud destination); dying now would silently drop a
+        // save the user already confirmed. The write's completion handler
+        // resumes termination via reply(toApplicationShouldTerminate:).
+        if Self.inFlightBookmarkExportWrites > 0 {
+            Self.bookmarkExportTerminationPending = true
+            return .terminateLater
+        }
         return .terminateNow
     }
     
@@ -200,6 +209,17 @@ import PostHog
                 AuthManager.shared.renewCredentials()
             } else {
                 AppLogDebug("reopen: access token still fresh, skipping renew")
+            }
+            // With no surviving browser window, spawn the persisted
+            // last-active Space ourselves instead of letting Chromium's
+            // reopen create the window: Chromium seeds it from its own
+            // last-used-profile pref, which the window-close cascade
+            // pollutes, and the coordinator then re-resolves the Space to
+            // match that profile — reopening on the default Space instead
+            // of the one the user closed. See
+            // `SpaceManager.reopenOnPersistedSpaceIfWindowless`.
+            if SpaceManager.shared.reopenOnPersistedSpaceIfWindowless() {
+                return true
             }
             let handled = ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
             // Chromium's reopen surfaces every browser window it owns, which

@@ -28,7 +28,12 @@ class Bookmark: WebContentRepresentable {
     /// Whether the bookmark is currently in inline-edit mode.
     @Published var isEditing: Bool = false
     @Published var lastSeen: Date?
-    
+    /// Persisted creation/modification times, mirroring `TabDataModel`.
+    /// Not published — only read by the Netscape HTML export
+    /// (ADD_DATE / LAST_MODIFIED), never rendered.
+    var createdDate: Date?
+    var updatedDate: Date?
+
     let isFolder: Bool
     
     weak var parent: Bookmark?
@@ -52,6 +57,8 @@ class Bookmark: WebContentRepresentable {
          profileId: String? = nil,
          faviconData: Data? = nil,
          lastSeen: Date? = nil,
+         createdDate: Date? = nil,
+         updatedDate: Date? = nil,
          isFolder: Bool = false) {
         self.guid = guid
         self.profileId = profileId
@@ -61,6 +68,8 @@ class Bookmark: WebContentRepresentable {
         self.secondaryTitle = secondaryTitle
         self.cachedFaviconData = faviconData
         self.lastSeen = lastSeen
+        self.createdDate = createdDate
+        self.updatedDate = updatedDate
         self.isFolder = isFolder
     }
     
@@ -101,6 +110,20 @@ class Bookmark: WebContentRepresentable {
         guard isFolder, sourceIndex < children.count else { return }
         let bookmark = children.remove(at: sourceIndex)
         children.insert(bookmark, at: min(destinationIndex, children.count))
+    }
+
+    fileprivate func replaceChildren(_ newChildren: [Bookmark]) {
+        guard isFolder else { return }
+
+        let newChildGUIDs = Set(newChildren.map(\.guid))
+        for child in children where !newChildGUIDs.contains(child.guid) {
+            child.parent = nil
+        }
+
+        children = newChildren
+        for child in children {
+            child.parent = self
+        }
     }
     
     var hasChildren: Bool {
@@ -279,13 +302,16 @@ class BookmarkManager: ObservableObject {
                     if self.hasSameSidebarTree(as: bookmarks) {
                         self.applyNonLayoutUpdates(from: bookmarks)
                         self.browserState?.syncAllBookmarksOpenedState()
+                        self.browserState?.pruneMultiSelectionBookmarks()
                         return
                     }
 
                     self.saveExpandedState()
-                    self.rootFolder = Bookmark(title: "Bookmarks", children: bookmarks)
+                    let reusedBookmarks = self.mappedModels(from: bookmarkModels, reusingExistingBookmarks: true)
+                    self.rootFolder = Bookmark(title: "Bookmarks", children: reusedBookmarks)
                     self.rebuildIndex()
                     self.browserState?.syncAllBookmarksOpenedState()
+                    self.browserState?.pruneMultiSelectionBookmarks()
                 }
                 .store(in: &cancellables)
         }
@@ -648,7 +674,7 @@ class BookmarkManager: ObservableObject {
 }
 
 extension BookmarkManager {
-    func mappedModels(from models: [TabDataModel]) -> [Bookmark] {
+    func mappedModels(from models: [TabDataModel], reusingExistingBookmarks: Bool = false) -> [Bookmark] {
         let bookmarkModels = models.filter { $0.dataType == .bookmark || $0.dataType == .bookmarkFolder }
         guard !bookmarkModels.isEmpty else { return [] }
         
@@ -663,11 +689,19 @@ extension BookmarkManager {
         
         var bookmarkMap: [String: Bookmark] = [:]
         for model in sortedModels {
-            let bookmark = Bookmark(model)
+            let bookmark = reusableBookmark(for: model, reusingExistingBookmarks: reusingExistingBookmarks) ?? Bookmark(model)
+            bookmark.updateSidebarFields(from: model)
             bookmark.setFaviconSnapshotUpdater { [weak self] data in
                 self?.browserState?.localStore.updateTabFavicon(model.guid, favicon: data)
             }
             bookmarkMap[model.guid] = bookmark
+        }
+
+        for bookmark in bookmarkMap.values {
+            bookmark.parent = nil
+            if bookmark.isFolder {
+                bookmark.replaceChildren([])
+            }
         }
         
         for model in sortedModels {
@@ -708,23 +742,49 @@ extension BookmarkManager {
         }
         return topLevel
     }
+
+    private func reusableBookmark(for model: TabDataModel, reusingExistingBookmarks: Bool) -> Bookmark? {
+        guard reusingExistingBookmarks, let existing = bookmarkIndex[model.guid] else { return nil }
+
+        let modelIsFolder = model.dataType == .bookmarkFolder
+        let modelProfileId = model.profile?.profileId ?? model.profileId
+        guard existing.isFolder == modelIsFolder, existing.profileId == modelProfileId else { return nil }
+
+        return existing
+    }
 }
 
 extension Bookmark {
     convenience init(_ model: TabDataModel) {
-        let displayTitle = (model.overrideTitle?.isEmpty == false ? model.overrideTitle! : model.title)
         let isFolder = (model.dataType == .bookmarkFolder)
         let resolvedURL = isFolder ? nil : model.url.absoluteString
         let resolvedSecondary = isFolder ? nil : model.secondaryUrl?.absoluteString
         let resolvedSecondaryTitle = isFolder ? nil : model.secondaryTitle
         self.init(guid: model.guid,
-                  title: displayTitle,
+                  title: Self.sidebarTitle(from: model),
                   url: resolvedURL,
                   secondaryUrl: resolvedSecondary,
                   secondaryTitle: resolvedSecondaryTitle,
                   profileId: model.profile?.profileId ?? model.profileId,
                   faviconData: model.favicon,
                   lastSeen: isFolder ? nil : model.lastSeen,
+                  createdDate: model.createdDate,
+                  updatedDate: model.updatedDate,
                   isFolder: isFolder)
+    }
+
+    fileprivate func updateSidebarFields(from model: TabDataModel) {
+        title = Self.sidebarTitle(from: model)
+        url = isFolder ? nil : model.url.absoluteString
+        secondaryUrl = isFolder ? nil : model.secondaryUrl?.absoluteString
+        secondaryTitle = isFolder ? nil : model.secondaryTitle
+        cachedFaviconData = model.favicon
+        lastSeen = isFolder ? nil : model.lastSeen
+        createdDate = model.createdDate
+        updatedDate = model.updatedDate
+    }
+
+    private static func sidebarTitle(from model: TabDataModel) -> String {
+        model.overrideTitle?.isEmpty == false ? model.overrideTitle! : model.title
     }
 }

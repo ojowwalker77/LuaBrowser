@@ -31,13 +31,17 @@ typedef NS_ENUM(NSUInteger, ChromiumBrowserType) {
     ChromiumBrowserTypeApp,
     ChromiumBrowserTypeDevTools,
     ChromiumBrowserTypeShadow,
-    ChromiumBrowserTypeIncognitoSpace  // TYPE_NORMAL + Incognito Space OTR profile
+    ChromiumBrowserTypeIncognitoSpace,  // TYPE_NORMAL + Incognito Space OTR profile
+    ChromiumBrowserTypeAgentSpace
 };
 
 typedef NS_ENUM(NSUInteger, BrowserType) {
     BrowserTypeSafari = 0,
     BrowserTypeChrome,
-    BrowserTypeArc
+    BrowserTypeArc,
+    // Not a browser: import from a user-picked file (e.g. a bookmarks HTML file).
+    // The downward call carries a file path; Chromium sniffs the type and parses.
+    BrowserTypeFile
 };
 
 /// Loading state mapped from Chromium TabNetworkState.
@@ -651,8 +655,29 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// (NSNumber*), @"windowType" (NSNumber* of ChromiumBrowserType),
 /// @"profileId" (NSString*, the basename actually used). Returns nil when
 /// the window could not be created; callers must handle the nil result.
+/// Pass |hidden| = YES to skip Chromium's post-create Show(): the caller
+/// owns the reveal and surfaces the NSWindow itself once the window is
+/// ready (frame applied, seed tab created) — the Space spawn path uses
+/// this so an empty, unpainted window never flashes on screen.
 - (nullable NSDictionary<NSString *, id> *)createBrowserWithWindowType:(ChromiumBrowserType)browserType
-                                                            profileId:(NSString * _Nullable)profileId;
+                                                            profileId:(NSString * _Nullable)profileId
+                                                                hidden:(BOOL)hidden;
+
+/// Creates a hidden agent-Space browser window: TYPE_NORMAL, never Show()n by
+/// Chromium, omitted from session restore, and starting in agent mode (window
+/// activation, content fullscreen, and omnibox focus are suppressed; tab
+/// contents are kept force-visible so the renderer stays paintable while the
+/// window is ordered out). The Mac client surfaces the window when the user
+/// switches to its Space. Same return shape and strict no-fallback profile
+/// resolution as `createBrowserWithWindowType:profileId:`; nil on failure.
+- (nullable NSDictionary<NSString *, id> *)createAgentBrowserWithProfileId:
+    (NSString * _Nullable)profileId;
+
+/// Flips the per-window agent-mode bit of an agent-Space browser. Pass NO when
+/// the user takes control (restores normal activation/visibility semantics)
+/// and YES when control is handed back to the agent (re-asserts forced tab
+/// visibility). No-op when `windowId` doesn't resolve to a live agent browser.
+- (void)setAgentMode:(BOOL)enabled windowId:(int64_t)windowId;
 - (void)tryToTerminateApplication:(NSApplication*)app;
 - (void)stopTryingToTerminateApplication:(NSApplication*)app;
 - (void)applicationWillFinishLaunching:(NSNotification*)notification;
@@ -674,6 +699,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
     continueUserActivity:(NSUserActivity*)userActivity 
       restorationHandler:(void (^)(NSArray<id<NSUserActivityRestoring>>*))restorationHandler;
 
+/// Each dictionary includes id, name, icon, version, isPinned, pinnedIndex,
+/// and isForcePinned. Chromium's complete snapshot is authoritative.
 - (void)getAllExtensionsWithCompletion:(void (^)(NSArray<NSDictionary *> *))completion windowId:(int64_t)windowId;
 - (void)triggerExtensionWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
 - (void)triggerExtensionContextMenuWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
@@ -768,6 +795,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 
 // Import management
 - (void)importBrowserDataFromBrowserType:(BrowserType)browserType profile:(NSString *)profile dataTypes:(nullable NSArray<NSString *> *)dataTypes windowId:(int64_t)windowId;
+
+/// Import data from a user-picked file (e.g. a bookmarks HTML file). The Mac side
+/// does no parsing: Chromium sniffs the file type, parses it, and stages the result
+/// into its BookmarkModel; completion is reported through the existing
+/// importCompleted:success: delegate with BrowserTypeFile. `filePath` is absolute.
+- (void)importDataFromFilePath:(NSString *)filePath windowId:(int64_t)windowId
+    NS_SWIFT_NAME(importData(fromFilePath:windowId:));
 
 // Download management
 /// Get all download items with full metadata

@@ -29,6 +29,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     /// Tab whose action runs when the cell is clicked (the pane the user
     /// most recently interacted with, or the left pane as fallback).
     var itemClicked: ((Tab?) -> Void)?
+    var itemDoubleClicked: ((Tab?, NSEvent.ModifierFlags) -> Void)?
 
     private lazy var contextMenu: NSMenu = {
         let menu = NSMenu()
@@ -69,6 +70,11 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         backgroundView.enableClickAnimation = true
         backgroundView.clickAction = { [weak self] in
             self?.itemClicked?(self?.preferredClickTab())
+        }
+        backgroundView.doubleClickAction = { [weak self] event in
+            guard let self else { return }
+            let point = self.backgroundView.convert(event.locationInWindow, from: nil)
+            self.itemDoubleClicked?(self.tab(at: point), event.modifierFlags)
         }
 
         leftIconView = makeIconView()
@@ -186,6 +192,10 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     private func preferredClickTab() -> Tab? {
         if let rightTab, rightTab.isActive { return rightTab }
         return leftTab
+    }
+
+    private func tab(at point: NSPoint) -> Tab? {
+        point.x > backgroundView.bounds.midX ? rightTab : leftTab
     }
 
     private func subscribeFaviconUpdates(for tab: Tab) {

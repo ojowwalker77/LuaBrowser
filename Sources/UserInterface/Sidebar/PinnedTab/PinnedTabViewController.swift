@@ -22,7 +22,7 @@ class PinnedTabViewController: NSViewController {
         collectionView.reorderDelegate = self
 
         collectionView.isSelectable = true
-        collectionView.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark])
+        collectionView.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark, .bookmarks, .phiPinnedExtensionReorder])
 
         collectionView.backgroundColors = [.clear]
         collectionView.clipsToBounds = true
@@ -72,6 +72,10 @@ class PinnedTabViewController: NSViewController {
                     guard let tab else { return }
                     self?.handleTabClicked(tab)
                 }
+                tabItem.itemDoubleClicked = { [weak self] tab, modifierFlags in
+                    guard let tab else { return }
+                    self?.handleTabDoubleClicked(tab, modifierFlags: modifierFlags)
+                }
                 return tabItem
 
             case .splitItem(let group):
@@ -87,11 +91,31 @@ class PinnedTabViewController: NSViewController {
                 splitItem.itemClicked = { [weak self] tab in
                     self?.handleSplitCellClicked(group: group, preferredTab: tab)
                 }
+                splitItem.itemDoubleClicked = { [weak self] tab, modifierFlags in
+                    guard let tab else { return }
+                    self?.handleTabDoubleClicked(tab, modifierFlags: modifierFlags)
+                }
                 return splitItem
             }
         }
         return dataSource
     }()
+
+    private func handleTabDoubleClicked(
+        _ tab: Tab,
+        modifierFlags: NSEvent.ModifierFlags
+    ) {
+        guard let browserState else { return }
+        if modifierFlags.contains(.command) {
+            if browserState.multiSelection.isActive {
+                browserState.clearMultiSelection()
+            }
+            browserState.openOrFocusPinnedTab(tab)
+            browserState.separatePinnedTabFromCurrentURL(tab)
+        } else {
+            browserState.navigatePinnedTabToOriginalURL(tab)
+        }
+    }
     
     private enum Section: Int, CaseIterable {
         case extensions = 0
@@ -282,7 +306,7 @@ class PinnedTabViewController: NSViewController {
     }
 
     private func setupDragDestination() {
-        view.registerForDraggedTypes([.normalTab, .phiBookmark])
+        view.registerForDraggedTypes([.normalTab, .phiBookmark, .bookmarks])
         view.wantsLayer = true
     }
 
@@ -410,6 +434,19 @@ class PinnedTabViewController: NSViewController {
             }
             .store(in: &cancellables)
 
+        // Rebuild the shelf when the engine's transient Reorder Preview order
+        // changes so the grid follows the drag live (and snaps back when the
+        // engine resets). Deliberately not gated on isDragging: these applies
+        // ARE the reorder preview.
+        browserState.extensionManager.pinnedExtensionOrdering.$presentationOrder
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applyPresentedExtensionOrder()
+            }
+            .store(in: &cancellables)
+
         syncCurrentState()
     }
 
@@ -463,10 +500,13 @@ class PinnedTabViewController: NSViewController {
 
     /// Hide page actions reporting visible == false on the current tab (spec
     /// §4.3), mapping the rest to display models. Reused by the pinned-set, sync,
-    /// and visibility-change paths so all three agree.
+    /// and visibility-change paths so all three agree. The list is projected
+    /// through the shared engine's presentation order first, so an in-flight
+    /// Reorder Preview (or Pending Reorder Confirmation) shows in the shelf.
     private func visibleExtensionItems(_ extensions: [Extension]) -> [PinnedTabItemModel] {
         let manager = browserState?.extensionManager
-        return extensions
+        let ordered = manager?.presentedPinnedOrder(of: extensions) ?? extensions
+        return ordered
             .filter { manager?.badges[$0.id]?.visible != false }
             .map { PinnedTabItemModel(id: $0.id, title: $0.name, icon: $0.icon, tooltip: $0.name) }
     }
@@ -876,6 +916,143 @@ class PinnedTabViewController: NSViewController {
     }
 }
 
+// MARK: - Pinned extension reordering (Pinned Extension Surface: sidebar extension shelf)
+
+extension PinnedTabViewController {
+    struct ExtensionReorderSlot: Equatable {
+        let id: String
+        let frame: CGRect
+    }
+
+    /// Half the shelf grid's 8 pt spacing: pointers this far past the rows'
+    /// vertical band still anchor, anything further is another sidebar region.
+    private static let extensionReorderBandSlop: CGFloat = 4
+
+    /// Maps a pointer location (in the collection view's flipped coordinates)
+    /// to the Anchored Reorder intent for the shared ordering engine. The
+    /// shelf reads row-major — left to right, then top to bottom — so the row
+    /// whose vertical center is nearest the pointer resolves first, then the
+    /// nearest action midpoint within that row picks the target and the
+    /// pointer's side of it picks the placement (the sidebar address bar's
+    /// one-dimensional rule applied per row). Pointers above the first row
+    /// resolve to nothing (the address bar sits right there). Below the rows,
+    /// the strip down to `trailingLimit` still anchors — end placement would
+    /// otherwise demand pixel precision under a sparse last row — and only
+    /// past it is the drag over the pinned-tab grid, not this surface.
+    static func extensionReorderAnchor(
+        at point: CGPoint,
+        slots: [ExtensionReorderSlot],
+        trailingLimit: CGFloat? = nil
+    ) -> (targetId: String, placement: PinnedExtensionAnchorPlacement)? {
+        guard let firstRowTop = slots.map(\.frame.minY).min(),
+              let lastRowBottom = slots.map(\.frame.maxY).max(),
+              point.y >= firstRowTop - extensionReorderBandSlop,
+              point.y <= max(lastRowBottom + extensionReorderBandSlop,
+                             trailingLimit ?? lastRowBottom),
+              let nearestRowSlot = slots.min(by: {
+                  abs($0.frame.midY - point.y) < abs($1.frame.midY - point.y)
+              }) else {
+            return nil
+        }
+        let row = slots.filter {
+            abs($0.frame.midY - nearestRowSlot.frame.midY) <= nearestRowSlot.frame.height / 2
+        }
+        guard let nearest = row.min(by: {
+            abs($0.frame.midX - point.x) < abs($1.frame.midX - point.x)
+        }) else {
+            return nil
+        }
+        return (nearest.id, point.x < nearest.frame.midX ? .before : .after)
+    }
+
+    /// The displayed shelf order with each action's current grid frame, in
+    /// the collection view's coordinates. Preview applies only move items —
+    /// the grid's frames are a function of item count — so the frames stay
+    /// valid mid-drag without settling layout first.
+    private func extensionReorderSlots() -> [ExtensionReorderSlot] {
+        dataSource.snapshot().itemIdentifiers(inSection: .extensions).enumerated()
+            .compactMap { index, item in
+                guard case .extensionItem(let model) = item,
+                      let attributes = collectionView.collectionViewLayout?.layoutAttributesForItem(
+                        at: IndexPath(item: index, section: Section.extensions.rawValue)) else {
+                    return nil
+                }
+                return ExtensionReorderSlot(id: model.id, frame: attributes.frame)
+            }
+    }
+
+    /// The y below which a dragged extension is genuinely over the pinned-tab
+    /// grid rather than "after the shelf": the first tab row's midline (the
+    /// nearest-midpoint rule applied to the neighboring foreign row), or the
+    /// view's bottom when no pinned tabs follow.
+    private func extensionReorderTrailingLimit() -> CGFloat {
+        let snapshot = dataSource.snapshot()
+        if snapshot.sectionIdentifiers.contains(.tabs),
+           !snapshot.itemIdentifiers(inSection: .tabs).isEmpty,
+           let firstTab = collectionView.collectionViewLayout?.layoutAttributesForItem(
+               at: IndexPath(item: 0, section: Section.tabs.rawValue)) {
+            return firstTab.frame.midY
+        }
+        return collectionView.bounds.maxY
+    }
+
+    private func extensionReorderDragOperation(_ draggingInfo: NSDraggingInfo) -> NSDragOperation {
+        guard let manager = browserState?.extensionManager else { return [] }
+        let point = collectionView.convert(draggingInfo.draggingLocation, from: nil)
+        guard let anchor = Self.extensionReorderAnchor(
+            at: point,
+            slots: extensionReorderSlots(),
+            trailingLimit: extensionReorderTrailingLimit()
+        ) else {
+            // Over the pinned-tab grid or a boundary gap: not this surface.
+            manager.leavePinnedExtensionReorder(surface: .sidebarExtensionShelf)
+            return []
+        }
+        return manager.updatePinnedExtensionReorder(
+            targetExtensionId: anchor.targetId,
+            placement: anchor.placement,
+            surface: .sidebarExtensionShelf
+        ) ? .move : []
+    }
+
+    private func acceptExtensionReorderDrop(_ draggingInfo: NSDraggingInfo) -> Bool {
+        guard let manager = browserState?.extensionManager else { return false }
+        guard extensionReorderDragOperation(draggingInfo) == .move,
+              manager.commitPinnedExtensionReorder(surface: .sidebarExtensionShelf) else {
+            manager.cancelPinnedExtensionReorder(surface: .sidebarExtensionShelf)
+            return false
+        }
+        return true
+    }
+
+    /// Hides the drag's source cell (alpha 0, still laid out) so the drag
+    /// image is the only visible copy; the empty grid slot the preview keeps
+    /// open marks the landing spot. Recomputed from the engine so drag end
+    /// (or a reset) restores every cell.
+    private func refreshExtensionReorderSourceVisibility() {
+        let draggedId = browserState?.extensionManager
+            .pinnedExtensionOrdering.draggedExtensionId
+        let items = dataSource.snapshot().itemIdentifiers(inSection: .extensions)
+        for (index, item) in items.enumerated() {
+            guard case .extensionItem(let model) = item,
+                  let cell = collectionView.item(
+                    at: IndexPath(item: index, section: Section.extensions.rawValue)) else {
+                continue
+            }
+            cell.view.alphaValue = (draggedId != nil && model.id == draggedId) ? 0 : 1
+        }
+    }
+
+    /// Re-derives the displayed shelf items through the engine's presentation
+    /// order and applies them, bypassing the isDragging apply-skip that
+    /// protects tab drags: these applies are the reorder preview itself.
+    private func applyPresentedExtensionOrder() {
+        pinnedExtensionItems = visibleExtensionItems(currentPinnedExtensionsForDisplay())
+        applySnapshot(animatingDifferences: true)
+        refreshExtensionReorderSourceVisibility()
+    }
+}
+
 extension PinnedTabViewController: NSCollectionViewDelegate {
     func collectionView(_ collectionView: NSCollectionView, shouldSelectItemsAt indexPaths: Set<IndexPath>) -> Set<IndexPath> {
         return Set()
@@ -903,8 +1080,20 @@ extension PinnedTabViewController {
             tab = t
         case .splitItem(let group):
             tab = group.leftTab
-        case .extensionItem:
-            return false
+        case .extensionItem(let model):
+            // Pinned-extension reorder: a distinct, surface-local drag payload.
+            // The engine gate (incognito, force-pinned) decides whether the
+            // drag starts at all; a rejected begin leaves the gesture a plain
+            // click, matching the shelf's behavior before this feature.
+            guard browserState?.extensionManager.beginPinnedExtensionReorder(
+                extensionId: model.id,
+                visibleProjection: pinnedExtensionItems.map(\.id),
+                surface: .sidebarExtensionShelf
+            ) == true else {
+                return false
+            }
+            pasteboard.setString(model.id, forType: .phiPinnedExtensionReorder)
+            return true
         }
 
         // Publish both pinned-tab and normal-tab identifiers to the pasteboard.
@@ -920,6 +1109,14 @@ extension PinnedTabViewController {
         isDragging = true
         placeholderTab = nil
         isExternalDrag = false
+
+        // A pinned-extension reorder never engages the tab dragging session
+        // (drag-image switching, tear-off); its source cell keeps its grid
+        // slot in the live Reorder Preview, hidden, marking the landing spot.
+        if session.draggingPasteboard.string(forType: .phiPinnedExtensionReorder) != nil {
+            refreshExtensionReorderSourceVisibility()
+            return
+        }
 
         browserState?.tabDraggingSession.attachNativeSession(session)
         let dragContext: (item: Any?, pinnedGuid: String?) = {
@@ -959,10 +1156,35 @@ extension PinnedTabViewController {
     
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, dragOperation operation: NSDragOperation) {
         isDragging = false
-        browserState?.tabDraggingSession.end(
-            screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
-            dragOperation: operation
-        )
+        if session.draggingPasteboard.string(forType: .phiPinnedExtensionReorder) != nil {
+            // NSCollectionView selects the dragged item when its session
+            // starts, and the preview's snapshot moves then drop that
+            // selection from the collection view's bookkeeping WITHOUT ever
+            // pushing isSelected = false back to the item — the cell's accent
+            // ring outlives the drag with no owner. Clear surviving
+            // bookkeeping first, then resync the item instances directly.
+            let selectedExtensions = collectionView.selectionIndexPaths.filter {
+                $0.section == Section.extensions.rawValue
+            }
+            if !selectedExtensions.isEmpty {
+                collectionView.deselectItems(at: selectedExtensions)
+            }
+            for case let item as PinnedExtensionItem in collectionView.visibleItems()
+            where item.isSelected {
+                item.isSelected = false
+            }
+            // A successful drop already advanced the engine to Pending Reorder
+            // Confirmation, making this cancel a no-op; every other outcome —
+            // Escape, a drop outside the shelf, a rejected drop — abandons the
+            // drag so the resync below snaps back to the authoritative order.
+            browserState?.extensionManager
+                .cancelPinnedExtensionReorder(surface: .sidebarExtensionShelf)
+        } else {
+            browserState?.tabDraggingSession.end(
+                screenLocation: CGPoint(x: screenPoint.x, y: screenPoint.y),
+                dragOperation: operation
+            )
+        }
 
         // If the drop was cancelled, remove the placeholder
         if isExternalDrag, let placeholder = placeholderTab {
@@ -977,8 +1199,10 @@ extension PinnedTabViewController {
         if let latestTabs = browserState?.pinnedTabs {
             pinnedTabs = latestTabs
         }
+        pinnedExtensionItems = visibleExtensionItems(currentPinnedExtensionsForDisplay())
         applySnapshot(animatingDifferences: true)
         updateEmptyViewVisibility(isDraggingTab: false)
+        refreshExtensionReorderSourceVisibility()
 
         // Unhide all items to ensure the dragged item reappears and the UI is clean.
         for item in collectionView.visibleItems() {
@@ -994,6 +1218,10 @@ extension PinnedTabViewController {
     }
 
     func collectionView(_ collectionView: NSCollectionView, validateDrop draggingInfo: NSDraggingInfo, proposedIndexPath proposedDropIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>, dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
+        // Pinned-extension reorders never reach this method: the collection
+        // view routes them straight to extensionReorderDragOperation
+        // (ReorderingCollectionView bypasses the dropping machinery whose
+        // drop-target inference dead-ends on the shelf's empty strips).
         updateDraggingSession(from: draggingInfo)
         let initialDropIndexPath = proposedDropIndexPath.pointee as IndexPath
         // When the system proposes a target outside the tabs section (e.g.
@@ -1013,6 +1241,14 @@ extension PinnedTabViewController {
 
         let pasteboard = draggingInfo.draggingPasteboard
         updateMultiSelectionPlaceholderDragImage(for: draggingInfo)
+
+        if draggedBookmarkBatchContainsFolder(pasteboard) {
+            return []
+        }
+
+        if isMixedBookmarkBatchDrag(pasteboard) {
+            return isCrossWindowDrag(pasteboard) ? [] : .move
+        }
 
         if isCrossWindowDrag(pasteboard),
            let sourceState = sourceBrowserState(for: pasteboard),
@@ -1054,6 +1290,10 @@ extension PinnedTabViewController {
         let isCrossWindow = isCrossWindowDrag(pasteboard)
         let sourceState = isCrossWindow ? sourceBrowserState(for: pasteboard) : nil
 
+        if draggedBookmarkBatchContainsFolder(pasteboard) {
+            return false
+        }
+
         // If it was an external drag, remove the placeholder before calculating the final index.
         if isExternalDrag, let placeholder = placeholderTab {
             if let placeholderIndex = pinnedTabs.firstIndex(of: placeholder) {
@@ -1065,6 +1305,12 @@ extension PinnedTabViewController {
         isDragging = false // Set isDragging to false before browserState updates.
         browserState?.tabDraggingSession.end()
         isShowingMultiSelectionPlaceholderDragImage = false
+
+        if let accepted = acceptMixedBatchDropToPinned(
+            pasteboard,
+            destinationIndex: min(finalDestinationIndex, pinnedTabs.count)) {
+            return accepted
+        }
 
         let batchTabIds = pasteboard.phiNormalTabIds()
         if batchTabIds.count > 1 {
@@ -1148,6 +1394,57 @@ extension PinnedTabViewController {
         browserState?.moveBookmarkOut(bookmark, toPinnedTabs: destinationIndex)
         return true
     }
+
+    private func draggedBookmarkBatch(_ pasteboard: NSPasteboard) -> [Bookmark] {
+        var guids = pasteboard.phiBookmarkGuids()
+        if guids.isEmpty, let singleGuid = pasteboard.string(forType: .phiBookmark) {
+            guids = [singleGuid]
+        }
+        guard !guids.isEmpty else { return [] }
+
+        var seen = Set<String>()
+        let bookmarks = guids.compactMap { guid -> Bookmark? in
+            guard seen.insert(guid).inserted else { return nil }
+            return browserState?.bookmarkManager.bookmark(withGuid: guid)
+        }
+        let selected = Set(bookmarks.map(\.guid))
+        return bookmarks.filter { bookmark in
+            var parent = bookmark.parent
+            while let current = parent {
+                if selected.contains(current.guid) {
+                    return false
+                }
+                parent = current.parent
+            }
+            return true
+        }
+    }
+
+    private func draggedBookmarkBatchContainsFolder(_ pasteboard: NSPasteboard) -> Bool {
+        draggedBookmarkBatch(pasteboard).contains { $0.isFolder }
+    }
+
+    private func isMixedBookmarkBatchDrag(_ pasteboard: NSPasteboard) -> Bool {
+        !draggedBookmarkBatch(pasteboard).isEmpty &&
+            (!pasteboard.phiBookmarkGuids().isEmpty || !pasteboard.phiNormalTabIds().isEmpty)
+    }
+
+    private func acceptMixedBatchDropToPinned(_ pasteboard: NSPasteboard,
+                                              destinationIndex: Int) -> Bool? {
+        let bookmarkBatch = draggedBookmarkBatch(pasteboard)
+        let tabIds = pasteboard.phiNormalTabIds()
+        guard !bookmarkBatch.isEmpty,
+              !pasteboard.phiBookmarkGuids().isEmpty || !tabIds.isEmpty else {
+            return nil
+        }
+        guard !isCrossWindowDrag(pasteboard),
+              !bookmarkBatch.contains(where: { $0.isFolder }) else {
+            return false
+        }
+        return browserState?.moveItemsToPinnedTabs(tabIds: tabIds,
+                                                   bookmarks: bookmarkBatch,
+                                                   toPinnedTabs: destinationIndex) ?? false
+    }
     
     private func handleCrossWindowPinnedDrop(pinnedGuid: String, sourceState: BrowserState, destinationIndex: Int) -> Bool {
         guard let targetState = browserState else { return false }
@@ -1188,6 +1485,13 @@ extension PinnedTabViewController {
 // MARK: - ReorderingCollectionViewDelegate
 extension PinnedTabViewController: ReorderingCollectionViewDelegate {
     func collectionView(_ collectionView: NSCollectionView, draggingExited info: NSDraggingInfo?) {
+        if info?.draggingPasteboard.string(forType: .phiPinnedExtensionReorder) != nil {
+            // Leaving the shelf removes its preview; the engine keeps the drag
+            // alive so re-entering during the same valid drag resumes it.
+            browserState?.extensionManager
+                .leavePinnedExtensionReorder(surface: .sidebarExtensionShelf)
+            return
+        }
         restoreMultiSelectionDragImageIfNeeded()
         // If it was an external drag, remove the placeholder when the drag exits the view.
         if isExternalDrag, let placeholder = placeholderTab {
@@ -1199,12 +1503,25 @@ extension PinnedTabViewController: ReorderingCollectionViewDelegate {
         }
     }
 
+    func collectionView(_ collectionView: NSCollectionView, extensionReorderOperationFor draggingInfo: NSDraggingInfo) -> NSDragOperation {
+        extensionReorderDragOperation(draggingInfo)
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, acceptExtensionReorderDrop draggingInfo: NSDraggingInfo) -> Bool {
+        acceptExtensionReorderDrop(draggingInfo)
+    }
+
     func collectionView(_ collectionView: NSCollectionView, draggingInfo: NSDraggingInfo, movedTo indexPath: IndexPath) {
         updateDraggingSession(from: draggingInfo)
         guard let targetSection = Section(rawValue: indexPath.section), targetSection == .tabs else { return }
         let pasteboard = draggingInfo.draggingPasteboard
         updateMultiSelectionPlaceholderDragImage(for: draggingInfo)
         let isCrossWindow = isCrossWindowDrag(pasteboard)
+
+        if draggedBookmarkBatchContainsFolder(pasteboard) {
+            restoreMultiSelectionDragImageIfNeeded()
+            return
+        }
         
         // Case 1: Internal Reorder
         if let guidString = pasteboard.string(forType: .pinnedTab),
@@ -1303,12 +1620,22 @@ extension PinnedTabViewController: NSDraggingDestination {
         updateMultiSelectionPlaceholderDragImage(for: sender)
 
         let pasteboard = sender.draggingPasteboard
+
+        if draggedBookmarkBatchContainsFolder(pasteboard) {
+            return []
+        }
         
         if isCrossWindowDrag(pasteboard),
            let sourceState = sourceBrowserState(for: pasteboard),
            let targetState = browserState,
            !targetState.canAcceptCrossWindowDrag(from: sourceState) {
             return []
+        }
+
+        if isMixedBookmarkBatchDrag(pasteboard) {
+            guard !isCrossWindowDrag(pasteboard) else { return [] }
+            emptyView.layer?.backgroundColor = NSColor.selectedControlColor.withAlphaComponent(0.4).cgColor
+            return .copy
         }
         
         // Accept normal tabs.
@@ -1353,6 +1680,10 @@ extension PinnedTabViewController: NSDraggingDestination {
             self.browserState?.tabDraggingSession.end()
             self.isShowingMultiSelectionPlaceholderDragImage = false
         }
+
+        if draggedBookmarkBatchContainsFolder(pasteboard) {
+            return false
+        }
         
         if isCrossWindowDrag(pasteboard),
            let sourceState = sourceBrowserState(for: pasteboard),
@@ -1364,6 +1695,10 @@ extension PinnedTabViewController: NSDraggingDestination {
         if pasteboard.phiNormalTabIds().count > 1,
            isCrossWindowDrag(pasteboard) {
             return false
+        }
+
+        if let accepted = acceptMixedBatchDropToPinned(pasteboard, destinationIndex: 0) {
+            return accepted
         }
         
         // Handle normal-tab drops.

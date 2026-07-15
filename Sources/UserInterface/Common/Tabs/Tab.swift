@@ -102,7 +102,17 @@ class Tab: WebContentRepresentable {
     @Published var crashState: CrashPageData?
 
     /// Use native NTP rendering when the tab URL is an NTP URL.
-    var usesNativeNTP: Bool = false
+    /// Only ever set for off-the-record tabs (see
+    /// `BrowserState.consumePendingNativeNTP`). The flag is set after the
+    /// title binding's initial emission, so re-derive the placeholder title
+    /// on the flip — without this the sidebar keeps the raw
+    /// "chrome://newtab/" Chromium reported before the mark arrived.
+    var usesNativeNTP: Bool = false {
+        didSet {
+            guard usesNativeNTP, !oldValue else { return }
+            applyIncognitoNTPTitleIfUntitled()
+        }
+    }
 
     /// Whether this tab is currently rendered by the native NTP view (rather
     /// than Chromium's WebContents). Mirrored from `WebContentViewController.contentMode`
@@ -274,6 +284,13 @@ class Tab: WebContentRepresentable {
                 guard let self else { return }
                 if let localTitle = self.storedTitle, !localTitle.isEmpty {
                     self.title = localTitle
+                } else if self.usesNativeNTP, Self.isUntitledNTPTitle(title, url: self.url) {
+                    // A blank off-the-record chrome://newtab has no page
+                    // title, so Chromium reports the raw URL — e.g. in an
+                    // Incognito Space's dedicated OTR profile, whose NTP
+                    // WebUI does not load. Show the incognito NTP name the
+                    // primary OTR profile's real NTP would carry.
+                    self.title = Self.incognitoNewTabTitle
                 } else {
                     self.title = title
                 }
@@ -375,6 +392,29 @@ class Tab: WebContentRepresentable {
         self.title = title
         setWebContentsWrapper(wrapper: webContentWrapper)
     }
+
+    /// Placeholder title for native-NTP (off-the-record) new-tab pages.
+    static let incognitoNewTabTitle = NSLocalizedString(
+        "New Incognito Tab",
+        comment: "Tab title shown for an incognito new-tab page rendered by the native NTP")
+
+    /// Replace an untitled newtab title with the incognito NTP placeholder.
+    /// Called when `usesNativeNTP` flips on, catching titles that arrived
+    /// before the mark; later Chromium title updates go through the same
+    /// check in the title binding.
+    private func applyIncognitoNTPTitleIfUntitled() {
+        guard storedTitle?.isEmpty != false,
+              Self.isUntitledNTPTitle(title, url: url) else { return }
+        title = Self.incognitoNewTabTitle
+    }
+
+    /// True when Chromium supplied no real page title for a new-tab page:
+    /// the tab is (still) on the NTP — or has no URL yet — and the reported
+    /// title is empty or just the raw newtab URL echoed back.
+    private static func isUntitledNTPTitle(_ chromiumTitle: String, url: String?) -> Bool {
+        guard url == nil || url?.isEmpty == true || url?.isNTP == true else { return false }
+        return chromiumTitle.isEmpty || chromiumTitle.isNTP
+    }
     
     func setActive(_ active: Bool) {
         self.isActive = active
@@ -387,15 +427,33 @@ class Tab: WebContentRepresentable {
     }
     
     @objc func close() {
+        // While the agent controls its Space, the watching user cannot close
+        // its tabs (the ✕ button, split close, ⌘W all funnel here) — the agent
+        // drives tab lifecycle over CDP. Taking control re-enables it.
+        if windowId != 0,
+           let state = MainBrowserWindowControllersManager.shared.getBrowserState(for: windowId),
+           MainActor.assumeIsolated({ AgentSpaceManager.shared.isAgentOwned(state.spaceId) }) {
+            return
+        }
         if isActive, windowId != 0 {
             let manager = MainBrowserWindowControllersManager.shared
             let state = manager.getBrowserState(for: windowId)
-            // Mirror of the CommandDispatcher.IDC_CLOSE_TAB tag: when
-            // closing the last tab in the active Space via the UI X
-            // button, tag the slot so the resulting browser auto-close
-            // falls into the switch-to-sibling branch.
+            // Closing the last tab in the active Space via the UI X button:
+            // tag the slot so the resulting browser auto-close falls into
+            // the switch-to-sibling branch (mirrors the old
+            // CommandDispatcher.IDC_CLOSE_TAB behavior). In an Incognito
+            // Space the close ends the Space itself, so route it into the
+            // confirmed teardown instead of dispatching the tab close — on
+            // confirm the Space's window close takes this tab with it, on
+            // cancel nothing must close.
             if let state, state.tabs.count <= 1,
                let controller = manager.controller(for: windowId) {
+                if state.isIncognitoSpace {
+                    MainActor.assumeIsolated {
+                        SpaceManager.shared.requestCloseIncognitoSpace(spaceId: controller.spaceId)
+                    }
+                    return
+                }
                 controller.slot?.markTabDrivenClose(for: controller.spaceId)
             }
             state?.prepareForActiveTabClose(tabId: guid)

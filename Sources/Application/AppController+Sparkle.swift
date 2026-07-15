@@ -8,35 +8,40 @@ import Sparkle
 
 extension Notification.Name {
     static let sparkleDidDownloadUpdate = Notification.Name("SparkleDidDownloadUpdate")
+    static let sparkleDidSkipUpdate = Notification.Name("SparkleDidSkipUpdate")
 }
 
 extension AppController: SPUUpdaterDelegate {
-    static var immediatelyInstallHandler: (() -> Void)?
-    static var pendingUpdateItem: SUAppcastItem?
     static var debugSparkle = false
     
-    @objc func checkForUpdate(_ sender: Any?) {
-        if Self.immediatelyInstallHandler != nil, let item = Self.pendingUpdateItem {
-            let result = showInstallAvailableAlert(version: item.displayVersionString)
-            if result == .alertFirstButtonReturn {
-                installUpdateImmediately()
-            }
-            return
-        }
-        
-        self.updateState = .checking
-        updaterController?.checkForUpdates(sender)
+    @MainActor @objc func checkForUpdate(_ sender: Any?) {
+        guard let updater, updater.canCheckForUpdates else { return }
+        updater.checkForUpdates()
     }
     
+    @MainActor
     func setupSparkle() {
-        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
-        guard let updater = updaterController?.updater else { return }
+        let userDriver = PhiSparkleUserDriver()
+        let updater = SPUUpdater(
+            hostBundle: Bundle.main,
+            applicationBundle: Bundle.main,
+            userDriver: userDriver,
+            delegate: self
+        )
+        userDriver.updater = updater
+        userDriver.onUserInitiatedUpdateCheck = { [weak self] in
+            self?.updateState = .checking
+        }
+        sparkleUserDriver = userDriver
+        self.updater = updater
+
         updater.automaticallyChecksForUpdates = true
-        updater.automaticallyDownloadsUpdates = true
-       
-        #if !DEBUG
-        // updater.checkForUpdatesInBackground()
-        #endif
+
+        do {
+            try updater.start()
+        } catch {
+            AppLogError("Sparkle: failed to start updater: \(error.localizedDescription)")
+        }
     }
     
     func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest) {
@@ -53,14 +58,6 @@ extension AppController: SPUUpdaterDelegate {
     func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
         self.updateState = .downloaded(item.displayVersionString)
         AppLogInfo("Sparkle: didDownload update item: \(item.displayVersionString) - \(item.versionString)")
-        NotificationCenter.default.post(
-            name: .sparkleDidDownloadUpdate,
-            object: self,
-            userInfo: [
-                "displayVersion": item.displayVersionString,
-                "version": item.versionString
-            ]
-        )
     }
     
     func updaterShouldRelaunchApplication(_ updater: SPUUpdater) -> Bool {
@@ -90,38 +87,37 @@ extension AppController: SPUUpdaterDelegate {
         updateState = .idle
         AppLogWarn("Sparkle: didAbortWithError: \(error.localizedDescription)")
     }
+
+    func updater(_ updater: SPUUpdater,
+                 userDidMake choice: SPUUserUpdateChoice,
+                 forUpdate item: SUAppcastItem,
+                 state: SPUUserUpdateState) {
+        switch choice {
+        case .dismiss:
+            if state.stage == .downloaded {
+                updateState = .downloaded(item.displayVersionString)
+            }
+        case .skip:
+            updateState = .updateAvailable(item.displayVersionString)
+            NotificationCenter.default.post(name: .sparkleDidSkipUpdate, object: self)
+        case .install:
+            break
+        @unknown default:
+            break
+        }
+    }
     
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         updateState = .downloaded(item.displayVersionString)
-        #if DEBUG
+        NotificationCenter.default.post(
+            name: .sparkleDidDownloadUpdate,
+            object: self,
+            userInfo: [
+                "displayVersion": item.displayVersionString,
+                "version": item.versionString
+            ]
+        )
         return false
-        #else
-        Self.pendingUpdateItem = item
-        Self.immediatelyInstallHandler = immediateInstallHandler
-        return true
-        #endif // DEBUG
-    }
-}
-
-extension AppController {
-    func showInstallAvailableAlert(version: String) -> NSApplication.ModalResponse {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Install Update", comment: "Update alert - Title for install update confirmation dialog")
-        alert.informativeText = String(format: NSLocalizedString("Are you sure you want to install version %@ and restart Phi?", comment: "Update alert - Message asking user to confirm update installation with version number"), version)
-        alert.alertStyle = .informational
-        alert.icon = NSImage(systemSymbolName: "arrow.clockwise.circle", accessibilityDescription: "Update")
-        
-        alert.addButton(withTitle: NSLocalizedString("Install and Restart", comment: "Update alert - Button to install update and restart the app"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Update alert - Button to cancel update installation"))
-        
-        alert.buttons.first?.keyEquivalent = "\r"
-        
-        let response = alert.runModal()
-        return response
-    }
-    
-    func installUpdateImmediately() {
-        AppController.immediatelyInstallHandler?()
     }
 }
 

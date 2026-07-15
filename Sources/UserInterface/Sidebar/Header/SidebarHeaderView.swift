@@ -69,8 +69,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
 
     private lazy var searchTabsButton: HoverableButtonNSView = {
         let label = NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
-        let image = NSImage.configureSymbolImage(systemName: "magnifyingglass", pointSize: 15, weight: .regular, color: .black)
-        let config = HoverableButtonConfig(image: image,
+        let config = HoverableButtonConfig(image: .leftSidebarSearchTab,
                                            imageSize: .init(width: 16, height: 16),
                                            displayMode: .imageOnly,
                                            hoverBackgroundColor: .hover,
@@ -547,6 +546,13 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: .sparkleDidSkipUpdate)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.hideUpgradeButton()
+            }
+            .store(in: &cancellables)
+
         #if DEBUG
         applyUITestUpdateOverrideIfNeeded()
         #endif
@@ -619,11 +625,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }
 
     private func upgradeButtonClicked() {
-        guard let version = availableUpdateVersion else { return }
-        let response = AppController.shared.showInstallAvailableAlert(version: version)
-        if response == .alertFirstButtonReturn {
-            AppController.shared.installUpdateImmediately()
-        }
+        guard availableUpdateVersion != nil else { return }
+        AppController.shared.checkForUpdate(nil)
     }
 
     /// Shows the upgrade button for a downloaded update.

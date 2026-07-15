@@ -57,7 +57,7 @@ extension PhiPreferences {
         case showBookmarkBarOnNewTabPage // In traditional layout, show bookmark bar on new tab page
         case alwaysShowURLPath // In address bar menu, always show full URL path
         case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
-        case incognitoSpaceEnabled // Surfaces the built-in Incognito Space (dedicated OTR-profile backed); toggled in Spaces settings
+        case suppressCloseIncognitoSpaceWarning // "Do not ask again" on the close-Incognito-Space confirmation
 
         var defaultValue: Bool {
             switch self {
@@ -75,11 +75,11 @@ extension PhiPreferences {
                 return false
             case .spacesFeatureEnabled:
                 return true
-            case .incognitoSpaceEnabled:
+            case .suppressCloseIncognitoSpaceWarning:
                 return false
             }
         }
-        
+
         func loadValue() -> Bool {
             UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
         }
@@ -123,10 +123,10 @@ extension PhiPreferences {
         }
 
         /// Cross-Space animation duration in the horizontal (Comfortable) layout.
-        static let horizontalSwitchSpaceAnimationDuration: TimeInterval = 0.4
+        static let horizontalSwitchSpaceAnimationDuration: TimeInterval = 0.2
         /// Cross-Space animation duration in the vertical (Performance /
         /// Balanced) layouts.
-        static let verticalSwitchSpaceAnimationDuration: TimeInterval = 0.3
+        static let verticalSwitchSpaceAnimationDuration: TimeInterval = 0.15
 
         /// Which window's traffic-light buttons the horizontal-layout
         /// cross-Space slide suppresses. `source` (the ship default) fades
@@ -189,6 +189,63 @@ extension PhiPreferences {
         }
     }
     
+    // MARK: - Agent Spaces
+
+    enum AgentSpaces {
+        private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
+        private static let remoteDebuggingPortKey = "PhiRemoteDebuggingPort"
+        private static let autoViewKey = "PhiAgentSpaceAutoView"
+        private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
+
+        /// Master gate for the phi-browser skill's UI surfaces — the Developer
+        /// settings tab and View ▸ Agent Autoview (same pattern as
+        /// `GeneralSettings.spacesFeatureEnabled`). Defaults on, no user-facing
+        /// toggle: flip with `defaults write <bundle id>
+        /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
+        /// re-reads it on every open; the menu item applies on relaunch.
+        static var skillFeatureEnabled: Bool {
+            UserDefaults.standard.bool(forKey: skillFeatureKey, default: false)
+        }
+
+        /// When `true`, a successfully completed agent Space that the user never
+        /// visited is closed automatically instead of lingering with a badge.
+        /// Default `false`.
+        static var autoCloseOnSuccess: Bool {
+            get { UserDefaults.standard.bool(forKey: autoCloseKey) }
+            set { UserDefaults.standard.set(newValue, forKey: autoCloseKey) }
+        }
+
+        /// View ▸ Agent Autoview: when `true`, the focused window follows the
+        /// operating agent — a running agent Space is surfaced (watch mode)
+        /// unless the user is already watching a running one, which is never
+        /// preempted (see `AgentSpaceManager.autoViewReevaluate`). Default
+        /// `false`.
+        static var autoViewEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: autoViewKey) }
+            set { UserDefaults.standard.set(newValue, forKey: autoViewKey) }
+        }
+
+        /// Opt-in CDP endpoint for agent tooling, consumed by ChromiumLauncher
+        /// at process launch (a relaunch is required for changes to apply).
+        /// nil (key absent) = disabled; 0 = ephemeral port written to
+        /// `<user data dir>/DevToolsActivePort`; >0 = fixed port.
+        static var remoteDebuggingPort: Int? {
+            get {
+                guard UserDefaults.standard.object(forKey: remoteDebuggingPortKey) != nil else {
+                    return nil
+                }
+                return UserDefaults.standard.integer(forKey: remoteDebuggingPortKey)
+            }
+            set {
+                if let newValue {
+                    UserDefaults.standard.set(newValue, forKey: remoteDebuggingPortKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: remoteDebuggingPortKey)
+                }
+            }
+        }
+    }
+
     // MARK: - Theme Settings
 
     enum ThemeSettings: String, CaseIterable {

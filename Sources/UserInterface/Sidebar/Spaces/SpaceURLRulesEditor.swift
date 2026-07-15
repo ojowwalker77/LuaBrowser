@@ -63,12 +63,23 @@ struct URLRulesEditor: View {
         .padding(.vertical, 12)
     }
 
+    /// Spaces a rule may target: every user Space plus ONE generic
+    /// "Incognito" entry. Incognito Spaces are runtime-only, so a rule never
+    /// points at a specific one — it carries the stable generic id
+    /// (`SpaceManager.incognitoRuleTargetId`), resolved to a live Incognito
+    /// Space (created on demand) at route time. Agent Spaces are ephemeral
+    /// background workspaces and must never appear as a routing target.
+    private var ruleTargetSpaces: [SpaceModel] {
+        manager.spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace }
+            + [manager.incognitoRuleTargetSpace()]
+    }
+
     private var ruleList: some View {
         // The table host is always mounted (even when empty), so deleting the
         // last rule doesn't tear down the NSView tree mid-animation and adding
         // the first rule doesn't rebuild it. The empty-state placeholder lives
         // inside the host (see RuleTableView.makeEmptyOverlay).
-        RuleTableView(rows: $rows, spaces: manager.spaces)
+        RuleTableView(rows: $rows, spaces: ruleTargetSpaces)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -80,7 +91,7 @@ struct URLRulesEditor: View {
                 Label(NSLocalizedString("Add Rule", comment: "Footer button in URL rules editor"),
                       systemImage: "plus")
             }
-            .disabled(manager.spaces.isEmpty)
+            .disabled(ruleTargetSpaces.isEmpty)
             Spacer()
             Button(NSLocalizedString("Cancel", comment: "Cancel button")) {
                 onClose()
@@ -104,13 +115,13 @@ struct URLRulesEditor: View {
     }
 
     private func addBlankRow() {
-        guard let firstSpaceId = manager.spaces.first?.spaceId else { return }
+        guard let firstSpaceId = ruleTargetSpaces.first?.spaceId else { return }
         rows.append(Row(defaultSpaceId: firstSpaceId))
     }
 
     private func save() {
         guard fingerprint(of: rows) != initialFingerprint else { return }
-        let validSpaceIds = Set(manager.spaces.map(\.spaceId))
+        let validSpaceIds = Set(ruleTargetSpaces.map(\.spaceId))
         var byTarget: [String: [LocalStore.URLRuleDraft]] = [:]
         for row in rows {
             let trimmedValue = row.value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,7 +133,7 @@ struct URLRulesEditor: View {
             let targetSpaceId: String
             if validSpaceIds.contains(row.targetSpaceId) {
                 targetSpaceId = row.targetSpaceId
-            } else if row.askBeforeRouting, let fallback = manager.spaces.first?.spaceId {
+            } else if row.askBeforeRouting, let fallback = ruleTargetSpaces.first?.spaceId {
                 targetSpaceId = fallback
             } else {
                 continue
@@ -719,6 +730,9 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
 
     /// "Space name — Profile" so each entry shows which profile it routes into.
     private static func spaceMenuTitle(_ space: SpaceModel) -> String {
+        // The generic Incognito target's synthetic profileId is not one of
+        // ProfileManager's — show the plain name, not a raw wire id.
+        guard !SpaceManager.isIncognitoSpaceId(space.spaceId) else { return space.name }
         let profileName = ProfileManager.shared.profile(for: space.profileId)?.displayName ?? space.profileId
         guard !profileName.isEmpty else { return space.name }
         return "\(space.name) \u{2014} \(profileName)"

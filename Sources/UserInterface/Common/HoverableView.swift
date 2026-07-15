@@ -31,6 +31,7 @@ class HoverableView: NSView {
     var enableClickAnimation = false
     
     var clickAction: (() -> Void)?
+    var doubleClickAction: ((NSEvent) -> Void)?
     var secondaryClickAction: (() -> Void)?
     var hoverStateChanged: ((Bool) -> Void)?
     
@@ -121,7 +122,11 @@ class HoverableView: NSView {
             animateScaleUp()
         }
         if responseToClickAction {
-            clickAction?()
+            if event.clickCount == 2, let doubleClickAction {
+                doubleClickAction(event)
+            } else {
+                clickAction?()
+            }
         }
     }
 

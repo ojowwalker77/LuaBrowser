@@ -39,7 +39,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
     
     func handleExtensionMessage(_ type: String, payload: String, requestId: String, senderId: String) -> String? {
-        return ExtensionMessageRouter.shared.handle(type: type, payload: payload, requestId: requestId)
+        return ExtensionMessageRouter.shared.handle(type: type, payload: payload, requestId: requestId, senderId: senderId)
     }
 
     func toggleChatSidebar(_ show: NSNumber?) {
@@ -140,9 +140,24 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             }
 
             // List the current Space first, then the rest in their order.
+            // Live Incognito Spaces collapse into ONE generic "Incognito"
+            // choice: its id is the rules' generic target, which
+            // `routeAskedURL` resolves to the first live Incognito Space —
+            // creating one when none exists — so the choice is always
+            // offered. It leads when the navigation started in an Incognito
+            // Space (that Space is then the resolution target) and trails
+            // the user Spaces otherwise.
             let currentSpaceId = controller.spaceId
-            let ordered = spaces.filter { $0.spaceId == currentSpaceId }
-                + spaces.filter { $0.spaceId != currentSpaceId }
+            let currentIsIncognito = SpaceManager.isIncognitoSpaceId(currentSpaceId)
+            let userSpaces = spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) }
+            var ordered = userSpaces.filter { $0.spaceId == currentSpaceId }
+                + userSpaces.filter { $0.spaceId != currentSpaceId }
+            let incognitoTarget = manager.incognitoRuleTargetSpace()
+            if currentIsIncognito {
+                ordered.insert(incognitoTarget, at: 0)
+            } else {
+                ordered.append(incognitoTarget)
+            }
 
             // Resolve each Space's theme color (its pinned theme, or the
             // current theme when none) for the source window's appearance, so a
@@ -162,11 +177,16 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // so the item background is translucent like the box.
                 let legible: NSColor = themeNSColor.isLight() ? .black : .white
                 let opacity = theme.windowOverlayOpacity(for: appearance)
+                // The generic Incognito choice is "current" whenever the
+                // navigation started in any Incognito Space — that Space is
+                // what the choice resolves to.
+                let isCurrent = space.spaceId == currentSpaceId
+                    || (currentIsIncognito && space.spaceId == SpaceManager.incognitoRuleTargetId)
                 return SpaceChooserItem(
                     id: space.spaceId,
                     name: space.name,
                     iconName: space.iconName,
-                    isCurrent: space.spaceId == currentSpaceId,
+                    isCurrent: isCurrent,
                     themeColor: Color(nsColor: themeNSColor.withAlphaComponent(opacity)),
                     textColor: Color(nsColor: legible))
             }
@@ -342,8 +362,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
 
 
         guard browserType == .normal || browserType == .incognito
-                || browserType == .incognitoSpace || browserType == .shadow else {
-            AppLogInfo("🌐 [Chromium] Ignoring window type: \(browserType.rawValue) (not normal/incognito/incognitoSpace)")
+                || browserType == .incognitoSpace || browserType == .shadow
+                || browserType == .agentSpace else {
+            AppLogInfo("🌐 [Chromium] Ignoring window type: \(browserType.rawValue) (not normal/incognito/incognitoSpace/agentSpace)")
             return
         }
 
@@ -389,7 +410,11 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         // intent, and `spaceId(boundTo:preferring:)` passes through because
         // the synthetic Incognito Space's profileId IS the wire id Chromium
         // reports for them. Standalone incognito stays orthogonal below.
-        if browserType == .normal || browserType == .incognitoSpace {
+        // Agent Space windows resolve the same way — registered into a slot via
+        // the pending-spawn claim from `spawnHiddenWindow` so the user can later
+        // switch to them; they differ only in that Chromium never Show()s them
+        // (agent-mode browsers), so the window stays ordered out until surfaced.
+        if browserType == .normal || browserType == .incognitoSpace || browserType == .agentSpace {
             if let claim = SpaceManager.shared.claimPendingSpawn(forWindowId: Int(windowId)) {
                 resolvedSlot = claim.slot
                 spaceId = SpaceManager.shared.spaceId(boundTo: profileId,
@@ -447,8 +472,11 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // window matching `slot.activeSpaceId` belongs on screen;
                 // siblings stay hidden until the user pip-switches to them,
                 // matching the steady-state "one slot, one visible window"
-                // invariant. The active window is left to Chromium's Show() to
-                // surface (see note above); only siblings are explicitly hidden.
+                // invariant. Cold-launch restored active windows are left to
+                // Chromium's Show() to surface (see note above); slot-SPAWNED
+                // windows are created `hidden: true` and revealed by the
+                // slot's own spawn path once seeded (see `activate`'s spawn
+                // branch); only siblings are explicitly hidden here.
                 let isActiveForSlot: Bool = {
                     guard let resolvedSlot else { return true }
                     return resolvedSlot.activeSpaceId == spaceId
@@ -709,13 +737,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         controller.startObservingMainMenu()
     }
     
+    @MainActor
     func runQuitConfirmAlert() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Quit Phi?", comment: "Quit Phi?")
-        alert.addButton(withTitle: NSLocalizedString("Quit", comment: "Quit"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel"))
-        let response = alert.runModal()
-        return response == .alertFirstButtonReturn
+        PhiAlert.runQuitAlert()
     }
     
     func activeTabChanged(_ tabId: Int64, index: Int32, windowId: Int64) {
