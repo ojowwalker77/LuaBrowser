@@ -35,7 +35,7 @@ jobs:
             script/run \
             script/sign_phi_bundle.sh \
             script/verify
-      - name: Unit tests
+      - name: Compile app-hosted unit tests without launching Lua
         env:
           DERIVED_DATA: ${{ runner.temp }}/DerivedData-check
         run: ./script/check

@@ -34,7 +34,7 @@ The shared repository commands are:
 
 - `./script/bootstrap` — fetch and verify the pinned framework dependency
 - `./script/run` — build and launch Lua
-- `./script/check` — run unit tests
+- `./script/check` — compile the app-hosted unit suite without launching Lua
 - `./script/verify` — build Release and validate the app bundle
 - `./script/release-preflight X.Y.Z` — validate release identity and inputs
 
@@ -51,6 +51,12 @@ The framework is currently downloaded from
 binary because redistribution rights have not been confirmed. This is an
 explicit external supply-chain dependency; the project does not claim full
 upstream independence until an authorized owner-controlled build exists.
+
+The existing XCTest bundle is hosted inside the Chromium application. The
+prebuilt host currently exits before XCTest connects on headless runners, so
+the required `check` gate uses `build-for-testing`: all test code must compile,
+but the app is not launched. Hosted test execution remains a framework blocker
+rather than an unreliable required check.
 
 ### Privacy blocker in the embedded framework
 
