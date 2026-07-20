@@ -2844,7 +2844,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
@@ -2988,7 +2988,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
@@ -3198,7 +3198,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
@@ -3247,7 +3247,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
@@ -3439,7 +3439,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
@@ -3581,7 +3581,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Phi Performance";
+				INFOPLIST_KEY_CFBundleDisplayName = Lua;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";

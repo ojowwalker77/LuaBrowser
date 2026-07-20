@@ -27,6 +27,10 @@ info="$APP/Contents/Info.plist"
   echo "Unexpected CFBundleName." >&2
   exit 1
 }
+[[ "$(plutil -extract CFBundleDisplayName raw "$info")" == "Lua" ]] || {
+  echo "Unexpected CFBundleDisplayName." >&2
+  exit 1
+}
 [[ "$(plutil -extract CFBundleIdentifier raw "$info")" == "dev.jow.LuaBrowser" ]] || {
   echo "Unexpected CFBundleIdentifier." >&2
   exit 1
