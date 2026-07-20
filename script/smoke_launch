@@ -58,7 +58,7 @@ print_crash_diagnostics() {
     lldb \
       --batch \
       --one-line run \
-      --one-line-on-crash 'thread backtrace all' \
+      --one-line-on-crash 'thread backtrace -c 80' \
       -- "$EXECUTABLE" \
       -uitest 1 \
       "--user-data-dir=$PROFILE_DIR-lldb" \
