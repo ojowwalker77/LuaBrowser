@@ -122,6 +122,9 @@ extension PhiPreferences {
 
         static func saveLayoutMode(_: LayoutMode = .performance) {
             let defaults = UserDefaults.standard
+            guard defaults.string(forKey: Self.layoutModeKey) != LayoutMode.performance.rawValue else {
+                return
+            }
             defaults.set(LayoutMode.performance.rawValue, forKey: Self.layoutModeKey)
         }
 

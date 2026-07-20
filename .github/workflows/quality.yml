@@ -34,6 +34,7 @@ jobs:
             script/release-preflight \
             script/run \
             script/sign_phi_bundle.sh \
+            script/smoke_launch \
             script/verify
       - name: Compile app-hosted unit tests without launching Lua
         env:

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP="${1:?usage: smoke_launch /path/to/Lua.app}"
+EXECUTABLE="$APP/Contents/MacOS/Lua"
+PROFILE_DIR="${SMOKE_PROFILE_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/lua-release-smoke.XXXXXX")}"
+LOG_FILE="${SMOKE_LOG_FILE:-$PROFILE_DIR/Lua.log}"
+
+[[ -x "$EXECUTABLE" ]] || {
+  echo "Missing Lua executable: $EXECUTABLE" >&2
+  exit 1
+}
+
+"$EXECUTABLE" \
+  -uitest 1 \
+  "--user-data-dir=$PROFILE_DIR" \
+  >"$LOG_FILE" 2>&1 &
+app_pid=$!
+
+stop_app() {
+  if kill -0 "$app_pid" 2>/dev/null; then
+    kill "$app_pid" 2>/dev/null || true
+    wait "$app_pid" 2>/dev/null || true
+  fi
+}
+trap stop_app EXIT
+
+for _ in {1..60}; do
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    set +e
+    wait "$app_pid"
+    exit_status=$?
+    set -e
+    echo "Lua exited during the release launch smoke test with status $exit_status." >&2
+    cat "$LOG_FILE" >&2
+    exit 1
+  fi
+  sleep 0.25
+done
+
+echo "Lua remained running for the release launch smoke test."

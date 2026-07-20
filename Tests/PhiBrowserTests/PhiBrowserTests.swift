@@ -27,6 +27,27 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(LayoutMode.allCases, [.performance])
     }
 
+    func testSavingPerformanceLayoutDoesNotRepostAnUnchangedDefault() {
+        let defaults = UserDefaults.standard
+        let key = PhiPreferences.GeneralSettings.layoutModeKey
+        let original = defaults.object(forKey: key)
+        defer {
+            if let original {
+                defaults.set(original, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        defaults.set(LayoutMode.performance.rawValue, forKey: key)
+        let didChange = XCTNSNotificationExpectation(name: UserDefaults.didChangeNotification)
+        didChange.isInverted = true
+
+        PhiPreferences.GeneralSettings.saveLayoutMode()
+
+        wait(for: [didChange], timeout: 0.1)
+    }
+
     func testSidebarPositionDefaultsLeftAndPersistsRight() {
         let defaults = UserDefaults.standard
         let key = PhiPreferences.GeneralSettings.sidebarPositionKey

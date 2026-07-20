@@ -255,8 +255,6 @@ class MainSplitViewController: NSViewController {
     }
 
     private func updateShellPreferences() {
-        PhiPreferences.GeneralSettings.saveLayoutMode()
-
         let position = PhiPreferences.GeneralSettings.loadSidebarPosition()
         guard position != lastSidebarPosition else { return }
 
